@@ -1,0 +1,18 @@
+{
+    "id": "todo",
+    "name": "Aufgaben",
+    "version": "1.0.0",
+    "description": "Persoenliche Aufgabenliste mit Prioritaeten und Faelligkeitsdaten",
+    "author": "MIKE Team",
+    "dependencies": [],
+    "backend_entry": "backend/index.ts",
+    "frontend_entry": "frontend/index.tsx",
+    "nav_icon": "todo",
+    "nav_label": "Aufgaben",
+    "nav_order": 20,
+    "permissions": [
+        "todo.view",
+        "todo.edit"
+    ],
+    "settings_page": false
+}

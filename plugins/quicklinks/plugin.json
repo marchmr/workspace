@@ -1,0 +1,19 @@
+{
+    "id": "quicklinks",
+    "name": "Schnellzugriff",
+    "version": "1.0.0",
+    "description": "Mandantenweite und persoenliche Quicklinks mit Favicon-Erkennung",
+    "author": "MuM Team",
+    "dependencies": [],
+    "backend_entry": "backend/index.ts",
+    "frontend_entry": "frontend/index.tsx",
+    "nav_icon": "quicklinks",
+    "nav_label": "Schnellzugriff",
+    "nav_order": 25,
+    "permissions": [
+        "quicklinks.view",
+        "quicklinks.edit",
+        "quicklinks.manage"
+    ],
+    "settings_page": false
+}

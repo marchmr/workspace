@@ -1,0 +1,129 @@
+# ============================================
+# MIKE WorkSpace - .gitignore
+# ============================================
+
+# -------------------------
+# OS-Dateien
+# -------------------------
+.DS_Store
+**/.DS_Store
+Thumbs.db
+Desktop.ini
+
+# -------------------------
+# Node.js / npm
+# -------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+.pnp.*
+
+# -------------------------
+# Build-Ausgaben
+# -------------------------
+backend/dist/
+frontend/dist/
+
+# -------------------------
+# Secrets / Umgebungsvariablen
+# KRITISCH: Niemals committen!
+# -------------------------
+.env
+**/.env
+*.env
+!.env.example
+!**/.env.example
+
+# -------------------------
+# Signing Keys
+# KRITISCH: Niemals committen!
+# -------------------------
+*.pem
+*.pub
+*.p12
+*.pfx
+
+# -------------------------
+# Datenbanken / Backups
+# -------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.sql.gz
+*.sql.bak
+backups/
+*.bak
+
+# -------------------------
+# Logs
+# -------------------------
+*.log
+logs/
+
+# -------------------------
+# Uploads / Nutzerdaten
+# (Werden zur Laufzeit erstellt)
+# -------------------------
+uploads/
+documents/
+
+# -------------------------
+# Kompilierte Artefakte
+# -------------------------
+*.tar.gz
+*.mikeplugin
+
+# -------------------------
+# Plugin-Laufzeitdaten
+# (User-Daten die Plugins zur Laufzeit erstellen)
+# -------------------------
+plugins/*/data/
+
+
+
+# -------------------------
+# IDE / Editor
+# -------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# -------------------------
+# Antigravity / AI Agent Rules
+# (Duerfen nicht gepusht werden!)
+# -------------------------
+.gemini/
+.agents/
+.agent/
+_agents/
+_agent/
+.antigravity/
+.cursor/
+.copilot/
+
+# -------------------------
+# Test / Coverage
+# -------------------------
+coverage/
+.nyc_output/
+*.lcov
+
+# -------------------------
+# TypeScript Cache
+# -------------------------
+*.tsbuildinfo
+
+# -------------------------
+# Diverses
+# -------------------------
+.cache/
+tmp/
+temp/
+

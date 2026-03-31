@@ -1,0 +1,522 @@
+[
+  {
+    "version": "1.20.0",
+    "date": "2026-03-30",
+    "changes": [
+      "[Neu] Core: Local-First Plugin-Architektur — Plugins werden als TSX direkt im Monorepo kompiliert (kein separater Build)",
+      "[Neu] Core: Automatischer Plugin-Registry-Generator (generate-plugin-registry.mjs) erkennt Plugins und erzeugt Imports",
+      "[Neu] Core: @mike/ Alias-System für Plugin-Imports (tsconfig paths + Vite resolve)",
+      "[Neu] Core: plugins/ Verzeichnis mit eigener package.json und .cjs Migrations-Support",
+      "[Neu] Plugin: Todo-Plugin mit Backend-Storage, REST-API und Frontend-Management-Dashboard",
+      "[Neu] Plugin: Zeiterfassungs-Timer im Todo-Plugin für Aufgaben-Tracking",
+      "[Neu] Plugin: Klickbarer Todo-Header in Dashboard-Kachel mit direkter Navigation",
+      "[Neu] UI: Horizontale TopBar ersetzt Sidebar-Navigation — modernes Dark-Theme",
+      "[Neu] UI: Regie-Mega-Menu für zentralisierte Plugin- und Modulverwaltung",
+      "[Neu] UI: Plugin-SVG-Icons werden via dangerouslySetInnerHTML korrekt gerendert",
+      "[Fix] API: Auth preHandler auf alle Todo-Plugin-Routen angewendet",
+      "[Fix] API: request.user.userId statt request.userId für JWT-Auth in Plugins",
+      "[Fix] UI: RegiePage Icon-Rendering korrigiert (HTML-String statt JSX)",
+      "[Fix] UI: Plugin-Router-Imports in Dashboard-Kacheln korrigiert",
+      "[Neu] Docs: PLUGIN_DEV_GUIDE um @mike/ Alias-Pattern und Build-Learnings erweitert",
+      "[Neu] Docs: Pflicht-Leerexports für Plugin-Registry-Kompatibilität dokumentiert"
+    ]
+  },
+  {
+    "version": "1.19.1",
+    "date": "2026-03-29",
+    "changes": [
+      "[Neu] Plugin: Separates Plugin-Repository (michaelnid/WorkSpace-Plugins) als Architekturstandard",
+      "[Neu] Plugin: Neue Umgebungsvariable PLUGIN_URL für separaten Plugin-Katalog (GitHub Pages)",
+      "[Neu] Plugin: resolvePluginUrl() und fetchPluginVersionInfo() trennen Plugin- von Core-URL-Auflösung",
+      "[Neu] Docs: PLUGIN_DEV_GUIDE Kapitel 13 komplett überarbeitet — Zwei-Repo-Architektur, .gitignore, Build-Scripts, Publishing-Workflow",
+      "[Neu] Docs: Vollständige .gitignore-Vorlage für das Plugin-Repo (nur TypeScript-Quellcode wird committed)",
+      "[Neu] Docs: Build-Scripts (build-plugin.sh, build-all.sh, publish.sh) als Copy-Paste-Referenz dokumentiert"
+    ]
+  },
+  {
+    "version": "1.19.0",
+    "date": "2026-03-29",
+    "changes": [
+      "[Neu] Core: Multi-Account E-Mail-Konnektor — mehrere SMTP-Konten verwaltbar, Plugins wählen per accountId",
+      "[Neu] Core: DB-Migration 016 erstellt email_accounts Tabelle und migriert bestehende Einzel-Konfiguration automatisch",
+      "[Neu] Core: Standard-Konto (is_default) für System-Mails, Fallback auf erstes Konto",
+      "[Neu] API: CRUD-Endpunkte für E-Mail-Konten (GET/POST/PUT/DELETE /api/admin/email/accounts)",
+      "[Neu] API: GET /api/admin/email/accounts/list — Kurzliste für Plugin-Dropdowns (ID, Name, Absender)",
+      "[Neu] API: POST /api/admin/email/accounts/:id/test — Test-Mail pro Konto senden",
+      "[Neu] UI: Eigene Admin-Seite 'E-Mail-Konten' mit Tabelle, Inline-Formular und Test-Versand",
+      "[Neu] UI: Sidebar-Menüpunkt 'E-Mail-Konten' im Admin-Bereich",
+      "[Fix] Core: Update-Check-Intervall auf 2 Stunden Standard erhöht (GitHub API Rate-Limit)",
+      "[Fix] Core: update.sh installiert zip automatisch falls fehlend",
+      "[Fix] Core: Backup-Verzeichnis chown auf mike:mike für Backend-Lesezugriff",
+      "[Fix] Core: Audit-Log-Eintrag bei Versions-/Commit-Änderung nach SSH-Update",
+      "[Fix] UI: phpMyAdmin nginx-Location mit verschachteltem PHP-Handler (kein Download mehr)",
+      "[Fix] UI: Interne System-Settings (update.*, system.*) aus Einstellungen-Tabelle ausgeblendet",
+      "[Fix] UI: Update-Intervall-Optionen auf 2h, 6h, 12h, 24h reduziert",
+      "[Entfernt] UI: EmailSettingsCard aus Einstellungen entfernt (jetzt eigene Seite)",
+      "[Entfernt] UI: Changelog-Verlauf-Kachel im Update-Manager entfernt",
+      "[Neu] Docs: PLUGIN_DEV_GUIDE Abschnitt 6.13 aktualisiert für Multi-Account E-Mail mit accountId"
+    ]
+  },
+  {
+    "version": "1.18.0",
+    "date": "2026-03-29",
+    "changes": [
+      "[Neu] Core: Multi-Branch Update-System — Auswahl zwischen Main (stabil), Dev (Pre-Releases) und Experimental (Commits)",
+      "[Neu] Core: Automatisches Pre-Update-Backup als ZIP vor jedem Update (Quellcode + DB-Dump + Uploads + .env)",
+      "[Neu] Core: Per-Branch Backup-Ordner mit konfigurierbarer Rotation (Main/Dev: 5, Experimental: 10)",
+      "[Neu] Core: Automatischer Update-Check im Hintergrund mit konfigurierbarem Intervall (Sekunden-genau, Default: 10s)",
+      "[Neu] Core: In-App-Benachrichtigung an Admins bei verfügbarem Update (nur einmal pro Version/Commit)",
+      "[Neu] Core: Neues restore.sh Script — stellt Pre-Update-Backups wieder her (Service, Dateien, Datenbank)",
+      "[Neu] API: GET /api/admin/updates/branch — aktuellen Branch und Prüf-Intervall lesen",
+      "[Neu] API: PUT /api/admin/updates/branch — Branch wechseln (mit Audit-Log)",
+      "[Neu] API: PUT /api/admin/updates/check-interval — Prüf-Intervall für automatischen Update-Check ändern",
+      "[Neu] API: GET /api/admin/updates/backups — Liste aller Pre-Update-Backups (Datum, Größe, Restore-Befehl)",
+      "[Neu] API: GET /api/admin/updates/changelog-history — Release-Notes oder Commit-Verlauf je nach Branch",
+      "[Neu] API: Update-Check liefert jetzt SSH-Befehl, Commit-Hash und Branch-spezifische Changelog-Daten",
+      "[Neu] UI: Branch-Auswahl mit drei Kacheln (Main/Dev/Experimental) und Beschreibung",
+      "[Neu] UI: Branch-Wechsel-Warnungen bei Upgrade auf Experimental und bei Downgrade",
+      "[Neu] UI: SSH-Befehl-Box mit Copy-to-Clipboard Button (SVG-Icon) wenn Update verfügbar",
+      "[Neu] UI: Rollback-Info — zeigt Restore-Befehl wenn Backup jünger als 5 Minuten",
+      "[Neu] UI: Changelog-Verlauf aufklappbar (Release-Notes oder Commit-Messages je nach Branch)",
+      "[Neu] UI: Backup-Übersicht als Tabelle mit Datum, Branch, Größe und Restore-Befehl",
+      "[Neu] UI: Konfigurierbares Prüf-Intervall für automatischen Update-Check (Dropdown + Speichern)",
+      "[Neu] Admin: update.sh komplett neugeschrieben — --branch Parameter, Auto-Backup, DB-Dump, Service-Restart",
+      "[Neu] Admin: Experimental-Branch zeigt letzte 10 Commit-Messages als Changelog an",
+      "[Neu] Docs: README mit Update-Dokumentation (3 Branches, Befehle, Backup-Strategie, Restore-Anleitung)",
+      "[Entfernt] API: POST /api/admin/updates/install-core — Core-Updates nur noch per SSH",
+      "[Entfernt] UI: Core-Update-Button und Core-Task-Status im Webinterface entfernt"
+    ]
+  },
+  {
+    "version": "1.17.0",
+    "date": "2026-03-29",
+    "changes": [
+      "[Neu] Core: Toast-Popup-Benachrichtigungen mit Slide-in-Animation, Progress-Bar und Hover-Pause (max 4 gleichzeitig)",
+      "[Neu] Core: Entity Locking — Pessimistic In-Memory Locks verhindern gleichzeitige Bearbeitung (1-Min Heartbeat-Timeout)",
+      "[Neu] Core: Auto-Release von Locks bei WebSocket-Disconnect oder Tab-Close (sendBeacon-Fallback)",
+      "[Neu] Core: WebSocket Context mit Auto-Connect, exponentiellem Backoff-Reconnect und Lock-Event-Push",
+      "[Neu] Core: Neue Audit-Kategorie lock für Lock-Aktionen (acquired, released, expired, forced)",
+      "[Neu] API: Notification-API um urgent-Flag, duration, category und broadcast()-Methode erweitert",
+      "[Neu] API: Lock REST API mit acquire, release, heartbeat, query (Bulk), request-access und force-release (Admin)",
+      "[Neu] API: GET /api/admin/audit-log/actions liefert alle Aktionen gruppiert nach Kategorie",
+      "[Neu] UI: useEntityLock (Detail) und useEntityLocks (Liste) Hooks mit Heartbeat und Live-Updates",
+      "[Neu] UI: LockIndicator (Avatar + Schloss-Badge) und LockBanner (Detail-Banner mit Zugriff anfragen)",
+      "[Neu] UI: DataTable Lock-Integration — lockEntityType-Prop für gelbliche Hervorhebung gesperrter Zeilen",
+      "[Neu] Admin: Aktive Sperren — Live-Übersicht aller Locks mit Force-Release unter /admin/locks",
+      "[Neu] Admin: Audit-Log Aktionsfilter mit Autocomplete-Eingabe und Browse-Modal",
+      "[Neu] Security: Neue Permission locks.manage für Admin-Zugriff auf Lock-Verwaltung",
+      "[Neu] Docs: Plugin Dev Guide Sektion 14 (Notification System) und Sektion 15 (Entity Locking)"
+    ]
+  },
+  {
+    "version": "1.16.0",
+    "date": "2026-03-29",
+    "changes": [
+      "[Neu] Security: PolicyEngine Enforce-Modus — alle /api/-Routen ohne expliziten Schutz werden automatisch mit 401 blockiert",
+      "[Neu] Security: requirePermission() ruft intern authenticate() auf — kein separater fastify.authenticate mehr nötig",
+      "[Neu] Security: Gestaffeltes Rate Limiting — 500 req/min authentifiziert (per User-ID), 60 req/min anonym (per IP)",
+      "[Entfernt] Security: Redundante Scope-Level addHook Auth-Hooks aus admin.ts und documents.ts entfernt",
+      "[Neu] UI: Dashboard-Begrüßung modernisiert — multilingual mit kyrillischer, chinesischer Schrift etc.",
+      "[Neu] UI: Design-Token --radius-full: 9999px für abgerundete Kacheln als Standard",
+      "[Fix] UI: Umlaut-Standard durchgesetzt (ü, ö, ä) in allen Frontend-Texten",
+      "[Neu] Docs: Plugin Dev Guide vollständig aktualisiert — PolicyEngine, Rate Limiting, requirePermission",
+      "[Neu] Docs: Neuer Abschnitt §10.10 PolicyEngine mit Flussdiagramm und Schutz-Optionen",
+      "[Neu] Docs: Sicherheits-Checkliste um PolicyEngine, addHook-Verbot und Umlaut-Regel erweitert"
+    ]
+  },
+  {
+    "version": "1.15.11",
+    "date": "2026-02-25",
+    "changes": [
+      "Benutzerverwaltung: Benutzer können direkt im Bearbeiten-Modal gelöscht werden",
+      "Löschen-Button mit Bestätigungsdialog (Danger-Variante) und Benutzername"
+    ]
+  },
+  {
+    "version": "1.15.10",
+    "date": "2026-02-25",
+    "changes": [
+      "Sicherheit: XSS-Fix in Globaler Suche – Backend-Daten werden nicht mehr als HTML gerendert",
+      "Sicherheit: SQL-Wildcard-Injection-Schutz in Suche und CRUD-Generator (LIKE-Escaping)",
+      "Sicherheit: Content Security Policy (CSP) über Helmet aktiviert",
+      "Sicherheit: Verschlüsselung optimiert – scrypt nur noch einmal beim Start (HMAC-Key-Ableitung)",
+      "Sicherheit: .env-Dateien in .gitignore aufgenommen",
+      "Auth: Session-ID im JWT-Payload für präzisere Session-Verwaltung",
+      "Auth: createRefreshSession-Helper für konsistente Token-Erstellung",
+      "Auth: Logout widerruft Session gezielt per sessionId und tokenHash",
+      "Plugin Dev Guide: Sicherheitshinweis für LIKE-Wildcard-Escaping bei manuellen Queries",
+      "Plugin Dev Guide: sessionId in User-Kontext dokumentiert"
+    ]
+  },
+  {
+    "version": "1.15.9",
+    "date": "2026-02-25",
+    "changes": [
+      "Login: Authenticator- und Recovery-Code in einem einzigen Eingabefeld",
+      "Backend: Automatischer Recovery-Code-Fallback wenn TOTP fehlschlägt"
+    ]
+  },
+  {
+    "version": "1.15.8",
+    "date": "2026-02-25",
+    "changes": [
+      "Profil: Eigenes Passwort ändern mit Validierung (mind. 10 Zeichen, Groß-/Klein, Zahl, Sonderzeichen)",
+      "Profil: Anzeigename aus Profilinformationen entfernt",
+      "MFA-Setup: Secret als kopierbarer Text unter dem QR-Code für manuelle Eingabe"
+    ]
+  },
+  {
+    "version": "1.15.7",
+    "date": "2026-02-25",
+    "changes": [
+      "MFA-Verwaltung: Neues Modal-Popup mit Step-by-Step-Wizard (Setup → QR → Verify → Backup-Codes)",
+      "MFA: Recovery-Codes als PDF-Export mit professionellem Layout",
+      "MFA: Deaktivierung ebenfalls im Modal mit Passwort-Bestätigung",
+      "Session-Management: Layout-Fix – Grid mit festen Mindestbreiten und sauberen Abständen"
+    ]
+  },
+  {
+    "version": "1.15.6",
+    "date": "2026-02-25",
+    "changes": [
+      "Session-Management: Redesign mit Grid-Layout, Akzent-Strich und Uppercase-Labels"
+    ]
+  },
+  {
+    "version": "1.15.5",
+    "date": "2026-02-25",
+    "changes": [
+      "Session-Management: Eigene Sitzung widerrufen → sofortiger Logout + Redirect zu Login"
+    ]
+  },
+  {
+    "version": "1.15.4",
+    "date": "2026-02-25",
+    "changes": [
+      "Session-Management: Einklappbare Benutzer-Kacheln mit Avatar und Zusammenfassung",
+      "Session-Details (IP, Browser, Zeitraum) erst nach Klick sichtbar"
+    ]
+  },
+  {
+    "version": "1.15.3",
+    "date": "2026-02-25",
+    "changes": [
+      "Aktive Sitzungen: ip_address und user_agent werden jetzt in refresh_tokens gespeichert",
+      "Session-Management zeigt IP, Browser und Zeitpunkt korrekt an",
+      "Migration 013: Spalten ip_address/user_agent zu refresh_tokens hinzugefügt"
+    ]
+  },
+  {
+    "version": "1.15.2",
+    "date": "2026-02-25",
+    "changes": [
+      "Plugin-Lifecycle: onUninstall-Hook wird beim Entfernen über den Updater ausgeführt",
+      "Core-Decorators: encrypt/decrypt, validation (Zod), createCrudRoutes als Fastify-Decorator verfügbar",
+      "PLUGIN_DEV: Typdefinitionen komplett überarbeitet (229 Zeilen, alle Decorators)",
+      "PLUGIN_DEV: Guide aktualisiert – Decorator-Zugriff statt direkter Imports",
+      "Build-Plugin: TSC-Suche über mehrere Pfade, strikte Fehlerbehandlung",
+      "Dashboard: Redundanter Untertitel bei Benachrichtigungs-Kachel entfernt"
+    ]
+  },
+  {
+    "version": "1.15.1",
+    "date": "2026-02-25",
+    "changes": [
+      "AuditCategory-Typisierung: category-Feld auf gültige Werte beschränkt (auth/data/admin/plugin)",
+      "PDF-Export: ESM-kompatibel via createRequire, korrekte Roboto-TTF-Fontpfade",
+      "WebSocket: WebSocketLike-Interface statt direkter ws-Abhängigkeit",
+      "Build: TSC-Strict – Build bricht bei Compile-Fehlern sofort ab",
+      "Build: Plugin-Ordner mit _-Prefix werden als Templates ignoriert",
+      "PLUGIN_DEV: Referenz-Template in PLUGIN_DEV/beispiel-plugin dokumentiert"
+    ]
+  },
+  {
+    "version": "1.15.0",
+    "date": "2026-02-25",
+    "changes": [
+      "CRUD-Generator: createCrudRoutes() generiert 5 Endpoints mit Tenant-Scoping, Zod, Audit",
+      "Plugin-Storage: Tenant-scoped Datei-Verwaltung (save/get/delete/list)",
+      "PDF-Export: Leichtgewichtiger HTML→PDF Generator (pdfmake)",
+      "ConfirmDialog: Bestätigungsdialog mit Danger/Warning-Varianten",
+      "Pagination: Seitennavigation mit Ellipsis und Prev/Next",
+      "Plugin-Test-Framework: createTestApp() mit gemockter DB, Auth, Audit"
+    ]
+  },
+  {
+    "version": "1.14.0",
+    "date": "2026-02-25",
+    "changes": [
+      "Health-Check: /api/health mit DB-Ping, Uptime, Disk-Status",
+      "Rate Limiting: Strikte Profile (strict 3/min, upload 10/5min) für kritische Routen",
+      "Zod Validation: validateBody/Query/Params preHandler mit 422-Fehlerformat",
+      "Plugin-Lifecycle: onInstall(), onUpgrade(fromVersion), onUninstall() Hooks",
+      "WebSocket: Echtzeit-Push (Notifications, Events) über @fastify/websocket",
+      "Session-Management: Aktive Sitzungen einsehen und widerrufen (Admin)",
+      "Enhanced Audit Log: auditChange() Helper mit Auto-Diff (Before/After)"
+    ]
+  },
+  {
+    "version": "1.13.0",
+    "date": "2026-02-25",
+    "changes": [
+      "Tenant-Query-Helper: Zentraler scopedQuery() für automatische Mandanten-Isolation",
+      "Policy Engine: Zentrales Authorization-Layer erkennt ungeschützte API-Routes",
+      "Backup-Verschlüsselung: AES-256-GCM Encryption-at-Rest (BACKUP_ENCRYPTION_KEY)",
+      "Testpyramide: 51 Unit- und Security-Tests (Vitest) für Auth, SSRF, Encryption, Permissions"
+    ]
+  },
+  {
+    "version": "1.12.3",
+    "date": "2026-02-25",
+    "changes": [
+      "Webhook-Verwaltung: Bugfix 404 (fp-Prefix-Encapsulation)",
+      "Plugin Developer Kit: Eigener PLUGIN_DEV Ordner mit Typdefinitionen, Beispiel-Plugin und Dokumentation",
+      "Plugin-Signatur: Pflichtfeld in Dokumentation aktualisiert"
+    ]
+  },
+  {
+    "version": "1.12.2",
+    "date": "2026-02-25",
+    "changes": [
+      "Globale Suche: Alle Admin-Bereiche als Quick Actions",
+      "Globale Suche: Feather-Style SVG-Icons statt Emojis",
+      "E-Mail-Konfiguration: Bugfix Settings-API (value_encrypted), SVG-Icon statt Emoji",
+      "Einstellungen: Leere Systemeinstellungen-Karte ausgeblendet",
+      "Ed25519: Public Key als Default in config.ts",
+      "Build: Automatische Signatur-Erkennung (.signing-key.pem)"
+    ]
+  },
+  {
+    "version": "1.12.1",
+    "date": "2026-02-25",
+    "changes": [
+      "E-Mail-Konfiguration: Einstellungskachel in Admin > Einstellungen",
+      "E-Mail: Provider-Auswahl (SMTP/M365), SMTP-Felder, Test-E-Mail-Funktion",
+      "Ed25519: Signaturprüfung für Updates aktiviert"
+    ]
+  },
+  {
+    "version": "1.12.0",
+    "date": "2026-02-25",
+    "changes": [
+      "Scheduled Tasks: Cron-Job-System für wiederkehrende Aufgaben (node-cron)",
+      "Scheduler-API: fastify.scheduler.register/unregister mit DB-Persistenz und Run-History",
+      "Core-Task: Automatische Bereinigung alter Task-Runs (30 Tage)",
+      "E-Mail-Service: Einstellungs-API mit verschlüsselter Passwortspeicherung",
+      "E-Mail: Admin-Kachel mit Provider-Auswahl und Test-Button",
+      "Core UI: DataTable-Komponente mit Sortierung, Suche und Pagination",
+      "Core UI: FormField, StatusBadge, DateRangePicker und EntitySearch",
+      "CSV-Export: generateCSV() mit BOM, Semikolon und Datumsformatierung",
+      "CSV-Export: ExportButton-Komponente und useExport-Hook",
+      "Plugin Dev Guide: Neue Sektionen 6.12–6.15 und erweiterte Core-API-Tabelle"
+    ]
+  },
+  {
+    "version": "1.11.2",
+    "date": "2026-02-25",
+    "changes": [
+      "Webhook SSRF: DNS-Rebinding-Schutz mit IP-Validierung nach DNS-Auflösung",
+      "Webhook HTTPS: HTTP-URLs werden in Produktion automatisch blockiert",
+      "Update-Signaturen: Signaturprüfung ist jetzt standardmäßig aktiviert",
+      "Update-Artefakte: Absolute URLs in artifact_path werden abgelehnt (Same-Origin)",
+      "Admin-Explorer: HTML/SVG/XML-Dateien werden als Download erzwungen (XSS-Schutz)",
+      "Plugin Dev Guide: Webhook-SSRF und HTTPS-Richtlinien aktualisiert"
+    ]
+  },
+  {
+    "version": "1.11.1",
+    "date": "2026-02-25",
+    "changes": [
+      "Zip-Slip-Schutz: Backup-Import validiert Dateipfade gegen Path Traversal",
+      "Plugin-ID-Validierung: Nur alphanumerische Zeichen, Bindestrich und Unterstrich erlaubt",
+      "Webhook-CRUD: Mandanten-Isolation auf alle Operationen",
+      "Admin-Seed: Zufälliges Einmalpasswort statt statischem Passwort bei Neuinstallation",
+      "Notification-Routen: fp()-Architektur-Fix (Routen respektieren jetzt den Prefix)",
+      "Plugin Dev Guide: Neuer Abschnitt 10 Sicherheitsrichtlinien",
+      "Plugin Dev Guide: Sicherheits-Checkliste in Release-Prüfung ergänzt"
+    ]
+  },
+  {
+    "version": "1.11.0",
+    "date": "2026-02-25",
+    "changes": [
+      "Passwort-Validierung: Serverseitige Prüfung (min. 10 Zeichen, Groß/Klein/Zahl/Sonderzeichen)",
+      "Security Headers: @fastify/helmet mit X-Content-Type-Options, HSTS, X-Frame-Options",
+      "Shell-Injection-Schutz: exec() durch execFile() ersetzt",
+      "Refresh-Token-Cleanup: Automatische Bereinigung bei Serverstart",
+      "Backup-Sicherheit: password_hash aus Exporten entfernt",
+      "trustProxy: Auf 127.0.0.1 in Produktion eingeschränkt",
+      "Upload-Limits: Synchronisiert mit DOCUMENT_MAX_FILE_SIZE_MB",
+      "Updater: npm ci nach tar-Extraktion für neue Abhängigkeiten"
+    ]
+  },
+  {
+    "version": "1.10.0",
+    "date": "2026-02-24",
+    "changes": [
+      "Event Bus: Plugin-zu-Plugin-Kommunikation über fastify.events.emit/on",
+      "Benachrichtigungssystem: Glocke in der Top-Bar, SSE-Echtzeit, fastify.notify.send()",
+      "Webhook-System: CRUD-Verwaltung, HMAC-signierte HTTP-Zustellung bei Events",
+      "Quick Actions: Plugin-erweiterbare Aktionen in der globalen Suche",
+      "Neue Permissions: webhooks.manage, notifications.view",
+      "Plugin Dev Guide: 4 neue Sektionen und erweiterte Core-API-Tabelle"
+    ]
+  },
+  {
+    "version": "1.9.21",
+    "date": "2026-02-24",
+    "changes": [
+      "Sidebar-Untermenüs: Plugins können Menüpunkte unter ausklappbaren Gruppen zusammenfassen",
+      "PluginNavItem erweitert: Neue Felder group, groupIcon, groupOrder für Gruppierung",
+      "Gruppen-State wird im localStorage gespeichert",
+      "Plugin Dev Guide: Untermenü-Dokumentation mit Beispiel"
+    ]
+  },
+  {
+    "version": "1.9.20",
+    "date": "2026-02-24",
+    "changes": [
+      "Globale Top-Bar: Neue Leiste mit zentraler Suche und Mandantenswitcher",
+      "Globale Suche: Cmd+K / Ctrl+K Shortcut",
+      "Plugin-Suche: Plugins können eigene Suchergebnisse bereitstellen",
+      "Mandantenswitcher: Von der Sidebar in die Top-Bar verschoben",
+      "Such-API: Neuer Endpoint GET /api/auth/search mit Permission-Filterung"
+    ]
+  },
+  {
+    "version": "1.9.19",
+    "date": "2026-02-24",
+    "changes": [
+      "Plugin-Einstellungen: Plugins können eigene Settings-Panels bereitstellen",
+      "Settings-API: Neue Endpoints GET/PUT /api/admin/settings/plugin/:pluginId",
+      "Einstellungsseite: Zeigt Plugin-Panels unterhalb der Systemeinstellungen",
+      "Plugin Dev Guide: Neue Sektion 6.5 mit Settings-API"
+    ]
+  },
+  {
+    "version": "1.9.18",
+    "date": "2026-02-24",
+    "changes": [
+      "Cross-Plugin Extension Tiles: Plugins können Kacheln in Ansichten anderer Plugins bereitstellen",
+      "useExtensionTiles Hook: Consumer-Plugins rendern fremde Kacheln an benannten Slots",
+      "Plugin Dev Guide: Neue Sektion 6.4 mit Provider/Consumer-Anleitung"
+    ]
+  },
+  {
+    "version": "1.9.17",
+    "date": "2026-02-22",
+    "changes": [
+      "Plugin-Deinstallation: Plugins können über den Admin-Updatebereich entfernt werden",
+      "Installierte Plugins: Eigene Tabelle mit Status, Version und Aktionen",
+      "Plugin-Remove: Bereinigung von Permissions, Settings, Migrations-Tracking und Plugin-Dateien",
+      "Sicherheit: normalizePluginId und resolvePluginDirectory mit Path-Traversal-Schutz"
+    ]
+  },
+  {
+    "version": "1.9.16",
+    "date": "2026-02-21",
+    "changes": [
+      "Update-Tasks: Asynchrone Updates mit Progress-Tracking und Live-Log im Frontend",
+      "Auto-Refresh nach Core-Neustart mit Versions-Polling",
+      "Version wird automatisch aus package.json aufgelöst (resolveAppVersion)"
+    ]
+  },
+  {
+    "version": "1.9.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Update-Integrität: SHA-256-Hash-Prüfung für Core- und Plugin-Downloads",
+      "Ed25519-Signatur: Optionale kryptographische Signaturprüfung für Updates",
+      "Updater: Komplett überarbeitet mit Integritätsprüfung und Signatur-Payload"
+    ]
+  },
+  {
+    "version": "1.8.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Encryption at Rest: E-Mail, Anzeigename, Vor-/Nachname werden verschlüsselt gespeichert",
+      "Rollenverwaltung: Neue Admin-Seite zum Erstellen, Bearbeiten und Löschen von Rollen",
+      "Einzelrechte pro Benutzer: Zusätzliche Berechtigungen additiv zu Rollen vergeben",
+      "Backup: Verschlüsselte Profilfelder werden beim Export entschlüsselt und Import re-verschlüsselt"
+    ]
+  },
+  {
+    "version": "1.7.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Datei-Explorer: Verzeichnisse und Dateien durchsuchen (lokal und externe Speicherorte)",
+      "Datei-Download/Vorschau: Inline-Anzeige für PDF, Bilder und Text direkt aus dem Explorer",
+      "Storage-Binding: Aktiven Speicherort (lokal/extern) konfigurieren und umschalten"
+    ]
+  },
+  {
+    "version": "1.6.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Dokumentenspeicher: Admin-Seite zur Verwaltung von lokalen und externen Speicherorten",
+      "Externe Verzeichnisse: Konfigurierbare Ordner (NAS, Netzlaufwerke) mit Statusprüfung",
+      "Storage-API: GET/PUT /api/admin/documents/storage für Speicherkonfiguration"
+    ]
+  },
+  {
+    "version": "1.5.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Backup: Encryption-Passthrough und globaler Export/Import ohne Mandantenbindung",
+      "Auth: Login-Seite überspringt unnötigen /me-Refresh (schnellerer Seitenaufbau)",
+      "Dashboard: Kachelverwaltung alphabetisch sortiert für bessere Übersicht"
+    ]
+  },
+  {
+    "version": "1.4.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Dashboard: Frei konfigurierbares Kachel-System mit Drag & Drop und Größenänderung",
+      "Dokumentenverwaltung: Zentrale Core-API für Datei-Upload, Download, ACL und Verknüpfung",
+      "Rollen-System: Automatische Rechte-Synchronisation bei neuen Core-Permissions"
+    ]
+  },
+  {
+    "version": "1.3.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Benutzerverwaltung: Komplett überarbeitetes Modal mit Vor-/Nachname, Rollen und Mandanten",
+      "Mandanten löschen: Sichere Löschung mit Benutzerprüfung und Fallback-Zuweisung",
+      "Audit-Log: Mandantenname in Liste und Detail, Filter nach Mandant"
+    ]
+  },
+  {
+    "version": "1.2.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Sidebar: Neuer Logout-Button mit SVG-Icon",
+      "Profil: Klick auf Benutzerpanel öffnet die Profilseite",
+      "FormData-Support: API-Fetch unterstützt jetzt Datei-Uploads (Avatar)"
+    ]
+  },
+  {
+    "version": "1.1.0",
+    "date": "2026-02-21",
+    "changes": [
+      "Mandantenfähigkeit: Mehrmandanten-System mit Mandantenwechsel",
+      "Profilseite: Eigenes Profil mit Anzeigename und Avatar-Upload",
+      "Admin-Navigation: Neues Admin-Shell-Layout mit horizontaler Tab-Navigation",
+      "Sidebar: SVG-Icons statt Emojis für konsistentes Design"
+    ]
+  },
+  {
+    "version": "1.0.0",
+    "date": "2026-02-20",
+    "changes": [
+      "Erstveröffentlichung der MIKE WorkSpace",
+      "Dashboard mit Systemstatus, aktiven Plugins und Benutzerinfo",
+      "Benutzerverwaltung mit Rollen und Berechtigungen (RBAC)",
+      "Zwei-Faktor-Authentifizierung (MFA) mit TOTP und Recovery-Codes",
+      "Plugin-System: Installierbare Erweiterungen mit eigenem Backend und Frontend",
+      "Update-Manager: Core- und Plugin-Updates über die Weboberfläche",
+      "Backup und Restore: Vollständige Datensicherung als ZIP-Download",
+      "Audit-Log: Lückenlose Protokollierung aller Admin-Aktionen",
+      "Automatischer Installer für Debian/Ubuntu-Server"
+    ]
+  }
+]
