@@ -1451,6 +1451,7 @@ a {
   margin-bottom: var(--space-xs);
 }
 
+.input,
 .form-input {
   width: 100%;
   padding: var(--space-sm) var(--space-md);
@@ -1460,15 +1461,24 @@ a {
   font-family: inherit;
   color: var(--color-text);
   background: var(--color-surface);
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+  -webkit-appearance: none;
+  appearance: none;
 }
 
+.input::placeholder,
+.form-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input:focus,
 .form-input:focus {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
+.input:disabled,
 .form-input:disabled {
   background: var(--color-bg);
   cursor: not-allowed;
@@ -2423,9 +2433,11 @@ tr:hover td {
 }
 
 .plugin-form-dialog {
-  width: min(920px, 100%);
+  width: min(860px, 100%);
   max-height: calc(100vh - 48px);
-  padding: var(--space-xl);
+  padding: clamp(18px, 2.2vw, 28px);
+  border-radius: 18px;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
 }
 
 .plugin-form-header {
@@ -2433,30 +2445,30 @@ tr:hover td {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-md);
-  margin-bottom: var(--space-lg);
+  margin-bottom: 18px;
 }
 
 .plugin-form-header h2 {
   margin: 0;
-  font-size: clamp(1.35rem, 2.1vw, 1.7rem);
+  font-size: clamp(1.5rem, 2.1vw, 1.95rem);
   line-height: 1.2;
 }
 
 .plugin-form-body {
   display: grid;
-  gap: var(--space-md);
+  gap: 14px;
 }
 
 .plugin-form-section {
   border-top: 1px solid var(--color-border);
-  padding-top: var(--space-md);
+  padding-top: 16px;
   display: grid;
-  gap: var(--space-sm);
+  gap: 12px;
 }
 
 .plugin-form-section-title {
   margin: 0;
-  font-size: var(--font-size-xs);
+  font-size: 0.76rem;
   color: var(--color-text-muted);
   font-weight: 700;
   text-transform: uppercase;
@@ -2465,7 +2477,7 @@ tr:hover td {
 
 .plugin-form-grid {
   display: grid;
-  gap: var(--space-sm);
+  gap: 12px;
 }
 
 .plugin-form-grid.two {
@@ -2479,7 +2491,8 @@ tr:hover td {
 .plugin-form-radio-group {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-md);
+  gap: 16px;
+  margin-bottom: 2px;
 }
 
 .plugin-form-radio {
@@ -2487,16 +2500,23 @@ tr:hover td {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  font-size: var(--font-size-lg);
-  font-weight: 500;
+  font-size: 1.06rem;
+  font-weight: 600;
 }
 
 .plugin-form-dialog .input,
 .plugin-form-dialog .form-input {
-  min-height: 52px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  font-size: var(--font-size-lg);
+  min-height: 48px;
+  padding: 10px 14px;
+  border-radius: 13px;
+  font-size: 1.05rem;
+  border-color: #dbe3ef;
+  background: #ffffff;
+}
+
+.plugin-form-dialog .input:hover,
+.plugin-form-dialog .form-input:hover {
+  border-color: #cfd8e7;
 }
 
 .plugin-form-dialog textarea.input,
@@ -2509,6 +2529,17 @@ tr:hover td {
   display: flex;
   justify-content: flex-end;
   gap: var(--space-sm);
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.plugin-form-footer .btn {
+  min-width: 130px;
+  min-height: 42px;
+  border-radius: 12px;
+  font-size: 1.02rem;
+  font-weight: 600;
+  justify-content: center;
 }
 
 @media (max-width: 900px) {

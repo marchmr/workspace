@@ -468,7 +468,7 @@ export default function CustomerListPage() {
                 <PluginFormDialog
                     title="Neuer Kunde"
                     onClose={() => { setShowForm(false); setDuplicates([]); }}
-                    maxWidth={980}
+                    maxWidth={860}
                     footer={(
                         <>
                             <button className="btn btn-secondary" onClick={() => { setShowForm(false); setDuplicates([]); }}>
