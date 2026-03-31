@@ -2,9 +2,9 @@
 // Nicht manuell bearbeiten.
 
 import type { ComponentType, LazyExoticComponent } from 'react';
-import * as plugin_quicklinks_0 from '../../plugins/quicklinks/frontend/index';
-import * as plugin_todo_1 from '../../plugins/todo/frontend/index';
-import * as plugin_videoplattform_2 from '../../plugins/videoplattform/frontend/index';
+import * as plugin_crm_0 from '../../plugins/crm/frontend/index';
+import * as plugin_quicklinks_1 from '../../plugins/quicklinks/frontend/index';
+import * as plugin_todo_2 from '../../plugins/todo/frontend/index';
 
 export interface PluginRoute {
     path: string;
@@ -99,36 +99,36 @@ export interface PluginRegistryEntry {
 
 export const pluginRegistry: PluginRegistryEntry[] = [
     {
+        id: 'crm',
+        name: 'CRM',
+        routes: (Array.isArray((plugin_crm_0 as any).routes) ? (plugin_crm_0 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_crm_0 as any).navItems) ? (plugin_crm_0 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_crm_0 as any).dashboardTiles) ? (plugin_crm_0 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_crm_0 as any).extensionTiles) ? (plugin_crm_0 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_crm_0 as any).settingsPanel && typeof (plugin_crm_0 as any).settingsPanel === 'object' ? (plugin_crm_0 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_crm_0 as any).searchProvider && typeof (plugin_crm_0 as any).searchProvider === 'object' ? (plugin_crm_0 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_crm_0 as any).quickActions) ? (plugin_crm_0 as any).quickActions : []) as PluginQuickAction[],
+    },
+    {
         id: 'quicklinks',
         name: 'Schnellzugriff',
-        routes: (Array.isArray((plugin_quicklinks_0 as any).routes) ? (plugin_quicklinks_0 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_quicklinks_0 as any).navItems) ? (plugin_quicklinks_0 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_quicklinks_0 as any).dashboardTiles) ? (plugin_quicklinks_0 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_quicklinks_0 as any).extensionTiles) ? (plugin_quicklinks_0 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_quicklinks_0 as any).settingsPanel && typeof (plugin_quicklinks_0 as any).settingsPanel === 'object' ? (plugin_quicklinks_0 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_quicklinks_0 as any).searchProvider && typeof (plugin_quicklinks_0 as any).searchProvider === 'object' ? (plugin_quicklinks_0 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_quicklinks_0 as any).quickActions) ? (plugin_quicklinks_0 as any).quickActions : []) as PluginQuickAction[],
+        routes: (Array.isArray((plugin_quicklinks_1 as any).routes) ? (plugin_quicklinks_1 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_quicklinks_1 as any).navItems) ? (plugin_quicklinks_1 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_quicklinks_1 as any).dashboardTiles) ? (plugin_quicklinks_1 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_quicklinks_1 as any).extensionTiles) ? (plugin_quicklinks_1 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_quicklinks_1 as any).settingsPanel && typeof (plugin_quicklinks_1 as any).settingsPanel === 'object' ? (plugin_quicklinks_1 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_quicklinks_1 as any).searchProvider && typeof (plugin_quicklinks_1 as any).searchProvider === 'object' ? (plugin_quicklinks_1 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_quicklinks_1 as any).quickActions) ? (plugin_quicklinks_1 as any).quickActions : []) as PluginQuickAction[],
     },
     {
         id: 'todo',
         name: 'Aufgaben',
-        routes: (Array.isArray((plugin_todo_1 as any).routes) ? (plugin_todo_1 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_todo_1 as any).navItems) ? (plugin_todo_1 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_todo_1 as any).dashboardTiles) ? (plugin_todo_1 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_todo_1 as any).extensionTiles) ? (plugin_todo_1 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_todo_1 as any).settingsPanel && typeof (plugin_todo_1 as any).settingsPanel === 'object' ? (plugin_todo_1 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_todo_1 as any).searchProvider && typeof (plugin_todo_1 as any).searchProvider === 'object' ? (plugin_todo_1 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_todo_1 as any).quickActions) ? (plugin_todo_1 as any).quickActions : []) as PluginQuickAction[],
-    },
-    {
-        id: 'videoplattform',
-        name: 'Videoplattform',
-        routes: (Array.isArray((plugin_videoplattform_2 as any).routes) ? (plugin_videoplattform_2 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_videoplattform_2 as any).navItems) ? (plugin_videoplattform_2 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_videoplattform_2 as any).dashboardTiles) ? (plugin_videoplattform_2 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_videoplattform_2 as any).extensionTiles) ? (plugin_videoplattform_2 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_videoplattform_2 as any).settingsPanel && typeof (plugin_videoplattform_2 as any).settingsPanel === 'object' ? (plugin_videoplattform_2 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_videoplattform_2 as any).searchProvider && typeof (plugin_videoplattform_2 as any).searchProvider === 'object' ? (plugin_videoplattform_2 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_videoplattform_2 as any).quickActions) ? (plugin_videoplattform_2 as any).quickActions : []) as PluginQuickAction[],
+        routes: (Array.isArray((plugin_todo_2 as any).routes) ? (plugin_todo_2 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_todo_2 as any).navItems) ? (plugin_todo_2 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_todo_2 as any).dashboardTiles) ? (plugin_todo_2 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_todo_2 as any).extensionTiles) ? (plugin_todo_2 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_todo_2 as any).settingsPanel && typeof (plugin_todo_2 as any).settingsPanel === 'object' ? (plugin_todo_2 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_todo_2 as any).searchProvider && typeof (plugin_todo_2 as any).searchProvider === 'object' ? (plugin_todo_2 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_todo_2 as any).quickActions) ? (plugin_todo_2 as any).quickActions : []) as PluginQuickAction[],
     }
 ];

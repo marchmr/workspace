@@ -1,0 +1,29 @@
+{
+    "id": "crm",
+    "name": "CRM",
+    "version": "1.0.0",
+    "description": "Kundenverwaltung mit kachelbasierter Kundenakte und Ticketsystem",
+    "author": "MIKE Team",
+    "dependencies": [],
+    "backend_entry": "backend/index.ts",
+    "frontend_entry": "frontend/index.tsx",
+    "nav_icon": "crm",
+    "nav_label": "CRM",
+    "nav_order": 10,
+    "permissions": [
+        "crm.view",
+        "crm.create",
+        "crm.edit",
+        "crm.delete",
+        "crm.tickets.view",
+        "crm.tickets.create",
+        "crm.tickets.edit",
+        "crm.tickets.delete",
+        "crm.contacts.view",
+        "crm.contacts.edit",
+        "crm.notes.view",
+        "crm.notes.edit",
+        "crm.manage"
+    ],
+    "settings_page": true
+}

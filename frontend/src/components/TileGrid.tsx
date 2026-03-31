@@ -34,6 +34,8 @@ export interface TileGridProps {
     columns?: number;
     rowHeight?: number;
     gap?: number;
+    /** Deaktiviert Drag/Resize-Interaktionen */
+    locked?: boolean;
     onChange: (items: TileGridItem[]) => void;
     renderTile: (item: TileGridItem, sizeClass: TileSizeClass) => ReactNode;
     /** Context menu content when right-clicking empty space */
@@ -148,6 +150,7 @@ export function TileGrid({
     columns = DEFAULT_COLUMNS,
     rowHeight = DEFAULT_ROW_HEIGHT,
     gap = DEFAULT_GAP,
+    locked = false,
     onChange,
     renderTile,
     onEmptyContextMenu,
@@ -316,7 +319,7 @@ export function TileGrid({
 
     /* ── Start Drag ── */
     const startDrag = useCallback((id: string, clientX: number, clientY: number) => {
-        if (isMobile) return;
+        if (isMobile || locked) return;
         const item = items.find(i => i.id === id);
         if (!item) return;
 
@@ -332,11 +335,11 @@ export function TileGrid({
         };
         setDragId(id);
         setGhostRect({ x: item.x, y: item.y, w: item.w, h: item.h });
-    }, [items, isMobile]);
+    }, [items, isMobile, locked]);
 
     /* ── Start Resize ── */
     const startResize = useCallback((id: string, clientX: number, clientY: number) => {
-        if (isMobile) return;
+        if (isMobile || locked) return;
         const item = items.find(i => i.id === id);
         if (!item) return;
 
@@ -352,15 +355,16 @@ export function TileGrid({
         };
         setResizeId(id);
         setGhostRect({ x: item.x, y: item.y, w: item.w, h: item.h });
-    }, [items, isMobile]);
+    }, [items, isMobile, locked]);
 
     /* ── Context Menu on empty area ── */
     const handleContainerContextMenu = useCallback((e: ReactMouseEvent) => {
+        if (locked) return;
         // Only trigger if clicking empty space (i.e. the container itself)
         if (e.target !== containerRef.current) return;
         e.preventDefault();
         onEmptyContextMenu?.({ x: e.clientX, y: e.clientY });
-    }, [onEmptyContextMenu]);
+    }, [onEmptyContextMenu, locked]);
 
     /* ── Render ── */
     const visibleItems = useMemo(() => items.filter(it => it.visible !== false), [items]);
@@ -414,11 +418,13 @@ export function TileGrid({
                         <div
                             className="tile-grid-drag-zone"
                             onMouseDown={(e) => {
+                                if (locked) return;
                                 if (e.button !== 0) return;
                                 e.preventDefault();
                                 startDrag(item.id, e.clientX, e.clientY);
                             }}
                             onTouchStart={(e: ReactTouchEvent) => {
+                                if (locked) return;
                                 if (e.touches.length !== 1) return;
                                 startDrag(item.id, e.touches[0].clientX, e.touches[0].clientY);
                             }}
@@ -432,13 +438,16 @@ export function TileGrid({
                         {/* Resize Handle */}
                         <div
                             className="tile-grid-resize-handle"
+                            style={locked ? { opacity: 0.35, cursor: 'not-allowed' } : undefined}
                             onMouseDown={(e) => {
+                                if (locked) return;
                                 if (e.button !== 0) return;
                                 e.preventDefault();
                                 e.stopPropagation();
                                 startResize(item.id, e.clientX, e.clientY);
                             }}
                             onTouchStart={(e: ReactTouchEvent) => {
+                                if (locked) return;
                                 if (e.touches.length !== 1) return;
                                 e.stopPropagation();
                                 startResize(item.id, e.touches[0].clientX, e.touches[0].clientY);
