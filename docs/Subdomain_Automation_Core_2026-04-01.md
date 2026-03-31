@@ -10,6 +10,12 @@ Für die Videoplattform-Subdomain kann der Admin jetzt aus den Plugin-Einstellun
 5. Nginx neu laden
 6. Let's Encrypt Zertifikat mit Certbot beantragen
 
+Zusätzlich abgesichert:
+- Nginx-Config wird atomisch geschrieben (Temp-Datei + Rename)
+- Vorhandene Config wird vor Änderung als Backup-Datei gesichert (`.bak.<timestamp>`)
+- Bei Fehlern in `nginx -t` oder Reload wird automatisch Rollback versucht
+- Schreibfehler auf read-only Pfaden liefern klare Hinweise für Dev-Konfiguration
+
 ## Neu im Core
 
 ### Konfiguration (`backend/src/core/config.ts`)

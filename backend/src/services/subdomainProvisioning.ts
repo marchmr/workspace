@@ -82,11 +82,12 @@ function resolveExpectedServerIps(): string[] {
         .map((ip) => ip.trim())
         .filter(Boolean);
 
-    if (configured.length > 0) {
-        return Array.from(new Set(configured));
-    }
-
+    if (configured.length > 0) return Array.from(new Set(configured));
     return collectLocalIps();
+}
+
+function readOnlyHintForPath(filePath: string): string {
+    return `Pfad nicht schreibbar: ${filePath}. Für lokale Entwicklung SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR/SUBDOMAIN_NGINX_SITES_ENABLED_DIR auf ein beschreibbares Verzeichnis setzen.`;
 }
 
 export async function checkDnsPointsToServer(rawHost: string): Promise<SubdomainDnsStatus> {
@@ -181,15 +182,50 @@ async function runCommand(command: string, args: string[]): Promise<{ ok: boolea
     }
 }
 
+async function fileExists(filePath: string): Promise<boolean> {
+    return fs.access(filePath).then(() => true).catch(() => false);
+}
+
+async function backupExistingConfig(configFile: string): Promise<{ existed: boolean; backupPath?: string; previousContent?: string }> {
+    const exists = await fileExists(configFile);
+    if (!exists) return { existed: false };
+
+    const previousContent = await fs.readFile(configFile, 'utf8');
+    const backupPath = `${configFile}.bak.${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    await fs.writeFile(backupPath, previousContent, 'utf8');
+
+    return { existed: true, backupPath, previousContent };
+}
+
+async function writeConfigAtomic(configFile: string, content: string): Promise<void> {
+    const tempPath = `${configFile}.tmp.${process.pid}.${Date.now()}`;
+    await fs.writeFile(tempPath, content, 'utf8');
+    await fs.rename(tempPath, configFile);
+}
+
+async function rollbackConfig(configFile: string, previousContent: string | undefined, hadPrevious: boolean): Promise<string> {
+    try {
+        if (hadPrevious && previousContent !== undefined) {
+            await writeConfigAtomic(configFile, previousContent);
+            return 'Vorherige Konfiguration wiederhergestellt';
+        }
+
+        await fs.rm(configFile, { force: true });
+        return 'Neue Konfiguration entfernt';
+    } catch (error: any) {
+        return `Rollback fehlgeschlagen: ${error?.message || 'unbekannter Fehler'}`;
+    }
+}
+
 export async function getSubdomainStatus(rawHost: string): Promise<SubdomainStatusResult> {
     const host = normalizeHost(rawHost);
     const configFile = path.join(config.subdomainProvisioning.nginxSitesAvailableDir, fileNameForHost(host));
     const enabledFile = path.join(config.subdomainProvisioning.nginxSitesEnabledDir, fileNameForHost(host));
 
     const [configExists, enabledExists, sslCertExists, dnsStatus] = await Promise.all([
-        fs.access(configFile).then(() => true).catch(() => false),
-        fs.access(enabledFile).then(() => true).catch(() => false),
-        fs.access(getCertPath(host)).then(() => true).catch(() => false),
+        fileExists(configFile),
+        fileExists(enabledFile),
+        fileExists(getCertPath(host)),
         checkDnsPointsToServer(host),
     ]);
 
@@ -224,16 +260,7 @@ export async function provisionSubdomain(rawHost: string, publicPath = '/kundenp
             message: 'DNS zeigt nicht auf diesen Server',
             details: `A=${dnsStatus.resolvedA.join(', ') || '-'} AAAA=${dnsStatus.resolvedAAAA.join(', ') || '-'}`,
         });
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
 
     steps.push({
@@ -246,78 +273,53 @@ export async function provisionSubdomain(rawHost: string, publicPath = '/kundenp
     await fs.mkdir(config.subdomainProvisioning.nginxSitesAvailableDir, { recursive: true });
     await fs.mkdir(config.subdomainProvisioning.nginxSitesEnabledDir, { recursive: true });
 
+    const backup = await backupExistingConfig(configFile);
+    if (backup.backupPath) {
+        steps.push({ key: 'nginx_backup', ok: true, message: 'Vorherige Konfiguration gesichert', details: backup.backupPath });
+    }
+
     const nginxConfig = buildNginxConfig(host, publicPath);
-    await fs.writeFile(configFile, nginxConfig, 'utf8');
-    steps.push({ key: 'nginx_write', ok: true, message: 'Nginx-Konfiguration geschrieben', details: configFile });
+    try {
+        await writeConfigAtomic(configFile, nginxConfig);
+        steps.push({ key: 'nginx_write', ok: true, message: 'Nginx-Konfiguration atomisch geschrieben', details: configFile });
+    } catch (error: any) {
+        const details = `${error?.message || 'unbekannter Fehler'} | ${readOnlyHintForPath(configFile)}`;
+        steps.push({ key: 'nginx_write', ok: false, message: 'Nginx-Konfiguration konnte nicht geschrieben werden', details });
+        manualCommands.push(`sudo tee ${configFile} >/dev/null <<'NGINX'\n${nginxConfig}\nNGINX`);
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
+    }
 
     const symlinkCommand = await runCommand('ln', ['-sfn', configFile, enabledFile]);
     if (!symlinkCommand.ok) {
-        steps.push({ key: 'nginx_enable', ok: false, message: 'Nginx-Site konnte nicht aktiviert werden', details: symlinkCommand.output });
+        const rollbackMessage = await rollbackConfig(configFile, backup.previousContent, backup.existed);
+        steps.push({ key: 'nginx_enable', ok: false, message: 'Nginx-Site konnte nicht aktiviert werden', details: `${symlinkCommand.output}\n${rollbackMessage}` });
         manualCommands.push(`sudo ln -sfn ${configFile} ${enabledFile}`);
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
     steps.push({ key: 'nginx_enable', ok: true, message: 'Nginx-Site aktiviert' });
 
     const nginxTest = await runCommand('nginx', ['-t']);
     if (!nginxTest.ok) {
-        steps.push({ key: 'nginx_test', ok: false, message: 'nginx -t fehlgeschlagen', details: nginxTest.output });
+        const rollbackMessage = await rollbackConfig(configFile, backup.previousContent, backup.existed);
+        steps.push({ key: 'nginx_test', ok: false, message: 'nginx -t fehlgeschlagen, Rollback ausgeführt', details: `${nginxTest.output}\n${rollbackMessage}` });
         manualCommands.push('sudo nginx -t');
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
     steps.push({ key: 'nginx_test', ok: true, message: 'nginx -t erfolgreich' });
 
     const reload = await runCommand('systemctl', ['reload', 'nginx']);
     if (!reload.ok) {
-        steps.push({ key: 'nginx_reload', ok: false, message: 'Nginx konnte nicht neu geladen werden', details: reload.output });
+        const rollbackMessage = await rollbackConfig(configFile, backup.previousContent, backup.existed);
+        steps.push({ key: 'nginx_reload', ok: false, message: 'Nginx konnte nicht neu geladen werden, Rollback ausgeführt', details: `${reload.output}\n${rollbackMessage}` });
         manualCommands.push('sudo systemctl reload nginx');
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
     steps.push({ key: 'nginx_reload', ok: true, message: 'Nginx neu geladen' });
 
     if (!config.subdomainProvisioning.sslEmail) {
-        steps.push({
-            key: 'ssl',
-            ok: false,
-            message: 'SSL_EMAIL/SUBDOMAIN_SSL_EMAIL fehlt, Zertifikat wurde nicht beantragt',
-        });
+        steps.push({ key: 'ssl', ok: false, message: 'SSL_EMAIL/SUBDOMAIN_SSL_EMAIL fehlt, Zertifikat wurde nicht beantragt' });
         manualCommands.push(`sudo certbot --nginx -d ${host} --email you@example.com --agree-tos --non-interactive --redirect`);
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
 
     const certbot = await runCommand('certbot', [
@@ -332,24 +334,12 @@ export async function provisionSubdomain(rawHost: string, publicPath = '/kundenp
     if (!certbot.ok) {
         steps.push({ key: 'ssl', ok: false, message: 'Zertifikat konnte nicht ausgestellt werden', details: certbot.output });
         manualCommands.push(`sudo certbot --nginx -d ${host} --email ${config.subdomainProvisioning.sslEmail} --agree-tos --non-interactive --redirect`);
-        return {
-            ok: false,
-            host,
-            configFile,
-            enabledFile,
-            sslCertExists: false,
-            dns: dnsStatus,
-            steps,
-            manualCommands,
-        };
+        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
     }
 
-    const sslCertExists = await fs.access(getCertPath(host)).then(() => true).catch(() => false);
+    const sslCertExists = await fileExists(getCertPath(host));
     steps.push({ key: 'ssl', ok: sslCertExists, message: sslCertExists ? 'SSL-Zertifikat aktiv' : 'Certbot lief, aber Zertifikat nicht gefunden' });
-
-    if (!sslCertExists) {
-        manualCommands.push(`sudo certbot certificates -d ${host}`);
-    }
+    if (!sslCertExists) manualCommands.push(`sudo certbot certificates -d ${host}`);
 
     return {
         ok: sslCertExists,
