@@ -27,6 +27,15 @@ function optionalBoolEnv(key: string, defaultValue: boolean): boolean {
     return ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
 }
 
+function optionalCsvEnv(key: string): string[] {
+    const raw = process.env[key];
+    if (!raw) return [];
+    return raw
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+}
+
 function normalizeUpdateUrl(value: string): string {
     const fallback = 'https://api.github.com/repos/marchmr/workspace';
     const raw = (value || '').trim();
@@ -77,6 +86,9 @@ function resolveAppVersion(defaultVersion: string): string {
     return defaultVersion;
 }
 
+const appRootDir = path.resolve(__dirname, '../../..');
+const appPort = parseInt(optionalEnv('PORT', '3000'), 10);
+
 export const config = {
     db: {
         host: requireEnv('DB_HOST'),
@@ -98,7 +110,7 @@ export const config = {
     },
 
     server: {
-        port: parseInt(optionalEnv('PORT', '3000'), 10),
+        port: appPort,
         env: optionalEnv('NODE_ENV', 'production'),
     },
 
@@ -122,9 +134,20 @@ export const config = {
     app: {
         version: resolveAppVersion('1.20.0'),
         // App-Root: eine Ebene oberhalb von backend/ (funktioniert in src und dist)
-        rootDir: path.resolve(__dirname, '../../..'),
+        rootDir: appRootDir,
         pluginsDir: path.resolve(__dirname, '../../../plugins'),
         uploadsDir: path.resolve(__dirname, '../../../uploads'),
+    },
+
+    subdomainProvisioning: {
+        enabled: optionalBoolEnv('SUBDOMAIN_PROVISIONING_ENABLED', true),
+        useSudo: optionalBoolEnv('SUBDOMAIN_PROVISIONING_USE_SUDO', true),
+        frontendDistDir: optionalEnv('SUBDOMAIN_FRONTEND_DIST_DIR', path.resolve(appRootDir, 'frontend/dist')),
+        backendProxyUrl: optionalEnv('SUBDOMAIN_BACKEND_PROXY_URL', `http://127.0.0.1:${appPort}`),
+        nginxSitesAvailableDir: optionalEnv('SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR', '/etc/nginx/sites-available'),
+        nginxSitesEnabledDir: optionalEnv('SUBDOMAIN_NGINX_SITES_ENABLED_DIR', '/etc/nginx/sites-enabled'),
+        sslEmail: optionalEnv('SUBDOMAIN_SSL_EMAIL', optionalEnv('SSL_EMAIL', '')),
+        expectedServerIps: optionalCsvEnv('SUBDOMAIN_EXPECTED_SERVER_IPS'),
     },
 } as const;
 

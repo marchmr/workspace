@@ -32,6 +32,7 @@ import authRoutes from './routes/auth.js';
 import adminRoutes from './routes/admin.js';
 import documentsRoutes from './routes/documents.js';
 import healthRoutes from './routes/health.js';
+import subdomainProvisioningRoutes from './routes/subdomainProvisioning.js';
 
 const fastify = Fastify({
     logger: {
@@ -118,6 +119,7 @@ async function start(): Promise<void> {
         await fastify.register(authRoutes, { prefix: '/api/auth' });
         await fastify.register(notificationRoutes, { prefix: '/api/auth' });
         await fastify.register(adminRoutes, { prefix: '/api/admin' });
+        await fastify.register(subdomainProvisioningRoutes, { prefix: '/api/admin' });
         await fastify.register(webhookPlugin);
         await fastify.register(webhookRoutes, { prefix: '/api/admin/webhooks' });
         await fastify.register(schedulerRoutes, { prefix: '/api/admin' });

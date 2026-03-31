@@ -60,6 +60,7 @@ function resolveRoutePermission(entry: PluginRegistryEntry, route: PluginRoute):
 
 export default function App() {
     const hostRouting = getHostRoutingConfig();
+    const currentPathname = window.location.pathname || '/';
 
     const pluginRoutes = pluginRegistry.flatMap((entry) =>
         entry.routes
@@ -85,6 +86,10 @@ export default function App() {
     const protectedPluginRoutes = pluginRoutes.filter((route) => !route.isPublic);
     const publicPluginRoutes = pluginRoutes.filter((route) => route.isPublic);
     const firstPublicRoute = publicPluginRoutes[0]?.path ? toAbsoluteRoutePath(publicPluginRoutes[0].path) : null;
+    const hasPublicRouteMatch = publicPluginRoutes.some((route) => {
+        const absolutePath = toAbsoluteRoutePath(route.path);
+        return absolutePath === currentPathname;
+    });
 
     const protectedPluginRouteElements = protectedPluginRoutes.map((route) => (
         <Route
@@ -225,7 +230,7 @@ export default function App() {
             <ModalProvider>
                 <ToastContainer />
                 <BrowserRouter>
-                    {hostRouting.mode === 'public' ? publicRoutes : workspaceRoutes}
+                    {hostRouting.mode === 'public' || hasPublicRouteMatch ? publicRoutes : workspaceRoutes}
                 </BrowserRouter>
             </ModalProvider>
             </WebSocketProvider>

@@ -1,0 +1,18 @@
+{
+  "id": "videoplattform",
+  "name": "Videoplattform",
+  "version": "1.0.0",
+  "description": "Kunden-Videoplattform mit Freigabecodes und öffentlichem Portal auf Subdomain",
+  "author": "MIKE Team",
+  "dependencies": [],
+  "backend_entry": "backend/index.ts",
+  "frontend_entry": "frontend/index.tsx",
+  "nav_icon": "video",
+  "nav_label": "Videoplattform",
+  "nav_order": 35,
+  "permissions": [
+    "videoplattform.view",
+    "videoplattform.manage"
+  ],
+  "settings_page": true
+}
