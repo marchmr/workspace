@@ -3,6 +3,7 @@ import { useNavigate } from '@mike/hooks/usePluginNavigate';
 import { apiFetch } from '@mike/context/AuthContext';
 import { useToast } from '@mike/components/ModalProvider';
 import { usePermission } from '@mike/hooks/usePermission';
+import PluginFormDialog from '@mike/components/PluginFormDialog';
 
 /* ════════════════════════════════════════════
    SVG Icons
@@ -337,7 +338,7 @@ export default function CustomerListPage() {
                     borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-sm)',
                     fontSize: 'var(--font-size-sm)',
                 }}>
-                    <strong>{selected.size} ausgewaehlt</strong>
+                    <strong>{selected.size} ausgewählt</strong>
                     {canEdit && (
                         <>
                             <select
@@ -464,133 +465,123 @@ export default function CustomerListPage() {
 
             {/* Neuer-Kunde-Modal */}
             {showForm && (
-                <div style={{
-                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--space-md)',
-                }} onClick={() => setShowForm(false)}>
-                    <div className="card" style={{ padding: 'var(--space-lg)', maxWidth: 600, width: '100%', maxHeight: '90vh', overflow: 'auto' }}
-                        onClick={(e) => e.stopPropagation()}>
-                        <h2 style={{ marginBottom: 'var(--space-md)', fontSize: 'var(--font-size-lg)' }}>Neuer Kunde</h2>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-sm)' }}>
-                            {/* Typ */}
-                            <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                                    <input type="radio" name="type" value="company" checked={formData.type === 'company'} onChange={() => setFormData({ ...formData, type: 'company' })} />
-                                    Firma
-                                </label>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
-                                    <input type="radio" name="type" value="person" checked={formData.type === 'person'} onChange={() => setFormData({ ...formData, type: 'person' })} />
-                                    Privatperson
-                                </label>
-                            </div>
-
-                            {formData.type === 'company' && (
-                                <input className="input" placeholder="Firmenname *" value={formData.company_name || ''} onChange={(e) => setFormData({ ...formData, company_name: e.target.value })} autoFocus />
-                            )}
-
-                            {/* Bei Firma: Adresse zuerst, Personen-Felder optional */}
-                            {formData.type === 'company' ? (
-                                <>
-                                    <input className="input" placeholder="Strasse" value={formData.street || ''} onChange={(e) => setFormData({ ...formData, street: e.target.value })} />
-                                    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 'var(--space-sm)' }}>
-                                        <input className="input" placeholder="PLZ" value={formData.zip || ''} onChange={(e) => setFormData({ ...formData, zip: e.target.value })} />
-                                        <input className="input" placeholder="Ort" value={formData.city || ''} onChange={(e) => setFormData({ ...formData, city: e.target.value })} />
-                                    </div>
-
-                                    <select className="input" value={formData.status || 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
-                                        <option value="active">Aktiv</option>
-                                        <option value="inactive">Inaktiv</option>
-                                        <option value="prospect">Interessent</option>
-                                    </select>
-
-                                    {/* Optionaler 1. Ansprechpartner */}
-                                    <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 'var(--space-sm)', marginTop: 'var(--space-xs)' }}>
-                                        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 'var(--space-xs)' }}>
-                                            Optional: 1. Ansprechpartner
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
-                                            <select className="input" value={formData.salutation || ''} onChange={(e) => setFormData({ ...formData, salutation: e.target.value })}>
-                                                <option value="">Anrede</option>
-                                                <option value="Herr">Herr</option>
-                                                <option value="Frau">Frau</option>
-                                                <option value="Divers">Divers</option>
-                                            </select>
-                                            <div></div>
-                                            <input className="input" placeholder="Vorname" value={formData.first_name || ''} onChange={(e) => setFormData({ ...formData, first_name: e.target.value })} />
-                                            <input className="input" placeholder="Nachname" value={formData.last_name || ''} onChange={(e) => setFormData({ ...formData, last_name: e.target.value })} />
-                                        </div>
-                                        <input className="input" placeholder="E-Mail" value={formData.email || ''} onChange={(e) => setFormData({ ...formData, email: e.target.value })} style={{ marginTop: 'var(--space-sm)' }} />
-                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)' }}>
-                                            <input className="input" placeholder="Telefon" value={formData.phone || ''} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
-                                            <input className="input" placeholder="Mobil" value={formData.mobile || ''} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
-                                        </div>
-                                    </div>
-                                </>
-                            ) : (
-                                <>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
-                                        <select className="input" value={formData.salutation || ''} onChange={(e) => setFormData({ ...formData, salutation: e.target.value })}>
-                                            <option value="">Anrede</option>
-                                            <option value="Herr">Herr</option>
-                                            <option value="Frau">Frau</option>
-                                            <option value="Divers">Divers</option>
-                                        </select>
-                                        <div></div>
-                                        <input className="input" placeholder="Vorname" value={formData.first_name || ''} onChange={(e) => setFormData({ ...formData, first_name: e.target.value })} />
-                                        <input className="input" placeholder="Nachname *" value={formData.last_name || ''} onChange={(e) => setFormData({ ...formData, last_name: e.target.value })} />
-                                    </div>
-                                    <input className="input" placeholder="E-Mail" value={formData.email || ''} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-sm)' }}>
-                                        <input className="input" placeholder="Telefon" value={formData.phone || ''} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
-                                        <input className="input" placeholder="Mobil" value={formData.mobile || ''} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
-                                    </div>
-                                    <input className="input" placeholder="Strasse" value={formData.street || ''} onChange={(e) => setFormData({ ...formData, street: e.target.value })} />
-                                    <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 'var(--space-sm)' }}>
-                                        <input className="input" placeholder="PLZ" value={formData.zip || ''} onChange={(e) => setFormData({ ...formData, zip: e.target.value })} />
-                                        <input className="input" placeholder="Ort" value={formData.city || ''} onChange={(e) => setFormData({ ...formData, city: e.target.value })} />
-                                    </div>
-                                    <select className="input" value={formData.status || 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
-                                        <option value="active">Aktiv</option>
-                                        <option value="inactive">Inaktiv</option>
-                                        <option value="prospect">Interessent</option>
-                                    </select>
-                                </>
-                            )}
-
-                            {/* Duplikat-Warnung */}
-                            {duplicates.length > 0 && (
-                                <div style={{
-                                    padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)',
-                                    background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)',
-                                }}>
-                                    <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 4, color: 'var(--color-warning)' }}>
-                                        Moeglicherweise existiert dieser Kunde bereits:
-                                    </div>
-                                    {duplicates.map((d: any) => (
-                                        <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)', padding: '2px 0' }}>
-                                            <span>[{d.customer_number}] {d.display_name} — {d.city || ''} ({d.match_reason})</span>
-                                            <button
-                                                className="btn btn-secondary"
-                                                onClick={() => { setShowForm(false); navigate(`/crm/customers/${d.id}`); }}
-                                                style={{ fontSize: 11, padding: '2px 6px' }}
-                                            >
-                                                Öffnen
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end', marginTop: 'var(--space-sm)' }}>
-                                <button className="btn btn-secondary" onClick={() => { setShowForm(false); setDuplicates([]); }}>Abbrechen</button>
-                                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                                    {saving ? 'Speichern...' : (duplicates.length > 0 ? 'Trotzdem erstellen' : 'Erstellen')}
-                                </button>
-                            </div>
-                        </div>
+                <PluginFormDialog
+                    title="Neuer Kunde"
+                    onClose={() => { setShowForm(false); setDuplicates([]); }}
+                    maxWidth={980}
+                    footer={(
+                        <>
+                            <button className="btn btn-secondary" onClick={() => { setShowForm(false); setDuplicates([]); }}>
+                                Abbrechen
+                            </button>
+                            <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                                {saving ? 'Speichern...' : (duplicates.length > 0 ? 'Trotzdem erstellen' : 'Erstellen')}
+                            </button>
+                        </>
+                    )}
+                >
+                    <div className="plugin-form-radio-group">
+                        <label className="plugin-form-radio">
+                            <input type="radio" name="type" value="company" checked={formData.type === 'company'} onChange={() => setFormData({ ...formData, type: 'company' })} />
+                            Firma
+                        </label>
+                        <label className="plugin-form-radio">
+                            <input type="radio" name="type" value="person" checked={formData.type === 'person'} onChange={() => setFormData({ ...formData, type: 'person' })} />
+                            Privatperson
+                        </label>
                     </div>
-                </div>
+
+                    {formData.type === 'company' && (
+                        <input className="input" placeholder="Firmenname *" value={formData.company_name || ''} onChange={(e) => setFormData({ ...formData, company_name: e.target.value })} autoFocus />
+                    )}
+
+                    {formData.type === 'company' ? (
+                        <>
+                            <input className="input" placeholder="Straße" value={formData.street || ''} onChange={(e) => setFormData({ ...formData, street: e.target.value })} />
+                            <div className="plugin-form-grid plz-city">
+                                <input className="input" placeholder="PLZ" value={formData.zip || ''} onChange={(e) => setFormData({ ...formData, zip: e.target.value })} />
+                                <input className="input" placeholder="Ort" value={formData.city || ''} onChange={(e) => setFormData({ ...formData, city: e.target.value })} />
+                            </div>
+                            <select className="input" value={formData.status || 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
+                                <option value="active">Aktiv</option>
+                                <option value="inactive">Inaktiv</option>
+                                <option value="prospect">Interessent</option>
+                            </select>
+
+                            <div className="plugin-form-section">
+                                <p className="plugin-form-section-title">Optional: 1. Ansprechpartner</p>
+                                <div className="plugin-form-grid two">
+                                    <select className="input" value={formData.salutation || ''} onChange={(e) => setFormData({ ...formData, salutation: e.target.value })}>
+                                        <option value="">Anrede</option>
+                                        <option value="Herr">Herr</option>
+                                        <option value="Frau">Frau</option>
+                                        <option value="Divers">Divers</option>
+                                    </select>
+                                    <div />
+                                    <input className="input" placeholder="Vorname" value={formData.first_name || ''} onChange={(e) => setFormData({ ...formData, first_name: e.target.value })} />
+                                    <input className="input" placeholder="Nachname" value={formData.last_name || ''} onChange={(e) => setFormData({ ...formData, last_name: e.target.value })} />
+                                </div>
+                                <input className="input" placeholder="E-Mail" value={formData.email || ''} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                                <div className="plugin-form-grid two">
+                                    <input className="input" placeholder="Telefon" value={formData.phone || ''} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+                                    <input className="input" placeholder="Mobil" value={formData.mobile || ''} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="plugin-form-grid two">
+                                <select className="input" value={formData.salutation || ''} onChange={(e) => setFormData({ ...formData, salutation: e.target.value })}>
+                                    <option value="">Anrede</option>
+                                    <option value="Herr">Herr</option>
+                                    <option value="Frau">Frau</option>
+                                    <option value="Divers">Divers</option>
+                                </select>
+                                <div />
+                                <input className="input" placeholder="Vorname" value={formData.first_name || ''} onChange={(e) => setFormData({ ...formData, first_name: e.target.value })} />
+                                <input className="input" placeholder="Nachname *" value={formData.last_name || ''} onChange={(e) => setFormData({ ...formData, last_name: e.target.value })} />
+                            </div>
+                            <input className="input" placeholder="E-Mail" value={formData.email || ''} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
+                            <div className="plugin-form-grid two">
+                                <input className="input" placeholder="Telefon" value={formData.phone || ''} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
+                                <input className="input" placeholder="Mobil" value={formData.mobile || ''} onChange={(e) => setFormData({ ...formData, mobile: e.target.value })} />
+                            </div>
+                            <input className="input" placeholder="Straße" value={formData.street || ''} onChange={(e) => setFormData({ ...formData, street: e.target.value })} />
+                            <div className="plugin-form-grid plz-city">
+                                <input className="input" placeholder="PLZ" value={formData.zip || ''} onChange={(e) => setFormData({ ...formData, zip: e.target.value })} />
+                                <input className="input" placeholder="Ort" value={formData.city || ''} onChange={(e) => setFormData({ ...formData, city: e.target.value })} />
+                            </div>
+                            <select className="input" value={formData.status || 'active'} onChange={(e) => setFormData({ ...formData, status: e.target.value })}>
+                                <option value="active">Aktiv</option>
+                                <option value="inactive">Inaktiv</option>
+                                <option value="prospect">Interessent</option>
+                            </select>
+                        </>
+                    )}
+
+                    {duplicates.length > 0 && (
+                        <div style={{
+                            padding: 'var(--space-sm)', borderRadius: 'var(--radius-md)',
+                            background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.3)',
+                        }}>
+                            <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', marginBottom: 4, color: 'var(--color-warning)' }}>
+                                Möglicherweise existiert dieser Kunde bereits:
+                            </div>
+                            {duplicates.map((d: any) => (
+                                <div key={d.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-size-sm)', padding: '2px 0', gap: 8 }}>
+                                    <span>[{d.customer_number}] {d.display_name} — {d.city || ''} ({d.match_reason})</span>
+                                    <button
+                                        className="btn btn-secondary"
+                                        onClick={() => { setShowForm(false); navigate(`/crm/customers/${d.id}`); }}
+                                        style={{ fontSize: 12, padding: '4px 8px' }}
+                                    >
+                                        Öffnen
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </PluginFormDialog>
             )}
 
             {/* Bulk-Delete Bestätigung */}
@@ -604,8 +595,8 @@ export default function CustomerListPage() {
                         <h3 style={{ color: 'var(--color-danger)', marginBottom: 'var(--space-sm)' }}>Unwiderruflich löschen</h3>
                         <p style={{ marginBottom: 'var(--space-md)', fontSize: 'var(--font-size-sm)' }}>
                             {selected.size === 1
-                                ? 'Soll dieser Kunde wirklich unwiderruflich gelöscht werden? Diese Aktion kann nicht rückgaengig gemacht werden.'
-                                : `Sollen diese ${selected.size} Kunden wirklich unwiderruflich gelöscht werden? Diese Aktion kann nicht rückgaengig gemacht werden.`}
+                                ? 'Soll dieser Kunde wirklich unwiderruflich gelöscht werden? Diese Aktion kann nicht rückgängig gemacht werden.'
+                                : `Sollen diese ${selected.size} Kunden wirklich unwiderruflich gelöscht werden? Diese Aktion kann nicht rückgängig gemacht werden.`}
                         </p>
                         <div style={{ display: 'flex', gap: 'var(--space-sm)', justifyContent: 'flex-end' }}>
                             <button className="btn btn-secondary" onClick={() => setShowDeleteConfirm(false)}>Abbrechen</button>

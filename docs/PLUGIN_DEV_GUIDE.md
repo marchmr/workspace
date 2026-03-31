@@ -326,6 +326,21 @@ export async function down(knex: Knex): Promise<void> {
 
 ## 5. Frontend-Entwicklung
 
+### Verbindlicher Core-Formularstandard (für alle neuen Plugins)
+
+Große Formulare werden **core-seitig** vereinheitlicht.  
+Neue Plugin-Formulare sollen den zentralen Dialog verwenden:
+
+```tsx
+import PluginFormDialog from '@mike/components/PluginFormDialog';
+```
+
+Regeln:
+- Für größere Eingabemasken immer `PluginFormDialog` verwenden (kein eigenes Modal-Markup im Plugin).
+- Felder als `.input` oder `.form-input` im Dialog rendern (Größe/Abstände kommen aus dem Core-Design-System).
+- Bereichsstruktur mit `plugin-form-section`, `plugin-form-section-title` und `plugin-form-grid` nutzen.
+- Sichtbare deutsche Texte immer mit korrekten Umlauten schreiben: `ä`, `ö`, `ü`, `ß` (nicht `ae`, `oe`, `ue`, `ss`).
+
 ### Plugin-Registry-System
 
 Das Frontend nutzt ein **automatisch generiertes Registry-System**.
