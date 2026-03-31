@@ -90,6 +90,14 @@ function readOnlyHintForPath(filePath: string): string {
     return `Pfad nicht schreibbar: ${filePath}. Für lokale Entwicklung SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR/SUBDOMAIN_NGINX_SITES_ENABLED_DIR auf ein beschreibbares Verzeichnis setzen.`;
 }
 
+function isPermissionWriteError(error: any): boolean {
+    const code = String(error?.code || '').toUpperCase();
+    const msg = String(error?.message || '').toLowerCase();
+    return code === 'EACCES' || code === 'EPERM' || code === 'EROFS'
+        || msg.includes('permission denied')
+        || msg.includes('read-only file system');
+}
+
 export async function checkDnsPointsToServer(rawHost: string): Promise<SubdomainDnsStatus> {
     const host = normalizeHost(rawHost);
     const expectedServerIps = resolveExpectedServerIps();
@@ -203,6 +211,22 @@ async function writeConfigAtomic(configFile: string, content: string): Promise<v
     await fs.rename(tempPath, configFile);
 }
 
+async function writeConfigWithPrivilegedInstall(configFile: string, content: string): Promise<{ ok: boolean; details: string }> {
+    const tempPath = path.join(os.tmpdir(), `mike-vp-${Date.now()}-${process.pid}.conf`);
+    try {
+        await fs.writeFile(tempPath, content, 'utf8');
+        const installResult = await runCommand('install', ['-m', '0644', tempPath, configFile]);
+        if (!installResult.ok) {
+            return { ok: false, details: installResult.output || 'install fehlgeschlagen' };
+        }
+        return { ok: true, details: `Privilegierter Write erfolgreich (${tempPath} -> ${configFile})` };
+    } catch (error: any) {
+        return { ok: false, details: error?.message || 'Privilegierter Write fehlgeschlagen' };
+    } finally {
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    }
+}
+
 async function rollbackConfig(configFile: string, previousContent: string | undefined, hadPrevious: boolean): Promise<string> {
     try {
         if (hadPrevious && previousContent !== undefined) {
@@ -283,10 +307,29 @@ export async function provisionSubdomain(rawHost: string, publicPath = '/kundenp
         await writeConfigAtomic(configFile, nginxConfig);
         steps.push({ key: 'nginx_write', ok: true, message: 'Nginx-Konfiguration atomisch geschrieben', details: configFile });
     } catch (error: any) {
-        const details = `${error?.message || 'unbekannter Fehler'} | ${readOnlyHintForPath(configFile)}`;
-        steps.push({ key: 'nginx_write', ok: false, message: 'Nginx-Konfiguration konnte nicht geschrieben werden', details });
-        manualCommands.push(`sudo tee ${configFile} >/dev/null <<'NGINX'\n${nginxConfig}\nNGINX`);
-        return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
+        if (isPermissionWriteError(error)) {
+            const privilegedWrite = await writeConfigWithPrivilegedInstall(configFile, nginxConfig);
+            if (privilegedWrite.ok) {
+                steps.push({
+                    key: 'nginx_write',
+                    ok: true,
+                    message: 'Nginx-Konfiguration mit privilegiertem Fallback geschrieben',
+                    details: privilegedWrite.details,
+                });
+            } else {
+                const details = `${error?.message || 'unbekannter Fehler'} | ${privilegedWrite.details}`;
+                steps.push({ key: 'nginx_write', ok: false, message: 'Nginx-Konfiguration konnte nicht geschrieben werden', details });
+                manualCommands.push(`sudo install -m 0644 /dev/null ${configFile}`);
+                manualCommands.push(`sudo tee ${configFile} >/dev/null <<'NGINX'\n${nginxConfig}\nNGINX`);
+                manualCommands.push(`sudo -u mike sudo -n install -m 0644 /dev/null ${configFile} && echo OK || echo FAIL`);
+                return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
+            }
+        } else {
+            const details = `${error?.message || 'unbekannter Fehler'} | ${readOnlyHintForPath(configFile)}`;
+            steps.push({ key: 'nginx_write', ok: false, message: 'Nginx-Konfiguration konnte nicht geschrieben werden', details });
+            manualCommands.push(`sudo tee ${configFile} >/dev/null <<'NGINX'\n${nginxConfig}\nNGINX`);
+            return { ok: false, host, configFile, enabledFile, sslCertExists: false, dns: dnsStatus, steps, manualCommands };
+        }
     }
 
     const symlinkCommand = await runCommand('ln', ['-sfn', configFile, enabledFile]);
