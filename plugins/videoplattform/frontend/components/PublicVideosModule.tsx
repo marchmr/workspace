@@ -34,7 +34,7 @@ export default function PublicVideosModule(props: Props) {
     useEffect(() => {
         let mounted = true;
         setLoading(true);
-        fetch(`/api/plugins/videoplattform/public/access/by-session?sessionToken=${encodeURIComponent(sessionToken)}`)
+        fetch(`/api/plugins/videoplattform/public/portal/videos?sessionToken=${encodeURIComponent(sessionToken)}`)
             .then(res => res.json())
             .then(data => {
                 if (!mounted) return;

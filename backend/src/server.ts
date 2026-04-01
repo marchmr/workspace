@@ -91,8 +91,12 @@ async function start(): Promise<void> {
         });
         await fastify.register(multipart, {
             limits: {
-                // L2 Security Fix: Limit an konfiguriertes Maximum anpassen
-                fileSize: config.documents.maxFileSizeMb * 1024 * 1024,
+                // Use the larger fileSecurity limit as global max –
+                // individual plugin handlers enforce their own limits on top.
+                fileSize: Math.max(
+                    config.documents.maxFileSizeMb,
+                    config.fileSecurity.maxUploadSizeMb,
+                ) * 1024 * 1024,
             },
         });
         await fastify.register(rateLimiterPlugin);

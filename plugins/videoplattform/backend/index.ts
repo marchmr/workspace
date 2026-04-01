@@ -1,5 +1,5 @@
 import { createHash, randomInt, randomUUID } from 'crypto';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
 import { execFile } from 'child_process';
@@ -367,11 +367,39 @@ function isLikelyBrowserPlayableFormat(fileName: string, mimeType: string): bool
     return false;
 }
 
+async function streamUploadToTempFile(filePart: any, maxBytes: number): Promise<{ tempPath: string; sizeBytes: number }> {
+    const tempDir = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'tmp');
+    await fs.mkdir(tempDir, { recursive: true });
+    const tempPath = path.join(tempDir, `${Date.now()}-${randomUUID()}.upload`);
+    const output = createWriteStream(tempPath);
+    let bytes = 0;
+    try {
+        for await (const chunk of filePart.file) {
+            const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += part.length;
+            if (bytes > maxBytes) {
+                throw new Error(`Datei ist zu groß (max. ${Math.round(maxBytes / (1024 * 1024))} MB).`);
+            }
+            if (!output.write(part)) {
+                await new Promise<void>((resolve) => output.once('drain', resolve));
+            }
+        }
+        output.end();
+        await new Promise<void>((resolve) => output.once('finish', resolve));
+        return { tempPath, sizeBytes: bytes };
+    } catch (error) {
+        output.destroy();
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        throw error;
+    }
+}
+
 async function storeUploadedVideoWithFallback(args: {
     tenantId: number;
     originalFileName: string;
     originalMimeType: string;
-    uploadBuffer: Buffer;
+    tempInputPath: string;
+    sizeBytes: number;
     requireTranscodeForCompatibility: boolean;
     logWarn: (message: string) => void;
 }): Promise<StoredUploadResult> {
@@ -388,7 +416,12 @@ async function storeUploadedVideoWithFallback(args: {
     const convertedRelPath = path.join(String(args.tenantId), convertedName);
     const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
 
-    await fs.writeFile(tempInputAbsPath, args.uploadBuffer);
+    // Move streamed temp file to proper location instead of writing from buffer
+    await fs.rename(args.tempInputPath, tempInputAbsPath).catch(async () => {
+        // rename fails across filesystems, fall back to copy+delete
+        await fs.copyFile(args.tempInputPath, tempInputAbsPath);
+        await fs.rm(args.tempInputPath, { force: true }).catch(() => undefined);
+    });
 
     try {
         await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
@@ -1191,22 +1224,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         let sizeBytes: number | null = null;
 
         if (uploadFile) {
-            const uploadBuffer = await uploadFile.toBuffer();
+            const streamed = await streamUploadToTempFile(uploadFile, MAX_VIDEO_SIZE_BYTES);
             const safeMime = String(uploadFile.mimetype || '').toLowerCase();
             if (!safeMime.startsWith('video/')) {
+                await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
                 return reply.status(400).send({ error: 'Nur Video-Dateien sind erlaubt' });
             }
-            if (uploadBuffer.length <= 0) {
+            if (streamed.sizeBytes <= 0) {
+                await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
                 return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
-            }
-            if (uploadBuffer.length > MAX_VIDEO_SIZE_BYTES) {
-                return reply.status(413).send({ error: 'Datei ist zu groß (max. 3 GB)' });
             }
             const stored = await storeUploadedVideoWithFallback({
                 tenantId,
                 originalFileName: String(uploadFile.filename || 'video'),
                 originalMimeType: safeMime || 'video/mp4',
-                uploadBuffer,
+                tempInputPath: streamed.tempPath,
+                sizeBytes: streamed.sizeBytes,
                 requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
                 logWarn: (message) => fastify.log.warn(message),
             });
@@ -1301,16 +1334,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const uploadFile = await (request as any).file();
         if (!uploadFile) return reply.status(400).send({ error: 'Datei ist erforderlich' });
 
-        const uploadBuffer = await uploadFile.toBuffer();
+        const streamed = await streamUploadToTempFile(uploadFile, MAX_VIDEO_SIZE_BYTES);
         const safeMime = String(uploadFile.mimetype || '').toLowerCase();
-        if (!safeMime.startsWith('video/')) return reply.status(400).send({ error: 'Nur Video-Dateien sind erlaubt' });
-        if (uploadBuffer.length <= 0) return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
-        if (uploadBuffer.length > MAX_VIDEO_SIZE_BYTES) return reply.status(413).send({ error: 'Datei ist zu groß (max. 3 GB)' });
+        if (!safeMime.startsWith('video/')) {
+            await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
+            return reply.status(400).send({ error: 'Nur Video-Dateien sind erlaubt' });
+        }
+        if (streamed.sizeBytes <= 0) {
+            await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
+            return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
+        }
         const stored = await storeUploadedVideoWithFallback({
             tenantId,
             originalFileName: String(uploadFile.filename || 'video'),
             originalMimeType: safeMime || 'video/mp4',
-            uploadBuffer,
+            tempInputPath: streamed.tempPath,
+            sizeBytes: streamed.sizeBytes,
             requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
             logWarn: (message) => fastify.log.warn(message),
         });
@@ -1508,34 +1547,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     });
 
-    fastify.get('/public/config', {
-        exposeHeadRoute: false,
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-
-        const configuredHost = await readPublicSubdomain(db);
-        const fallbackLogoFile = await readPublicLogoFile(db);
-        const logoHeight = await readPublicLogoHeight(db);
-        const authMode = await readPublicAuthMode(db);
-        
-        const firstTenant = await db('tenants').orderBy('id', 'asc').first('id', 'name', 'logo_file');
-        const tenantName = firstTenant?.name || 'Hammer WorkSpace';
-        const tenantLogoUrl = firstTenant?.logo_file ? `/api/plugins/videoplattform/public/tenant-logo/${firstTenant.id}` : null;
-
-        return {
-            expectedHost: configuredHost,
-            brand: tenantName,
-            tenantName,
-            tenantLogoUrl,
-            authMode,
-            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
-            logoHeight,
-        };
-    });
-
     fastify.get('/public/portal/videos', {
         exposeHeadRoute: false,
         config: { policy: { public: true } },
@@ -1568,250 +1579,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         policy: { public: true },
     }, async (request, reply) => {
         return reply.status(410).send({ error: 'Freigabecode-Login wurde entfernt. Bitte E-Mail-Login verwenden.' });
-    });
-
-    fastify.post('/public/auth/request-code', {
-        config: {
-            policy: { public: true },
-            rateLimit: {
-                max: MAGIC_CODE_REQUEST_RATE_MAX,
-                timeWindow: MAGIC_CODE_REQUEST_RATE_WINDOW_MS,
-                keyGenerator: (req: FastifyRequest) => req.ip,
-                errorResponseBuilder: () => ({
-                    success: true,
-                    message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.',
-                }),
-            },
-        },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-
-        const authMode = await readPublicAuthMode(db);
-        if (authMode !== 'magic_code') {
-            return reply.status(409).send({ error: 'Magic-Code-Login ist nicht aktiv.' });
-        }
-
-        const email = normalizeEmail((request.body as any)?.email);
-        if (!email || !email.includes('@')) {
-            return reply.status(400).send({ error: 'Gültige E-Mail ist erforderlich.' });
-        }
-        const emailHash = hashValue(email);
-        const cutoff = new Date(Date.now() - MAGIC_CODE_REQUEST_EMAIL_WINDOW_MS);
-
-        // Zusätzliche Schutzschicht gegen Mail-Spam auf dieselbe Adresse.
-        const recentForEmail = await db('vp_magic_codes')
-            .where({ email_hash: emailHash })
-            .andWhere('created_at', '>=', cutoff)
-            .count('id as count')
-            .first();
-        if (Number(recentForEmail?.count || 0) >= MAGIC_CODE_REQUEST_EMAIL_MAX) {
-            return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
-        }
-
-        const resolved = await resolveCustomerByEmail(db, email);
-        // Immer generische Antwort für Datenschutz.
-        if (!resolved) return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
-
-        await syncCustomersFromCrm(db, resolved.tenantId).catch(() => undefined);
-        const vpCustomerId = await ensureVpCustomerForCrm(db, resolved.tenantId, resolved.crmCustomerId, resolved.customerName);
-        if (!vpCustomerId) return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
-
-        const code = createMagicCode();
-        const codeHash = hashValue(`${email}|${code}`);
-        const expiresAt = new Date(Date.now() + MAGIC_CODE_TTL_MINUTES * 60 * 1000);
-
-        await db('vp_magic_codes')
-            .where({ tenant_id: resolved.tenantId, customer_id: vpCustomerId, email_hash: emailHash })
-            .whereNull('used_at')
-            .andWhere('expires_at', '>=', db.fn.now())
-            .update({ used_at: db.fn.now() });
-
-        await db('vp_magic_codes').insert({
-            tenant_id: resolved.tenantId,
-            customer_id: vpCustomerId,
-            email_normalized: email,
-            email_hash: emailHash,
-            code_hash: codeHash,
-            expires_at: expiresAt,
-            ip: String(request.ip || '').slice(0, 120) || null,
-            user_agent: String(request.headers['user-agent'] || '').slice(0, 1000) || null,
-            created_at: new Date(),
-        });
-
-        await fastify.mail.send({
-            to: email,
-            subject: 'Ihr Login-Code für das Kundenportal',
-            text: `Hallo,\n\nIhr Login-Code lautet: ${code}\n\nDer Code ist ${MAGIC_CODE_TTL_MINUTES} Minuten gültig.\n\nWenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.`,
-            html: `<p>Hallo,</p><p>Ihr Login-Code lautet:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Der Code ist <strong>${MAGIC_CODE_TTL_MINUTES} Minuten</strong> gültig.</p><p>Wenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.</p>`,
-        });
-
-        await logActivity(db, {
-            tenantId: resolved.tenantId,
-            eventType: 'magic_code.requested',
-            request,
-            customerId: vpCustomerId,
-            success: true,
-            detail: 'Magic-Code per E-Mail versendet',
-        });
-
-        return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
-    });
-
-    fastify.post('/public/auth/verify-code', {
-        config: {
-            policy: { public: true },
-            rateLimit: {
-                max: MAGIC_CODE_VERIFY_RATE_MAX,
-                timeWindow: MAGIC_CODE_VERIFY_RATE_WINDOW_MS,
-                keyGenerator: (req: FastifyRequest) => req.ip,
-                errorResponseBuilder: () => ({
-                    error: 'Zu viele Versuche. Bitte kurz warten und erneut probieren.',
-                }),
-            },
-        },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-
-        const authMode = await readPublicAuthMode(db);
-        if (authMode !== 'magic_code') {
-            return reply.status(409).send({ error: 'Magic-Code-Login ist nicht aktiv.' });
-        }
-
-        const email = normalizeEmail((request.body as any)?.email);
-        const code = String((request.body as any)?.code || '').trim();
-        if (!email || !email.includes('@')) return reply.status(400).send({ error: 'Gültige E-Mail ist erforderlich.' });
-        if (!/^\d{6}$/.test(code)) return reply.status(400).send({ error: '6-stelliger Code erforderlich.' });
-
-        const emailHash = hashValue(email);
-        const codeHash = hashValue(`${email}|${code}`);
-        await db('vp_magic_codes')
-            .where({ email_hash: emailHash })
-            .whereNull('used_at')
-            .andWhere('expires_at', '>=', db.fn.now())
-            .increment('attempts', 1);
-
-        const row = await db('vp_magic_codes')
-            .where({ email_hash: emailHash, code_hash: codeHash })
-            .whereNull('used_at')
-            .andWhere('expires_at', '>=', db.fn.now())
-            .andWhere('attempts', '<=', MAGIC_CODE_MAX_VERIFY_ATTEMPTS)
-            .orderBy('created_at', 'desc')
-            .first();
-
-        if (!row) {
-            await logActivity(db, {
-                tenantId: null,
-                eventType: 'magic_code.verify',
-                request,
-                success: false,
-                detail: 'Ungültiger oder abgelaufener Magic-Code',
-            });
-            return reply.status(401).send({ error: 'Ungültiger oder abgelaufener Code.' });
-        }
-
-        await db('vp_magic_codes').where({ id: row.id }).update({ used_at: db.fn.now() });
-        await db('vp_public_sessions')
-            .where({ tenant_id: row.tenant_id, customer_id: row.customer_id, email_normalized: email })
-            .whereNull('revoked_at')
-            .update({ revoked_at: db.fn.now() });
-
-        const sessionToken = createSessionToken();
-        const sessionTokenHash = hashValue(sessionToken);
-        const sessionExpiresAt = new Date(Date.now() + MAGIC_SESSION_TTL_HOURS * 60 * 60 * 1000);
-
-        await db('vp_public_sessions').insert({
-            tenant_id: row.tenant_id,
-            customer_id: row.customer_id,
-            email_normalized: email,
-            token_hash: sessionTokenHash,
-            expires_at: sessionExpiresAt,
-            last_used_at: new Date(),
-            ip: String(request.ip || '').slice(0, 120) || null,
-            user_agent: String(request.headers['user-agent'] || '').slice(0, 1000) || null,
-            created_at: new Date(),
-        });
-
-        const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
-        const videos = await getVideosForCustomer(db, Number(row.tenant_id), Number(row.customer_id));
-        const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file', 'name');
-        const fallbackLogoFile = await readPublicLogoFile(db);
-
-        await logActivity(db, {
-            tenantId: row.tenant_id,
-            eventType: 'magic_code.verify',
-            request,
-            customerId: row.customer_id,
-            success: true,
-            detail: 'Portal-Login erfolgreich',
-        });
-
-        return {
-            sessionToken,
-            expiresAt: sessionExpiresAt.toISOString(),
-            customerId: row.customer_id,
-            customerName: customerProfile.displayName || null,
-            customerProfile,
-            tenantName: tenant?.name || null,
-            tenantLogoUrl: tenant?.logo_file
-                ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
-                : null,
-            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
-            videos: videos.map((video) => formatVideo(video)),
-        };
-    });
-
-    fastify.get('/public/access/by-session', {
-        exposeHeadRoute: false,
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
-        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
-
-        const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
-
-        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
-
-        const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
-        const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
-        const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
-        const fallbackLogoFile = await readPublicLogoFile(db);
-
-        return {
-            sessionToken,
-            expiresAt: session.expires_at,
-            customerId: session.customer_id,
-            customerName: customerProfile.displayName || null,
-            customerProfile,
-            tenantName: tenant?.name || null,
-            tenantLogoUrl: tenant?.logo_file
-                ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
-                : null,
-            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
-            videos: videos.map((video) => formatVideo(video)),
-        };
-    });
-
-    fastify.post('/public/auth/logout', {
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const sessionToken = String((request.body as any)?.sessionToken || '').trim();
-        if (!sessionToken) return { success: true };
-        const tokenHash = hashValue(sessionToken);
-        await db('vp_public_sessions')
-            .where({ token_hash: tokenHash })
-            .whereNull('revoked_at')
-            .update({ revoked_at: db.fn.now() });
-        return { success: true };
     });
 
     fastify.get('/public/stream/:videoId', {
@@ -1909,65 +1676,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         policy: { public: true },
     }, async () => ({ ok: true, plugin: PLUGIN_ID }));
 
-    fastify.get('/public/logo', {
-        exposeHeadRoute: false,
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (_request, reply) => {
-        const fileName = await readPublicLogoFile(db);
-        if (!fileName) return reply.status(404).send({ error: 'Kein Portal-Logo hinterlegt' });
-        const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding', fileName);
-        try {
-            await fs.access(absPath);
-            reply.header('Cache-Control', 'public, max-age=300');
-            reply.type(logoMimeTypeFromFileName(fileName));
-            return reply.send(createReadStream(absPath));
-        } catch {
-            return reply.status(404).send({ error: 'Logo-Datei nicht gefunden' });
-        }
-    });
-
-    fastify.get('/public/tenant-logo/:tenantId', {
-        exposeHeadRoute: false,
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-
-        const tenantId = Number((request.params as any)?.tenantId);
-        const code = sanitizeCode((request.query as any)?.code);
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
-        if (!Number.isInteger(tenantId) || tenantId <= 0) return reply.status(400).send({ error: 'Ungültige Tenant-ID' });
-        if (!code && !sessionToken) return reply.status(400).send({ error: 'Code oder Session-Token ist erforderlich' });
-
-        if (sessionToken) {
-            const session = await verifyPublicSessionByToken(db, sessionToken);
-            if (!session || Number(session.tenant_id) !== tenantId) {
-                return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
-            }
-        } else {
-            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first('tenant_id', 'expires_at');
-            if (!codeRow || isCodeExpired(codeRow.expires_at) || Number(codeRow.tenant_id) !== tenantId) {
-                return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
-            }
-        }
-
-        const tenant = await db('tenants').where({ id: tenantId }).first('logo_file');
-        if (!tenant?.logo_file) return reply.status(404).send({ error: 'Kein Tenant-Logo vorhanden' });
-
-        const absPath = path.join(config.app.uploadsDir, 'tenant-logos', String(tenant.logo_file));
-        try {
-            await fs.access(absPath);
-            reply.header('Cache-Control', 'private, max-age=300');
-            reply.type(logoMimeTypeFromFileName(String(tenant.logo_file)));
-            return reply.send(createReadStream(absPath));
-        } catch {
-            return reply.status(404).send({ error: 'Tenant-Logo-Datei nicht gefunden' });
-        }
-    });
-
-    fastify.head('/public/config', {
+    fastify.head('/public/portal/videos', {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (_request, reply) => {

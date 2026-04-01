@@ -29,6 +29,15 @@ type SessionRow = {
     revoked_at: string | null;
 };
 
+type FolderRow = {
+    id: number;
+    tenant_id: number;
+    customer_id: number;
+    folder_path: string;
+    created_at: string;
+    updated_at: string;
+};
+
 type UploadActor = {
     type: 'customer' | 'admin';
     userId: number | null;
@@ -166,6 +175,48 @@ function resolvePublicSessionToken(request: any, fileFields?: Record<string, any
         || (request.headers as any)['x-public-session-token']
         || '',
     ).trim();
+}
+
+async function ensureFolderSchema(db: any): Promise<void> {
+    const hasFolders = await db.schema.hasTable('dtx_folders').catch(() => false);
+    if (!hasFolders) {
+        await db.schema.createTable('dtx_folders', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.integer('customer_id').unsigned().notNullable().references('id').inTable('vp_customers').onDelete('CASCADE');
+            table.string('folder_path', 255).notNullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.timestamp('updated_at').defaultTo(db.fn.now());
+            table.unique(['tenant_id', 'customer_id', 'folder_path'], 'dtx_folders_tenant_customer_path_uq');
+            table.index(['tenant_id', 'customer_id'], 'dtx_folders_tenant_customer_idx');
+        });
+    }
+}
+
+async function ensureFolderExists(db: any, tenantId: number, customerId: number, folderPathInput: string): Promise<void> {
+    const folderPath = normalizeFolderPath(folderPathInput);
+    if (!folderPath) return;
+    const now = new Date();
+
+    const parts = folderPath.split('/').filter(Boolean);
+    let current = '';
+    for (const part of parts) {
+        current = current ? `${current}/${part}` : part;
+        const existing = await db('dtx_folders')
+            .where({ tenant_id: tenantId, customer_id: customerId, folder_path: current })
+            .first('id');
+        if (existing) {
+            await db('dtx_folders').where({ id: Number(existing.id) }).update({ updated_at: now });
+            continue;
+        }
+        await db('dtx_folders').insert({
+            tenant_id: tenantId,
+            customer_id: customerId,
+            folder_path: current,
+            created_at: now,
+            updated_at: now,
+        });
+    }
 }
 
 async function loadItemWithDetails(db: any, tenantId: number, itemId: number): Promise<any | null> {
@@ -361,6 +412,7 @@ async function processVersionMalwareScan(
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
+    await ensureFolderSchema(db);
     await fs.mkdir(STORAGE_ROOT, { recursive: true, mode: 0o700 });
     await fs.chmod(STORAGE_ROOT, 0o700).catch(() => undefined);
     const hasCrmCustomersTable = await db.schema.hasTable('crm_customers').catch(() => false);
@@ -410,6 +462,91 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     });
 
+    fastify.get('/public/folders', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true }, rateLimit: { max: 30, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const [folders, itemFolders] = await Promise.all([
+            db('dtx_folders')
+                .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
+                .select('folder_path')
+                .orderBy('folder_path', 'asc'),
+            db('dtx_items')
+                .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
+                .whereNotNull('folder_path')
+                .where('folder_path', '!=', '')
+                .distinct('folder_path'),
+        ]);
+
+        const merged = new Set<string>();
+        for (const row of folders) merged.add(String((row as FolderRow).folder_path || '').trim());
+        for (const row of itemFolders) merged.add(String((row as any).folder_path || '').trim());
+        return Array.from(merged).filter(Boolean).sort((a, b) => a.localeCompare(b, 'de'));
+    });
+
+    fastify.post('/public/folders', {
+        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const folderPath = normalizeFolderPath(String((request.body as any)?.folderPath || ''));
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        if (!folderPath) return reply.status(400).send({ error: 'Ordnerpfad ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        await ensureFolderExists(db, Number(session.tenant_id), Number(session.customer_id), folderPath);
+        return { success: true, folderPath };
+    });
+
+    fastify.delete('/public/folders', {
+        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const folderPath = normalizeFolderPath(String((request.query as any)?.folderPath || ''));
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        if (!folderPath) return reply.status(400).send({ error: 'Ordnerpfad ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const tenantId = Number(session.tenant_id);
+        const customerId = Number(session.customer_id);
+        const folderPrefix = `${folderPath}/%`;
+
+        const [hasFilesInFolder, hasSubFolders] = await Promise.all([
+            db('dtx_items')
+                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: folderPath })
+                .first('id'),
+            db('dtx_folders')
+                .where({ tenant_id: tenantId, customer_id: customerId })
+                .where('folder_path', 'like', folderPrefix)
+                .first('id'),
+        ]);
+
+        if (hasFilesInFolder || hasSubFolders) {
+            return reply.status(409).send({ error: 'Ordner ist nicht leer.' });
+        }
+
+        await db('dtx_folders')
+            .where({ tenant_id: tenantId, customer_id: customerId, folder_path: folderPath })
+            .delete();
+
+        return { success: true };
+    });
+
     fastify.post('/public/files/upload', {
         config: {
             policy: { public: true },
@@ -417,6 +554,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         },
         policy: { public: true },
     }, async (request, reply) => {
+        const uploadStart = Date.now();
         const filePart = await (request as any).file();
         if (!filePart) return reply.status(400).send({ error: 'Datei ist erforderlich.' });
 
@@ -433,6 +571,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const maxUploadBytes = Math.max(1, config.fileSecurity.maxUploadSizeMb) * 1024 * 1024;
         const tempUpload = await streamUploadPartToTempFile(filePart, maxUploadBytes);
+        const streamDoneMs = Date.now() - uploadStart;
+        fastify.log.info({ streamDoneMs, fileName: filePart.filename }, 'dateiaustausch: file stream complete');
+
         const actor: UploadActor = {
             type: 'customer',
             userId: null,
@@ -457,6 +598,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             });
             itemId = Number(createdItemId);
         }
+        if (folderPath) {
+            await ensureFolderExists(db, Number(session.tenant_id), Number(session.customer_id), folderPath);
+        }
 
         try {
             const result = await saveUploadVersion(db, {
@@ -469,6 +613,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 folderPath,
                 actor,
             });
+            const validationDoneMs = Date.now() - uploadStart;
+            fastify.log.info({ validationDoneMs, itemId, versionId: result.versionId }, 'dateiaustausch: validation complete, scan queued');
+
             scanQueue = scanQueue
                 .then(() => processVersionMalwareScan(fastify, db, {
                     tenantId: Number(session.tenant_id),
@@ -515,6 +662,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 },
             }, request);
 
+            const totalMs = Date.now() - uploadStart;
+            fastify.log.info({ totalMs, itemId }, 'dateiaustausch: upload handler complete');
+
             return reply.status(201).send({
                 success: true,
                 itemId,
@@ -523,6 +673,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Upload fehlgeschlagen.';
+            fastify.log.error({ error, durationMs: Date.now() - uploadStart }, 'dateiaustausch: upload failed');
             return reply.status(400).send({ error: message });
         } finally {
             await fs.rm(tempUpload.tempDir, { recursive: true, force: true }).catch(() => undefined);

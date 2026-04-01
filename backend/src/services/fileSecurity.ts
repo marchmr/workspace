@@ -167,89 +167,66 @@ function resolveAllowedType(extension: string): AllowedType | null {
     return ALLOWED_TYPES.find((entry) => entry.extensions.includes(extension)) || null;
 }
 
-export async function validateZipSafety(fileBuffer: Buffer): Promise<{
+type ZipSafetyResult = {
     entries: number;
     totalUncompressedBytes: number;
     totalCompressedBytes: number;
     blocked: boolean;
     reason: string | null;
-}> {
+};
+
+function analyzeZipDirectory(directory: { files: any[] }): ZipSafetyResult {
+    const maxEntries = config.fileSecurity.zip.maxEntries;
+    const maxUncompressedBytes = config.fileSecurity.zip.maxUncompressedMb * 1024 * 1024;
+    const maxRatio = config.fileSecurity.zip.maxCompressionRatio;
+
+    let entries = 0;
+    let totalUncompressedBytes = 0;
+    let totalCompressedBytes = 0;
+
+    for (const file of directory.files) {
+        entries += 1;
+        totalUncompressedBytes += Number(file.uncompressedSize || 0);
+        totalCompressedBytes += Number(file.compressedSize || 0);
+
+        const entryPath = String(file.path || '').replace(/\\/g, '/');
+        if (entryPath.includes('../') || entryPath.startsWith('/')) {
+            return { entries, totalUncompressedBytes, totalCompressedBytes, blocked: true, reason: 'ZIP enthält unsichere Pfade (Path Traversal).' };
+        }
+        if (entries > maxEntries) {
+            return { entries, totalUncompressedBytes, totalCompressedBytes, blocked: true, reason: `ZIP enthält zu viele Dateien (max. ${maxEntries}).` };
+        }
+        if (totalUncompressedBytes > maxUncompressedBytes) {
+            return { entries, totalUncompressedBytes, totalCompressedBytes, blocked: true, reason: `ZIP ist nach Entpacken zu groß (max. ${config.fileSecurity.zip.maxUncompressedMb} MB).` };
+        }
+    }
+
+    const compressionRatio = totalCompressedBytes > 0
+        ? totalUncompressedBytes / totalCompressedBytes
+        : totalUncompressedBytes > 0 ? Number.POSITIVE_INFINITY : 1;
+
+    if (compressionRatio > maxRatio) {
+        return { entries, totalUncompressedBytes, totalCompressedBytes, blocked: true, reason: `ZIP-Kompressionsrate ist zu hoch (>${maxRatio}).` };
+    }
+
+    return { entries, totalUncompressedBytes, totalCompressedBytes, blocked: false, reason: null };
+}
+
+export async function validateZipSafety(fileBuffer: Buffer): Promise<ZipSafetyResult> {
     try {
         const directory = await unzipper.Open.buffer(fileBuffer);
-        const maxEntries = config.fileSecurity.zip.maxEntries;
-        const maxUncompressedBytes = config.fileSecurity.zip.maxUncompressedMb * 1024 * 1024;
-        const maxRatio = config.fileSecurity.zip.maxCompressionRatio;
-
-        let entries = 0;
-        let totalUncompressedBytes = 0;
-        let totalCompressedBytes = 0;
-
-        for (const file of directory.files) {
-            entries += 1;
-            totalUncompressedBytes += Number(file.uncompressedSize || 0);
-            totalCompressedBytes += Number(file.compressedSize || 0);
-
-            const entryPath = String(file.path || '').replace(/\\/g, '/');
-            if (entryPath.includes('../') || entryPath.startsWith('/')) {
-                return {
-                    entries,
-                    totalUncompressedBytes,
-                    totalCompressedBytes,
-                    blocked: true,
-                    reason: 'ZIP enthält unsichere Pfade (Path Traversal).',
-                };
-            }
-
-            if (entries > maxEntries) {
-                return {
-                    entries,
-                    totalUncompressedBytes,
-                    totalCompressedBytes,
-                    blocked: true,
-                    reason: `ZIP enthält zu viele Dateien (max. ${maxEntries}).`,
-                };
-            }
-
-            if (totalUncompressedBytes > maxUncompressedBytes) {
-                return {
-                    entries,
-                    totalUncompressedBytes,
-                    totalCompressedBytes,
-                    blocked: true,
-                    reason: `ZIP ist nach Entpacken zu groß (max. ${config.fileSecurity.zip.maxUncompressedMb} MB).`,
-                };
-            }
-        }
-
-        const compressionRatio = totalCompressedBytes > 0
-            ? totalUncompressedBytes / totalCompressedBytes
-            : totalUncompressedBytes > 0 ? Number.POSITIVE_INFINITY : 1;
-
-        if (compressionRatio > maxRatio) {
-            return {
-                entries,
-                totalUncompressedBytes,
-                totalCompressedBytes,
-                blocked: true,
-                reason: `ZIP-Kompressionsrate ist zu hoch (>${maxRatio}).`,
-            };
-        }
-
-        return {
-            entries,
-            totalUncompressedBytes,
-            totalCompressedBytes,
-            blocked: false,
-            reason: null,
-        };
+        return analyzeZipDirectory(directory);
     } catch {
-        return {
-            entries: 0,
-            totalUncompressedBytes: 0,
-            totalCompressedBytes: 0,
-            blocked: true,
-            reason: 'ZIP-Datei ist beschädigt oder nicht lesbar.',
-        };
+        return { entries: 0, totalUncompressedBytes: 0, totalCompressedBytes: 0, blocked: true, reason: 'ZIP-Datei ist beschädigt oder nicht lesbar.' };
+    }
+}
+
+export async function validateZipSafetyFromFile(filePath: string): Promise<ZipSafetyResult> {
+    try {
+        const directory = await unzipper.Open.file(filePath);
+        return analyzeZipDirectory(directory);
+    } catch {
+        return { entries: 0, totalUncompressedBytes: 0, totalCompressedBytes: 0, blocked: true, reason: 'ZIP-Datei ist beschädigt oder nicht lesbar.' };
     }
 }
 
@@ -362,8 +339,7 @@ export async function validateUploadedFileFromPath(
     }
 
     if (allowedType.kind === 'zip') {
-        const zipBuffer = await readFile(filePath);
-        const zipInfo = await validateZipSafety(zipBuffer);
+        const zipInfo = await validateZipSafetyFromFile(filePath);
         if (zipInfo.blocked) {
             throw new Error(zipInfo.reason || 'ZIP-Datei wurde aus Sicherheitsgründen blockiert.');
         }
@@ -378,6 +354,40 @@ export async function validateUploadedFileFromPath(
         sha256: sha256.digest('hex'),
         sizeBytes: stats.size,
     };
+}
+
+function buildScanArgs(targetPath: string): string[] {
+    const binary = config.fileSecurity.clamav.binary;
+    const isDaemon = binary.includes('clamdscan');
+    // clamdscan needs --fdpass so the daemon can read the file
+    if (isDaemon) return ['--no-summary', '--fdpass', '--stdout', targetPath];
+    return ['--no-summary', '--stdout', targetPath];
+}
+
+function parseScanOutput(stdout: string, stderr: string): MalwareScanResult | null {
+    const output = `${stdout || ''}\n${stderr || ''}`.trim();
+    const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
+    if (foundLine) {
+        const signature = foundLine.replace(/^.*?:\s*/, '').replace(/\s+FOUND\s*$/i, '').trim() || 'Malware';
+        return { status: 'infected', engine: 'clamav', signature, detail: foundLine };
+    }
+    return null;
+}
+
+function parseScanError(error: any): MalwareScanResult {
+    const output = `${error?.stdout || ''}\n${error?.stderr || ''}`.trim();
+    const infected = parseScanOutput(error?.stdout || '', error?.stderr || '');
+    if (infected) return infected;
+    if (error?.code === 1) return { status: 'infected', engine: 'clamav', signature: 'Malware', detail: 'Malware detected' };
+
+    if (error?.code === 'ENOENT') {
+        if (config.fileSecurity.clamav.failClosed) {
+            return { status: 'error', engine: 'clamav', signature: null, detail: 'ClamAV binary nicht gefunden (fail-closed aktiv).' };
+        }
+        return { status: 'skipped', engine: 'clamav', signature: null, detail: 'ClamAV binary nicht gefunden.' };
+    }
+
+    return { status: 'error', engine: 'clamav', signature: null, detail: output || String(error?.message || 'Scan fehlgeschlagen') };
 }
 
 export async function scanBufferForMalware(buffer: Buffer, fileName: string): Promise<MalwareScanResult> {
@@ -396,73 +406,16 @@ export async function scanBufferForMalware(buffer: Buffer, fileName: string): Pr
 
         const { stdout, stderr } = await execFileAsync(
             config.fileSecurity.clamav.binary,
-            ['--no-summary', '--stdout', tmpFile],
+            buildScanArgs(tmpFile),
             { timeout: config.fileSecurity.clamav.timeoutMs, maxBuffer: 1024 * 1024 },
         );
 
-        const output = `${stdout || ''}\n${stderr || ''}`.trim();
-        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
+        const infected = parseScanOutput(stdout, stderr);
+        if (infected) return infected;
 
-        if (foundLine) {
-            const signature = foundLine
-                .replace(/^.*?:\s*/, '')
-                .replace(/\s+FOUND\s*$/i, '')
-                .trim() || 'Malware';
-
-            return {
-                status: 'infected',
-                engine: 'clamav',
-                signature,
-                detail: foundLine,
-            };
-        }
-
-        return {
-            status: 'clean',
-            engine: 'clamav',
-            signature: null,
-            detail: output || 'OK',
-        };
+        return { status: 'clean', engine: 'clamav', signature: null, detail: `${stdout || ''}\n${stderr || ''}`.trim() || 'OK' };
     } catch (error: any) {
-        const output = `${error?.stdout || ''}\n${error?.stderr || ''}`.trim();
-        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
-
-        if (foundLine || error?.code === 1) {
-            const signature = foundLine
-                .replace(/^.*?:\s*/, '')
-                .replace(/\s+FOUND\s*$/i, '')
-                .trim() || 'Malware';
-            return {
-                status: 'infected',
-                engine: 'clamav',
-                signature,
-                detail: foundLine || 'Malware detected',
-            };
-        }
-
-        if (error?.code === 'ENOENT') {
-            if (config.fileSecurity.clamav.failClosed) {
-                return {
-                    status: 'error',
-                    engine: 'clamav',
-                    signature: null,
-                    detail: 'ClamAV binary nicht gefunden (fail-closed aktiv).',
-                };
-            }
-            return {
-                status: 'skipped',
-                engine: 'clamav',
-                signature: null,
-                detail: 'ClamAV binary nicht gefunden.',
-            };
-        }
-
-        return {
-            status: 'error',
-            engine: 'clamav',
-            signature: null,
-            detail: output || String(error?.message || 'Scan fehlgeschlagen'),
-        };
+        return parseScanError(error);
     } finally {
         if (tmpDir) {
             await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
@@ -478,73 +431,16 @@ export async function scanStoredFileForMalware(filePath: string): Promise<Malwar
     try {
         const { stdout, stderr } = await execFileAsync(
             config.fileSecurity.clamav.binary,
-            ['--no-summary', '--stdout', filePath],
+            buildScanArgs(filePath),
             { timeout: config.fileSecurity.clamav.timeoutMs, maxBuffer: 1024 * 1024 },
         );
 
-        const output = `${stdout || ''}\n${stderr || ''}`.trim();
-        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
+        const infected = parseScanOutput(stdout, stderr);
+        if (infected) return infected;
 
-        if (foundLine) {
-            const signature = foundLine
-                .replace(/^.*?:\s*/, '')
-                .replace(/\s+FOUND\s*$/i, '')
-                .trim() || 'Malware';
-
-            return {
-                status: 'infected',
-                engine: 'clamav',
-                signature,
-                detail: foundLine,
-            };
-        }
-
-        return {
-            status: 'clean',
-            engine: 'clamav',
-            signature: null,
-            detail: output || 'OK',
-        };
+        return { status: 'clean', engine: 'clamav', signature: null, detail: `${stdout || ''}\n${stderr || ''}`.trim() || 'OK' };
     } catch (error: any) {
-        const output = `${error?.stdout || ''}\n${error?.stderr || ''}`.trim();
-        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
-
-        if (foundLine || error?.code === 1) {
-            const signature = foundLine
-                .replace(/^.*?:\s*/, '')
-                .replace(/\s+FOUND\s*$/i, '')
-                .trim() || 'Malware';
-            return {
-                status: 'infected',
-                engine: 'clamav',
-                signature,
-                detail: foundLine || 'Malware detected',
-            };
-        }
-
-        if (error?.code === 'ENOENT') {
-            if (config.fileSecurity.clamav.failClosed) {
-                return {
-                    status: 'error',
-                    engine: 'clamav',
-                    signature: null,
-                    detail: 'ClamAV binary nicht gefunden (fail-closed aktiv).',
-                };
-            }
-            return {
-                status: 'skipped',
-                engine: 'clamav',
-                signature: null,
-                detail: 'ClamAV binary nicht gefunden.',
-            };
-        }
-
-        return {
-            status: 'error',
-            engine: 'clamav',
-            signature: null,
-            detail: output || String(error?.message || 'Scan fehlgeschlagen'),
-        };
+        return parseScanError(error);
     }
 }
 

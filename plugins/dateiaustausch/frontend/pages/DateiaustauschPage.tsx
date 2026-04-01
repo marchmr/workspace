@@ -24,12 +24,6 @@ function formatDate(value: string | null): string {
     }).format(date);
 }
 
-function statusLabel(value: ItemRow['workflowStatus']): string {
-    if (value === 'clean' || value === 'reviewed') return 'Verfügbar';
-    if (value === 'rejected') return 'Blockiert';
-    return 'Wird geprüft';
-}
-
 export default function DateiaustauschPage() {
     const [rows, setRows] = useState<ItemRow[]>([]);
     const [loading, setLoading] = useState(false);
@@ -92,7 +86,6 @@ export default function DateiaustauschPage() {
                                 <th style={{ padding: '10px 12px' }}>Datei</th>
                                 <th style={{ padding: '10px 12px' }}>Ordner</th>
                                 <th style={{ padding: '10px 12px' }}>Kunde</th>
-                                <th style={{ padding: '10px 12px' }}>Status</th>
                                 <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
                                 <th style={{ padding: '10px 12px' }}>Download</th>
                             </tr>
@@ -103,7 +96,6 @@ export default function DateiaustauschPage() {
                                     <td style={{ padding: '10px 12px', fontWeight: 600 }}>{row.displayName}</td>
                                     <td style={{ padding: '10px 12px' }}>{row.folderPath || 'Root'}</td>
                                     <td style={{ padding: '10px 12px' }}>{row.customerName || `#${row.customerId}`}</td>
-                                    <td style={{ padding: '10px 12px' }}>{statusLabel(row.workflowStatus)}</td>
                                     <td style={{ padding: '10px 12px' }}>{formatDate(row.updatedAt)}</td>
                                     <td style={{ padding: '10px 12px' }}>
                                         {row.currentVersionId ? (
@@ -118,7 +110,7 @@ export default function DateiaustauschPage() {
                             ))}
                             {!loading && visibleRows.length === 0 && (
                                 <tr>
-                                    <td colSpan={6} style={{ padding: 16 }} className="text-muted">Keine Dateien gefunden.</td>
+                                    <td colSpan={5} style={{ padding: 16 }} className="text-muted">Keine Dateien gefunden.</td>
                                 </tr>
                             )}
                         </tbody>

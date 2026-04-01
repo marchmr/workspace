@@ -85,8 +85,13 @@ async function sendToMultipleUsers(
     userIds: number[],
     payload: NotificationPayload
 ): Promise<void> {
-    for (const userId of userIds) {
-        await sendNotification(userId, payload);
+    if (!Array.isArray(userIds) || userIds.length === 0) return;
+
+    // Keep response latency low under burst load while avoiding DB overload.
+    const CHUNK_SIZE = 20;
+    for (let index = 0; index < userIds.length; index += CHUNK_SIZE) {
+        const chunk = userIds.slice(index, index + CHUNK_SIZE);
+        await Promise.allSettled(chunk.map((userId) => sendNotification(userId, payload)));
     }
 }
 
@@ -103,9 +108,7 @@ async function broadcastNotification(
         );
     }
     const users = await query;
-    for (const user of users) {
-        await sendNotification(user.id, { ...payload, tenantId: tenantId ?? null });
-    }
+    await sendToMultipleUsers(users.map((user: any) => Number(user.id)), { ...payload, tenantId: tenantId ?? null });
 }
 
 declare module 'fastify' {
