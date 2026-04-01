@@ -214,7 +214,7 @@ export default function VideoPlatformSettingsPage() {
                 method: 'POST',
                 body: JSON.stringify({
                     host: normalized,
-                    publicPath: '/kundenportal',
+                    publicPath: '/',
                 }),
             });
 

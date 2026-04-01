@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { getHostRoutingConfig } from '../hostRouting';
 
 interface User {
     id: number;
@@ -84,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const isLoginRoute = window.location.pathname === '/login';
-    const isKnownPublicPortalRoute = window.location.pathname.startsWith('/kundenportal-videos');
+    const isPublicHost = getHostRoutingConfig().mode === 'public';
 
     const refreshUser = useCallback(async () => {
         try {
@@ -103,12 +104,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isLoginRoute || isKnownPublicPortalRoute) {
+        if (isLoginRoute || isPublicHost) {
             setLoading(false);
             return;
         }
         refreshUser();
-    }, [refreshUser, isLoginRoute, isKnownPublicPortalRoute]);
+    }, [refreshUser, isLoginRoute, isPublicHost]);
 
     const login = async (
         username: string,

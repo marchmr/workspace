@@ -231,7 +231,7 @@ export default function KundenportalSettingsPage() {
                 method: 'POST',
                 body: JSON.stringify({
                     host: normalized,
-                    publicPath: '/kundenportal',
+                    publicPath: '/',
                 }),
             });
 

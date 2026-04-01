@@ -91,6 +91,15 @@ export default function KundenportalPage() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        if (!mobileNavOpen) return;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [mobileNavOpen]);
+
+    useEffect(() => {
         let active = true;
         const existingSession = localStorage.getItem(STORAGE_SESSION_KEY) || '';
 
@@ -143,8 +152,14 @@ export default function KundenportalPage() {
         const lastName = String(profile.lastName || '').trim();
         const contactName = `${firstName} ${lastName}`.trim() || null;
         const displayName = String(profile.displayName || access.customerName || companyName || contactName || 'Ihre Firma').trim();
+        const companySameAsDisplay = !!companyName
+            && companyName.localeCompare(displayName, 'de', { sensitivity: 'base' }) === 0;
 
-        return { displayName, companyName, contactName };
+        return {
+            displayName,
+            companyName: companySameAsDisplay ? null : companyName,
+            contactName,
+        };
     }, [access]);
 
     async function requestCode(event: FormEvent<HTMLFormElement>) {
@@ -271,19 +286,31 @@ export default function KundenportalPage() {
                         {error && <p className="text-danger vp-access-error">{error}</p>}
                     </section>
                 ) : (
-                    <section className="kp-portal">
+                    <section className={`kp-portal ${mobileNavOpen ? 'is-mobile-nav-open' : ''}`}>
                         <div className="kp-mobile-topbar card">
                             <div className="kp-mobile-brand">
                                 <strong>Kundenportal</strong>
                                 <span className="text-muted">{customerHeader.displayName}</span>
                             </div>
-                            <button className="btn btn-secondary" type="button" onClick={() => setMobileNavOpen((prev) => !prev)}>
+                            <button
+                                className="btn btn-secondary"
+                                type="button"
+                                aria-expanded={mobileNavOpen}
+                                aria-controls="kp-mobile-drawer"
+                                onClick={() => setMobileNavOpen((prev) => !prev)}
+                            >
                                 {mobileNavOpen ? 'Schließen' : 'Menü'}
                             </button>
                         </div>
+                        <button
+                            className={`kp-drawer-backdrop ${mobileNavOpen ? 'is-visible' : ''}`}
+                            type="button"
+                            aria-label="Menü schließen"
+                            onClick={() => setMobileNavOpen(false)}
+                        />
 
                         <div className={`kp-portal-layout ${mobileNavOpen ? 'kp-nav-open' : ''}`}>
-                            <aside className="kp-sidebar card">
+                            <aside id="kp-mobile-drawer" className="kp-sidebar card">
                                 <div className="kp-sidebar-brand">
                                     {portalLogoUrl ? (
                                         <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
@@ -341,7 +368,7 @@ export default function KundenportalPage() {
                             <main className="kp-main card">
                                 <header className="kp-main-header">
                                     <div>
-                                        <h1 className="page-title">Ihre Inhalte</h1>
+                                        <h1 className="page-title">{activeTab === 'videos' ? 'Videos' : 'Dateiaustausch'}</h1>
                                         <p className="text-muted">
                                             {activeTab === 'videos' ? `${visibleVideos.length} von ${access.videos.length} Videos` : 'Sicherer Dateiaustausch mit Versionierung'}
                                         </p>

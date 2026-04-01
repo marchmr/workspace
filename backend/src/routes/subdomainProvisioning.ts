@@ -41,7 +41,7 @@ export default async function subdomainProvisioningRoutes(fastify: FastifyInstan
         fastify.post(`${base}/provision`, { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
             const host = parseHost((request.body as any)?.host);
             const publicPathRaw = parseHost((request.body as any)?.publicPath);
-            const publicPath = publicPathRaw || '/kundenportal';
+            const publicPath = publicPathRaw || '/';
 
             if (!host) {
                 return reply.status(400).send({ error: 'host ist erforderlich' });

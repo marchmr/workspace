@@ -14,6 +14,11 @@ const KundenportalSettingsPage = lazy(() => import('./admin/KundenportalSettings
 
 export const routes: PluginRoute[] = [
     {
+        path: '/',
+        component: KundenportalPage,
+        public: true,
+    },
+    {
         path: '/kundenportal',
         component: KundenportalPage,
         public: true,

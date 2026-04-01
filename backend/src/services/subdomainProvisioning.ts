@@ -444,6 +444,13 @@ function buildNginxConfig(host: string, publicPath: string): string {
     const normalizedPath = publicPath.startsWith('/') ? publicPath : `/${publicPath}`;
     const dist = config.subdomainProvisioning.frontendDistDir;
     const backendProxyUrl = config.subdomainProvisioning.backendProxyUrl.replace(/\/+$/, '');
+    const rootLocation = normalizedPath === '/'
+        ? `    location = / {
+        try_files $uri $uri/ /index.html;
+    }`
+        : `    location = / {
+        return 302 ${normalizedPath};
+    }`;
 
     return `server {
     listen 80;
@@ -473,9 +480,7 @@ function buildNginxConfig(host: string, publicPath: string): string {
     root ${dist};
     index index.html;
 
-    location = / {
-        return 302 ${normalizedPath};
-    }
+${rootLocation}
 
     location / {
         try_files $uri $uri/ /index.html;
@@ -651,7 +656,7 @@ export async function runSubdomainPreflight(rawHost: string): Promise<SubdomainP
     };
 }
 
-export async function provisionSubdomain(rawHost: string, publicPath = '/kundenportal-videos'): Promise<SubdomainProvisionResult> {
+export async function provisionSubdomain(rawHost: string, publicPath = '/'): Promise<SubdomainProvisionResult> {
     if (!config.subdomainProvisioning.enabled) {
         throw new Error('Subdomain-Provisionierung ist per Konfiguration deaktiviert');
     }
