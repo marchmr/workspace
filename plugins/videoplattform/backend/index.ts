@@ -1398,153 +1398,27 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.get('/videos/:id/codes', { preHandler: [requirePermission('videoplattform.view')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const exists = await db('vp_videos').where({ id, tenant_id: tenantId }).first('id');
-        if (!exists) return reply.status(404).send({ error: 'Video nicht gefunden' });
-
-        return { items: await listCodesForScope(tenantId, 'video', id) };
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.post('/videos/:id/codes', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const video = await db('vp_videos').where({ id, tenant_id: tenantId }).first('id');
-        if (!video) return reply.status(404).send({ error: 'Video nicht gefunden' });
-
-        const body = (request.body || {}) as Record<string, unknown>;
-        const code = sanitizeCode(body.code) || await createUniqueCode(db, tenantId);
-        const expiresAt = parseOptionalDate(body.expiresAt);
-
-        const [newId] = await db('vp_share_codes').insert({
-            tenant_id: tenantId,
-            scope: 'video',
-            video_id: id,
-            customer_id: null,
-            code,
-            is_active: true,
-            expires_at: expiresAt,
-        });
-
-        await fastify.audit.log({
-            action: 'videoplattform.code.video.created',
-            category: 'plugin',
-            entityType: 'vp_share_codes',
-            entityId: String(newId),
-            pluginId: PLUGIN_ID,
-            newState: { code, scope: 'video', videoId: id },
-        }, request);
-
-        return reply.status(201).send({ id: newId, code });
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.get('/customers/:id/codes', { preHandler: [requirePermission('videoplattform.view')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const source = await resolveCustomerSource(db);
-        const exists = await assertCustomerExists(db, tenantId, id, source);
-        if (!exists) return reply.status(404).send({ error: 'Kunde nicht gefunden' });
-
-        return { items: await listCodesForScope(tenantId, 'customer', id) };
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.post('/customers/:id/codes', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const source = await resolveCustomerSource(db);
-        const customer = await assertCustomerExists(db, tenantId, id, source);
-        if (!customer) return reply.status(404).send({ error: 'Kunde nicht gefunden' });
-
-        const body = (request.body || {}) as Record<string, unknown>;
-        const code = sanitizeCode(body.code) || await createUniqueCode(db, tenantId);
-        const expiresAt = parseOptionalDate(body.expiresAt);
-
-        const [newId] = await db('vp_share_codes').insert({
-            tenant_id: tenantId,
-            scope: 'customer',
-            video_id: null,
-            customer_id: id,
-            code,
-            is_active: true,
-            expires_at: expiresAt,
-        });
-
-        await fastify.audit.log({
-            action: 'videoplattform.code.customer.created',
-            category: 'plugin',
-            entityType: 'vp_share_codes',
-            entityId: String(newId),
-            pluginId: PLUGIN_ID,
-            newState: { code, scope: 'customer', customerId: id },
-        }, request);
-
-        return reply.status(201).send({ id: newId, code });
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.patch('/codes/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const existing = await db('vp_share_codes').where({ id, tenant_id: tenantId }).first();
-        if (!existing) return reply.status(404).send({ error: 'Code nicht gefunden' });
-
-        const body = (request.body || {}) as Record<string, unknown>;
-        const update: Record<string, unknown> = {};
-
-        if (body.isActive !== undefined) {
-            update.is_active = Boolean(body.isActive);
-        }
-        if (body.expiresAt !== undefined) {
-            update.expires_at = parseOptionalDate(body.expiresAt);
-        }
-
-        if (Object.keys(update).length === 0) {
-            return reply.status(400).send({ error: 'Keine Änderungen übergeben' });
-        }
-
-        await db('vp_share_codes').where({ id, tenant_id: tenantId }).update(update);
-
-        await fastify.audit.log({
-            action: 'videoplattform.code.updated',
-            category: 'plugin',
-            entityType: 'vp_share_codes',
-            entityId: String(id),
-            pluginId: PLUGIN_ID,
-            newState: update,
-        }, request);
-
-        return { success: true };
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.delete('/codes/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const id = Number((request.params as any)?.id);
-        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
-
-        const existing = await db('vp_share_codes').where({ id, tenant_id: tenantId }).first();
-        if (!existing) return reply.status(404).send({ error: 'Code nicht gefunden' });
-
-        await db('vp_share_codes').where({ id, tenant_id: tenantId }).delete();
-
-        await fastify.audit.log({
-            action: 'videoplattform.code.deleted',
-            category: 'plugin',
-            entityType: 'vp_share_codes',
-            entityId: String(id),
-            pluginId: PLUGIN_ID,
-            previousState: { code: existing.code },
-        }, request);
-
-        return { success: true };
+        return reply.status(410).send({ error: 'Freigabecode-Funktion wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.get('/admin/branding/logo', { preHandler: [requirePermission('settings.manage')] }, async () => {
@@ -1693,100 +1567,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (request, reply) => {
-        const ok = await ensurePublicHost(request, reply);
-        if (!ok) return;
-        const authMode = await readPublicAuthMode(db);
-        if (authMode !== 'share_code') {
-            return reply.status(409).send({ error: 'Freigabecode-Login ist deaktiviert.' });
-        }
-
-        const code = sanitizeCode((request.body as any)?.code);
-        if (!code) return reply.status(400).send({ error: 'Freigabecode ist erforderlich' });
-
-        const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
-        if (!codeRow || isCodeExpired(codeRow.expires_at)) {
-            await logActivity(db, {
-                tenantId: codeRow?.tenant_id || null,
-                eventType: 'code_access',
-                request,
-                code,
-                success: false,
-                detail: 'Ungültiger oder abgelaufener Freigabecode',
-            });
-            return reply.status(404).send({ error: 'Code ungültig oder abgelaufen' });
-        }
-
-        let videos: VideoRecord[] = [];
-        let customerName: string | null = null;
-        let tenantLogoUrl: string | null = null;
-
-        if (codeRow.scope === 'video' && codeRow.video_id) {
-            const video = await db('vp_videos as v')
-                .leftJoin('vp_customers as c', function joinCustomer() {
-                    this.on('c.id', '=', 'v.customer_id').andOn('c.tenant_id', '=', 'v.tenant_id');
-                })
-                .where('v.tenant_id', codeRow.tenant_id)
-                .andWhere('v.id', codeRow.video_id)
-                .select('v.*', 'c.name as customer_name')
-                .first();
-            if (video) {
-                videos = [video as VideoRecord];
-                customerName = video.customer_name || null;
-            }
-        }
-
-        if (codeRow.scope === 'customer' && codeRow.customer_id) {
-            const customer = await db('vp_customers')
-                .where({ tenant_id: codeRow.tenant_id, id: codeRow.customer_id })
-                .first('name');
-            customerName = customer?.name || null;
-
-            videos = await db('vp_videos as v')
-                .leftJoin('vp_customers as c', function joinCustomer() {
-                    this.on('c.id', '=', 'v.customer_id').andOn('c.tenant_id', '=', 'v.tenant_id');
-                })
-                .where('v.tenant_id', codeRow.tenant_id)
-                .andWhere((qb: any) => {
-                    qb.where('v.customer_id', codeRow.customer_id).orWhereNull('v.customer_id');
-                })
-                .select('v.*', 'c.name as customer_name')
-                .orderBy('v.created_at', 'desc');
-        }
-
-        await logActivity(db, {
-            tenantId: codeRow.tenant_id,
-            eventType: 'code_access',
-            request,
-            code,
-            success: videos.length > 0,
-            customerId: codeRow.customer_id,
-            videoId: codeRow.video_id,
-            detail: videos.length > 0 ? 'Freigabe erfolgreich' : 'Keine Videos gefunden',
-        });
-
-        if (videos.length === 0) {
-            return reply.status(404).send({ error: 'Keine Videos für diesen Code verfügbar' });
-        }
-
-        const tenant = await db('tenants')
-            .where({ id: codeRow.tenant_id })
-            .first('id', 'logo_file', 'name');
-        if (tenant?.logo_file) {
-            tenantLogoUrl = `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?code=${encodeURIComponent(code)}`;
-        }
-
-        const fallbackLogoFile = await readPublicLogoFile(db);
-
-        return {
-            code,
-            scope: codeRow.scope,
-            customerId: codeRow.customer_id,
-            customerName,
-            tenantName: tenant?.name || null,
-            tenantLogoUrl,
-            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
-            videos: videos.map((video) => formatVideo(video)),
-        };
+        return reply.status(410).send({ error: 'Freigabecode-Login wurde entfernt. Bitte E-Mail-Login verwenden.' });
     });
 
     fastify.post('/public/auth/request-code', {
@@ -2042,50 +1823,28 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!ok) return;
 
         const videoId = Number((request.params as any)?.videoId);
-        const code = sanitizeCode((request.query as any)?.code);
         const sessionToken = String((request.query as any)?.sessionToken || '').trim();
         if (!Number.isInteger(videoId) || videoId <= 0) return reply.status(400).send({ error: 'Ungültige Video-ID' });
-        if (!code && !sessionToken) return reply.status(400).send({ error: 'Code oder Session-Token ist erforderlich' });
+        if (!sessionToken) return reply.status(401).send({ error: 'Session-Token ist erforderlich' });
 
         let tenantId: number | null = null;
         let customerId: number | null = null;
-        let accessKind: 'share_code' | 'magic_session' = 'share_code';
 
-        if (sessionToken) {
-            const session = await verifyPublicSessionByToken(db, sessionToken);
-            if (!session) {
-                await logActivity(db, {
-                    tenantId: null,
-                    eventType: 'video_stream',
-                    request,
-                    videoId,
-                    success: false,
-                    detail: 'Ungültige oder abgelaufene Session',
-                });
-                return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
-            }
-            tenantId = Number(session.tenant_id);
-            customerId = Number(session.customer_id);
-            accessKind = 'magic_session';
-            await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
-        } else {
-            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
-            if (!codeRow || isCodeExpired(codeRow.expires_at)) {
-                await logActivity(db, {
-                    tenantId: codeRow?.tenant_id || null,
-                    eventType: 'video_stream',
-                    request,
-                    code,
-                    videoId,
-                    success: false,
-                    detail: 'Ungültiger oder abgelaufener Freigabecode',
-                });
-                return reply.status(403).send({ error: 'Code ungültig oder abgelaufen' });
-            }
-            tenantId = Number(codeRow.tenant_id);
-            if (codeRow.scope === 'customer' && Number(codeRow.customer_id) > 0) customerId = Number(codeRow.customer_id);
-            accessKind = 'share_code';
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) {
+            await logActivity(db, {
+                tenantId: null,
+                eventType: 'video_stream',
+                request,
+                videoId,
+                success: false,
+                detail: 'Ungültige oder abgelaufene Session',
+            });
+            return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
         }
+        tenantId = Number(session.tenant_id);
+        customerId = Number(session.customer_id);
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
         const video = await db('vp_videos')
             .where({ tenant_id: tenantId, id: videoId })
@@ -2096,7 +1855,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 tenantId,
                 eventType: 'video_stream',
                 request,
-                code,
                 videoId,
                 success: false,
                 detail: 'Video nicht gefunden',
@@ -2104,29 +1862,17 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             return reply.status(404).send({ error: 'Video nicht gefunden' });
         }
 
-        let allowed = false;
-        if (accessKind === 'magic_session') {
-            allowed = Number(video.customer_id) > 0 && Number(video.customer_id) === Number(customerId);
-        } else {
-            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
-            allowed = Boolean(codeRow && (
-                (codeRow.scope === 'video' && Number(codeRow.video_id) === videoId)
-                || (codeRow.scope === 'customer'
-                    && Number(codeRow.customer_id) > 0
-                    && (Number(codeRow.customer_id) === Number(video.customer_id) || video.customer_id === null))
-            ));
-        }
+        const allowed = Number(video.customer_id) > 0 && Number(video.customer_id) === Number(customerId);
 
         if (!allowed) {
             await logActivity(db, {
                 tenantId,
                 eventType: 'video_stream',
                 request,
-                code,
                 videoId,
                 customerId: video.customer_id,
                 success: false,
-                detail: 'Code nicht berechtigt für dieses Video',
+                detail: 'Session nicht berechtigt für dieses Video',
             });
             return reply.status(403).send({ error: 'Keine Berechtigung für dieses Video' });
         }
@@ -2137,7 +1883,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             tenantId,
             eventType: 'video_stream',
             request,
-            code,
             videoId,
             customerId: streamVideo.customer_id,
             success: true,

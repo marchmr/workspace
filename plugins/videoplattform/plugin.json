@@ -2,7 +2,7 @@
   "id": "videoplattform",
   "name": "Videoplattform",
   "version": "1.0.0",
-  "description": "Kunden-Videoplattform mit Freigabecodes und öffentlichem Portal auf Subdomain",
+  "description": "Kunden-Videoplattform mit E-Mail-Login und öffentlichem Portal auf Subdomain",
   "author": "Hammer Team",
   "dependencies": ["kundenportal"],
   "backend_entry": "backend/index.ts",

@@ -34,7 +34,7 @@ export default function PublicVideosModule(props: Props) {
     useEffect(() => {
         let mounted = true;
         setLoading(true);
-        fetch(`/api/plugins/videoplattform/public/portal/videos?sessionToken=${encodeURIComponent(sessionToken)}`)
+        fetch(`/api/plugins/kundenportal/public/access/by-session?sessionToken=${encodeURIComponent(sessionToken)}`)
             .then(res => res.json())
             .then(data => {
                 if (!mounted) return;
@@ -93,7 +93,10 @@ export default function PublicVideosModule(props: Props) {
                     </div>
                 )}
                 {filtered.map((video) => {
-                    const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(sessionToken)}`;
+                    const baseUrl = String(video.streamUrl || '')
+                        .replace('/api/plugins/videoplattform/public', '/api/plugins/kundenportal/public');
+                    const separator = baseUrl.includes('?') ? '&' : '?';
+                    const streamUrl = `${baseUrl}${separator}sessionToken=${encodeURIComponent(sessionToken)}`;
                     return (
                         <article key={video.id} className="kp-video-card">
                             <div className="kp-video-preview">
@@ -115,4 +118,3 @@ export default function PublicVideosModule(props: Props) {
         </>
     );
 }
-

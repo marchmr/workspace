@@ -110,22 +110,6 @@ export default function DateiaustauschPage() {
 
     const selectedRow = useMemo(() => rows.find((row) => row.id === selectedId) || null, [rows, selectedId]);
 
-    async function updateStatus(itemId: number, status: ItemRow['workflowStatus']) {
-        try {
-            const res = await fetch(`/api/plugins/dateiaustausch/items/${itemId}/status`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status }),
-            });
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(payload?.error || 'Status konnte nicht aktualisiert werden.');
-            await loadRows();
-            if (selectedId === itemId) await loadDetails(itemId);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Status konnte nicht aktualisiert werden.');
-        }
-    }
-
     async function submitComment(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!selectedId || !comment.trim()) return;
@@ -156,9 +140,9 @@ export default function DateiaustauschPage() {
                         <select className="input" style={{ width: 180 }} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                             <option value="">Alle Stati</option>
                             <option value="pending">In Prüfung</option>
-                            <option value="clean">Freigegeben</option>
-                            <option value="reviewed">Geprüft</option>
-                            <option value="rejected">Gesperrt</option>
+                            <option value="clean">Sauber</option>
+                            <option value="reviewed">Gesehen</option>
+                            <option value="rejected">Abgewiesen</option>
                         </select>
                         <button className="btn btn-secondary" type="button" onClick={() => loadRows()}>Aktualisieren</button>
                     </div>
@@ -203,12 +187,9 @@ export default function DateiaustauschPage() {
                                 <p className="text-muted" style={{ marginTop: 0 }}>Ordner: {details.folderPath || 'Root'}</p>
                                 <p className="text-muted">Aktualisiert: {formatDate(selectedRow.updatedAt)}</p>
 
-                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'pending')}>In Prüfung</button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'clean')}>Freigeben</button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'reviewed')}>Geprüft</button>
-                                    <button className="btn btn-danger" type="button" onClick={() => updateStatus(details.id, 'rejected')}>Sperren</button>
-                                </div>
+                                <p className="text-muted" style={{ marginTop: -4, marginBottom: 12 }}>
+                                    Status wird automatisch durch Sicherheitsprüfung und Upload-Verlauf gesetzt.
+                                </p>
 
                                 <h4 style={{ marginBottom: 8 }}>Versionen</h4>
                                 <ul style={{ marginTop: 0, paddingLeft: 16 }}>

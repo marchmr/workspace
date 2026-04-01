@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, FormEvent, ReactNode } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 type PortalFileItemLike = {
     id: number;
@@ -8,13 +8,6 @@ type PortalFileItemLike = {
     currentVersionId: number | null;
     currentVersionNo: number | null;
     updatedAt: string | null;
-};
-
-type FolderTreeNode = {
-    name: string;
-    path: string;
-    count: number;
-    childList: FolderTreeNode[];
 };
 
 type Props = {
@@ -29,34 +22,26 @@ function formatWorkflowStatus(value: PortalFileItemLike['workflowStatus']): stri
     return 'In Prüfung';
 }
 
-function renderFolderTree(
-    nodes: FolderTreeNode[],
-    depth: number,
-    activePath: string,
-    onSelect: (path: string) => void,
-): ReactNode[] {
-    return nodes.flatMap((node) => {
-        const isActive = activePath === node.path;
-        const row = (
-            <button
-                key={node.path}
-                type="button"
-                className={`btn ${isActive ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ justifyContent: 'space-between', paddingLeft: `${12 + depth * 16}px` }}
-                onClick={() => onSelect(node.path)}
-            >
-                <span>{node.name}</span>
-                <span className="text-muted" style={{ fontSize: 12 }}>{node.count}</span>
-            </button>
-        );
-        if (!node.childList.length) return [row];
-        return [row, ...renderFolderTree(node.childList, depth + 1, activePath, onSelect)];
-    });
+function buildDownloadUrl(item: PortalFileItemLike, sessionToken: string): string {
+    return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`;
 }
 
-export default function PublicFileExchangeModule(props: Props) {
-    const { sessionToken, formatDate } = props;
+function getFileExt(name: string): string {
+    const raw = String(name || '').trim().toLowerCase();
+    const index = raw.lastIndexOf('.');
+    if (index <= 0 || index === raw.length - 1) return '';
+    return raw.slice(index + 1);
+}
 
+function isImageExt(ext: string): boolean {
+    return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext);
+}
+
+function isPdfExt(ext: string): boolean {
+    return ext === 'pdf';
+}
+
+export default function PublicFileExchangeModule({ sessionToken, formatDate }: Props) {
     const [available, setAvailable] = useState(true);
     const [files, setFiles] = useState<PortalFileItemLike[]>([]);
     const [filesLoading, setFilesLoading] = useState(false);
@@ -70,7 +55,6 @@ export default function PublicFileExchangeModule(props: Props) {
     const [filesFolderFilter, setFilesFolderFilter] = useState('');
     const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
-    const [showUploadPanel, setShowUploadPanel] = useState(false);
 
     async function loadFiles() {
         setFilesLoading(true);
@@ -152,19 +136,6 @@ export default function PublicFileExchangeModule(props: Props) {
         }
     }
 
-    function onFileInputChange(fileList: FileList | null) {
-        if (!fileList) {
-            setSelectedFiles([]);
-            return;
-        }
-        setSelectedFiles(Array.from(fileList));
-    }
-
-    function onDropFiles(fileList: FileList | null) {
-        onFileInputChange(fileList);
-        setDragOverUpload(false);
-    }
-
     async function deleteFile(itemId: number) {
         if (!available) return;
         if (!window.confirm('Datei wirklich löschen?')) return;
@@ -200,11 +171,11 @@ export default function PublicFileExchangeModule(props: Props) {
 
     const visibleFiles = useMemo(() => {
         let list = files.slice();
-        const q = searchQuery.trim().toLowerCase();
-        if (q) {
+        const query = searchQuery.trim().toLowerCase();
+        if (query) {
             list = list.filter((entry) => {
                 const haystack = `${entry.displayName} ${entry.folderPath}`.toLowerCase();
-                return haystack.includes(q);
+                return haystack.includes(query);
             });
         }
         if (filesFolderFilter.trim()) {
@@ -220,216 +191,208 @@ export default function PublicFileExchangeModule(props: Props) {
         return list;
     }, [files, filesFolderFilter, filesSort, searchQuery]);
 
-    const folderTreeNodes = useMemo<FolderTreeNode[]>(() => {
-        type Node = { name: string; path: string; children: Record<string, Node>; count: number };
-        const root: Record<string, Node> = {};
+    const previewFiles = useMemo(
+        () => visibleFiles.filter((item) => item.currentVersionId && (item.workflowStatus === 'clean' || item.workflowStatus === 'reviewed')),
+        [visibleFiles],
+    );
 
-        for (const entry of files) {
-            const folder = String(entry.folderPath || '').trim();
-            const segments = folder ? folder.split('/').filter(Boolean) : [];
-            if (segments.length === 0) continue;
-            let cursor = root;
-            let currentPath = '';
-            for (const segment of segments) {
-                currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-                if (!cursor[segment]) {
-                    cursor[segment] = { name: segment, path: currentPath, children: {}, count: 0 };
-                }
-                cursor[segment].count += 1;
-                cursor = cursor[segment].children;
-            }
+    function onFileInputChange(fileList: FileList | null) {
+        if (!fileList) {
+            setSelectedFiles([]);
+            return;
         }
+        setSelectedFiles(Array.from(fileList));
+    }
 
-        const toArray = (nodes: Record<string, Node>): FolderTreeNode[] =>
-            Object.values(nodes)
-                .sort((a, b) => a.name.localeCompare(b.name, 'de'))
-                .map((node) => ({ ...node, childList: toArray(node.children) }));
-
-        return toArray(root);
-    }, [files]);
-
-    const selectedFolderLabel = filesFolderFilter || 'Alle Ordner';
+    function onDropFiles(fileList: FileList | null) {
+        onFileInputChange(fileList);
+        setDragOverUpload(false);
+    }
 
     return (
-        <div className="kp-coming-soon kp-module-shell">
-            <h3 className="kp-module-title">Dateiaustausch</h3>
+        <section className="kp-uploader-shell">
+            <header className="kp-uploader-head">
+                <div>
+                    <h3 className="kp-module-title">Dateiaustausch</h3>
+                    <p className="kp-module-subtitle">Private Cloud für sicheren Upload, Ordner und Versionen.</p>
+                </div>
+                <button className="btn btn-secondary" type="button" onClick={() => loadFiles()}>
+                    Aktualisieren
+                </button>
+            </header>
+
             {!available ? (
-                <p className="text-muted" style={{ marginTop: 0 }}>
+                <p className="text-muted">
                     Das Plugin <strong>Dateiaustausch</strong> ist derzeit deaktiviert. Aktivieren Sie es in der Regie/Plugin-Verwaltung.
                 </p>
             ) : null}
-            <p className="text-muted kp-module-subtitle" style={{ marginTop: 0 }}>Sicherer Dateiaustausch wie eine private Cloud, mit Ordnerstruktur und Versionen.</p>
 
-            <div className="kp-cloud-layout">
-                <aside className="kp-module-block kp-cloud-sidebar">
-                    <div className="kp-cloud-sidebar-head">
-                        <h4>Ordner</h4>
+            <form onSubmit={uploadFile} className="kp-uploader-board">
+                <div
+                    className={`kp-uploader-dropzone${dragOverUpload ? ' is-dragover' : ''}`}
+                    onDragOver={(event) => {
+                        event.preventDefault();
+                        setDragOverUpload(true);
+                    }}
+                    onDragLeave={() => setDragOverUpload(false)}
+                    onDrop={(event) => {
+                        event.preventDefault();
+                        onDropFiles(event.dataTransfer?.files || null);
+                    }}
+                >
+                    <div className="kp-uploader-dropzone-copy">
+                        <strong>Dateien hier ablegen</strong>
+                        <span>oder über den Button auswählen</span>
                     </div>
-                    <button
-                        type="button"
-                        className={`btn ${filesFolderFilter ? 'btn-secondary' : 'btn-primary'}`}
-                        onClick={() => setFilesFolderFilter('')}
-                    >
-                        Alle Ordner
-                    </button>
-                    {renderFolderTree(folderTreeNodes, 0, filesFolderFilter, setFilesFolderFilter)}
-                </aside>
-
-                <div className="kp-cloud-main">
-                    <div className="kp-drive-toolbar">
-                        <div className="kp-drive-search">
-                            <input
-                                className="input"
-                                value={searchQuery}
-                                onChange={(event) => setSearchQuery(event.target.value)}
-                                placeholder="Dateien und Ordner durchsuchen"
-                            />
-                        </div>
-                        <div className="kp-drive-actions">
-                            <button className="btn btn-secondary" type="button" onClick={() => loadFiles()}>
-                                Aktualisieren
-                            </button>
-                            <button className="btn btn-primary" type="button" onClick={() => setShowUploadPanel((prev) => !prev)}>
-                                {showUploadPanel ? 'Upload schließen' : 'Datei hochladen'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {showUploadPanel && (
-                        <form onSubmit={uploadFile} className="vp-stack kp-drive-upload-panel">
-                            <div
-                                className={`kp-cloud-dropzone${dragOverUpload ? ' is-dragover' : ''}`}
-                                onDragOver={(event) => {
-                                    event.preventDefault();
-                                    setDragOverUpload(true);
-                                }}
-                                onDragLeave={() => setDragOverUpload(false)}
-                                onDrop={(event) => {
-                                    event.preventDefault();
-                                    onDropFiles(event.dataTransfer?.files || null);
-                                }}
-                            >
-                                <p className="kp-cloud-dropzone-title">Dateien hier hineinziehen oder auswaehlen</p>
-                                <p className="text-muted kp-cloud-dropzone-subtitle">Mehrere Dateien gleichzeitig moeglich.</p>
-                                <input
-                                    className="input"
-                                    type="file"
-                                    multiple
-                                    onChange={(event) => onFileInputChange(event.target.files)}
-                                    accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
-                                    disabled={!available}
-                                    required
-                                />
-                                {selectedFiles.length > 0 && (
-                                    <p className="text-muted kp-cloud-selected-count">
-                                        {selectedFiles.length} Datei(en) ausgewählt
-                                    </p>
-                                )}
-                            </div>
-                            <div className="kp-drive-upload-grid">
-                                <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
-                                    <option value="">Ordner auswählen (optional)</option>
-                                    {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-                                </select>
-                                <input
-                                    className="input"
-                                    value={newFolderName}
-                                    onChange={(event) => setNewFolderName(event.target.value)}
-                                    disabled={!available}
-                                    placeholder="Neuen Ordner anlegen, z. B. Fotos/April"
-                                />
-                            </div>
-                            <textarea
-                                className="input"
-                                rows={2}
-                                value={uploadComment}
-                                onChange={(event) => setUploadComment(event.target.value)}
-                                disabled={!available}
-                                placeholder="Kommentar zur Datei (optional)"
-                            />
-                            <button className="btn btn-primary" type="submit" disabled={filesLoading || !available}>
-                                {filesLoading ? (uploadProgress ? `Lade hoch... (${uploadProgress.done}/${uploadProgress.total})` : 'Lade hoch...') : 'Sicher hochladen'}
-                            </button>
-                        </form>
-                    )}
-
-                    {filesError && <p className="text-danger" style={{ marginTop: 10 }}>{filesError}</p>}
-
-                    <div className="kp-cloud-toolbar">
-                        <select className="input" value={filesFolderFilter} onChange={(event) => setFilesFolderFilter(event.target.value)}>
-                            <option value="">Alle Ordner</option>
-                            {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-                        </select>
-                        <select className="input" value={filesSort} onChange={(event) => setFilesSort(event.target.value as 'newest' | 'name' | 'folder')}>
-                            <option value="newest">Sortierung: Neueste</option>
-                            <option value="name">Sortierung: Dateiname</option>
-                            <option value="folder">Sortierung: Ordner</option>
-                        </select>
-                    </div>
-
-                    <div className="kp-drive-meta">
-                        <span>{visibleFiles.length} Einträge</span>
-                        <span>Ordner: {selectedFolderLabel}</span>
-                    </div>
-
-                    <div className="kp-module-table-wrap">
-                        <table className="kp-module-table kp-drive-table">
-                            <thead>
-                                <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
-                                    <th style={{ padding: '10px 12px' }}>Datei</th>
-                                    <th style={{ padding: '10px 12px' }}>Ordner</th>
-                                    <th style={{ padding: '10px 12px' }}>Status</th>
-                                    <th style={{ padding: '10px 12px' }}>Version</th>
-                                    <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
-                                    <th style={{ padding: '10px 12px' }}>Download</th>
-                                    <th style={{ padding: '10px 12px' }}>Aktion</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {visibleFiles.map((entry) => (
-                                    <tr key={entry.id} style={{ borderTop: '1px solid var(--line)' }}>
-                                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>
-                                            <span className="kp-drive-file">
-                                                <span className="kp-drive-file-icon" aria-hidden="true" />
-                                                <span>{entry.displayName}</span>
-                                            </span>
-                                        </td>
-                                        <td style={{ padding: '10px 12px' }}>{entry.folderPath || 'Root'}</td>
-                                        <td style={{ padding: '10px 12px' }}>
-                                            <span className={`kp-status-badge is-${entry.workflowStatus}`}>{formatWorkflowStatus(entry.workflowStatus)}</span>
-                                        </td>
-                                        <td style={{ padding: '10px 12px' }}>V{entry.currentVersionNo || 0}</td>
-                                        <td style={{ padding: '10px 12px' }}>{formatDate(entry.updatedAt)}</td>
-                                        <td style={{ padding: '10px 12px' }}>
-                                            {entry.currentVersionId && (entry.workflowStatus === 'clean' || entry.workflowStatus === 'reviewed') ? (
-                                                <a
-                                                    href={`/api/plugins/dateiaustausch/public/files/${entry.id}/versions/${entry.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                >
-                                                    Laden
-                                                </a>
-                                            ) : <span className="text-muted">Gesperrt</span>}
-                                        </td>
-                                        <td style={{ padding: '10px 12px' }}>
-                                            <button className="btn btn-danger" type="button" onClick={() => deleteFile(entry.id)} disabled={filesLoading}>
-                                                Löschen
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                                {!filesLoading && visibleFiles.length === 0 && (
-                                    <tr>
-                                        <td colSpan={7} style={{ padding: '12px' }} className="text-muted">
-                                            Keine Dateien im gewählten Ordner.
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                    <label className="btn btn-primary kp-uploader-file-btn">
+                        Dateien auswählen
+                        <input
+                            className="kp-uploader-file-input"
+                            type="file"
+                            multiple
+                            onChange={(event) => onFileInputChange(event.target.files)}
+                            accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
+                            disabled={!available}
+                        />
+                    </label>
                 </div>
+
+                <div className="kp-uploader-controls">
+                    <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
+                        <option value="">Zielordner wählen</option>
+                        {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+                    </select>
+                    <input
+                        className="input"
+                        value={newFolderName}
+                        onChange={(event) => setNewFolderName(event.target.value)}
+                        disabled={!available}
+                        placeholder="Neuen Ordner anlegen (optional)"
+                    />
+                    <input
+                        className="input"
+                        value={uploadComment}
+                        onChange={(event) => setUploadComment(event.target.value)}
+                        disabled={!available}
+                        placeholder="Kommentar (optional)"
+                    />
+                    <button className="btn btn-primary" type="submit" disabled={filesLoading || !available || selectedFiles.length === 0}>
+                        {filesLoading ? (uploadProgress ? `Upload ${uploadProgress.done}/${uploadProgress.total}` : 'Upload läuft...') : 'Sicher hochladen'}
+                    </button>
+                </div>
+
+                {selectedFiles.length > 0 ? (
+                    <div className="kp-uploader-selected">
+                        {selectedFiles.map((file) => (
+                            <span key={`${file.name}-${file.size}-${file.lastModified}`} className="kp-uploader-pill">
+                                {file.name}
+                            </span>
+                        ))}
+                    </div>
+                ) : null}
+            </form>
+
+            {filesError && <p className="text-danger" style={{ marginTop: 8 }}>{filesError}</p>}
+
+            <div className="kp-uploader-toolbar">
+                <input
+                    className="input"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Dateien und Ordner durchsuchen"
+                />
+                <select className="input" value={filesFolderFilter} onChange={(event) => setFilesFolderFilter(event.target.value)}>
+                    <option value="">Alle Ordner</option>
+                    {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+                </select>
+                <select className="input" value={filesSort} onChange={(event) => setFilesSort(event.target.value as 'newest' | 'name' | 'folder')}>
+                    <option value="newest">Neueste</option>
+                    <option value="name">Dateiname</option>
+                    <option value="folder">Ordner</option>
+                </select>
             </div>
-        </div>
+
+            <div className="kp-uploader-preview-grid">
+                {previewFiles.map((entry) => {
+                    const ext = getFileExt(entry.displayName);
+                    const canImagePreview = isImageExt(ext);
+                    const isPdf = isPdfExt(ext);
+                    const downloadUrl = buildDownloadUrl(entry, sessionToken);
+                    return (
+                        <article key={`preview-${entry.id}`} className="kp-uploader-preview-card">
+                            <div className="kp-uploader-preview-media">
+                                {canImagePreview ? (
+                                    <img src={downloadUrl} alt={entry.displayName} loading="lazy" />
+                                ) : (
+                                    <div className="kp-uploader-preview-filetype">
+                                        {isPdf ? 'PDF' : (ext || 'DATEI').toUpperCase()}
+                                    </div>
+                                )}
+                            </div>
+                            <div className="kp-uploader-preview-body">
+                                <strong title={entry.displayName}>{entry.displayName}</strong>
+                                <span className="text-muted">{entry.folderPath || 'Root'} • {formatDate(entry.updatedAt)}</span>
+                            </div>
+                        </article>
+                    );
+                })}
+                {!filesLoading && previewFiles.length === 0 && (
+                    <div className="kp-uploader-preview-empty text-muted">
+                        Noch keine freigegebenen Dateien für Vorschau verfügbar.
+                    </div>
+                )}
+            </div>
+
+            <div className="kp-uploader-table-wrap">
+                <table className="kp-module-table kp-drive-table">
+                    <thead>
+                        <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
+                            <th style={{ padding: '10px 12px' }}>Datei</th>
+                            <th style={{ padding: '10px 12px' }}>Ordner</th>
+                            <th style={{ padding: '10px 12px' }}>Status</th>
+                            <th style={{ padding: '10px 12px' }}>Version</th>
+                            <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
+                            <th style={{ padding: '10px 12px' }}>Download</th>
+                            <th style={{ padding: '10px 12px' }}>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {visibleFiles.map((entry) => (
+                            <tr key={entry.id} style={{ borderTop: '1px solid var(--line)' }}>
+                                <td style={{ padding: '10px 12px', fontWeight: 600 }}>
+                                    <span className="kp-drive-file">
+                                        <span className="kp-drive-file-icon" aria-hidden="true" />
+                                        <span>{entry.displayName}</span>
+                                    </span>
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>{entry.folderPath || 'Root'}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    <span className={`kp-status-badge is-${entry.workflowStatus}`}>{formatWorkflowStatus(entry.workflowStatus)}</span>
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>V{entry.currentVersionNo || 0}</td>
+                                <td style={{ padding: '10px 12px' }}>{formatDate(entry.updatedAt)}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    {entry.currentVersionId && (entry.workflowStatus === 'clean' || entry.workflowStatus === 'reviewed') ? (
+                                        <a href={buildDownloadUrl(entry, sessionToken)} target="_blank" rel="noreferrer">Laden</a>
+                                    ) : <span className="text-muted">Gesperrt</span>}
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>
+                                    <button className="btn btn-danger" type="button" onClick={() => deleteFile(entry.id)} disabled={filesLoading}>
+                                        Löschen
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                        {!filesLoading && visibleFiles.length === 0 && (
+                            <tr>
+                                <td colSpan={7} style={{ padding: '12px' }} className="text-muted">
+                                    Keine Dateien vorhanden.
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </section>
     );
 }

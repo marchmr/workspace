@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { apiFetch } from '@mike/context/AuthContext';
 import { useModal, useToast } from '@mike/components/ModalProvider';
 import '../videoplattform.css';
@@ -8,7 +8,6 @@ type Customer = {
     name: string;
     createdAt: string;
     videoCount: number;
-    activeCodeCount: number;
 };
 
 type Video = {
@@ -24,17 +23,7 @@ type Video = {
     customerId: number | null;
     customerName: string | null;
     createdAt: string;
-    activeCodeCount: number;
     streamUrl?: string;
-};
-
-type ShareCode = {
-    id: number;
-    code: string;
-    scope: 'video' | 'customer';
-    isActive: boolean;
-    expiresAt: string | null;
-    createdAt: string;
 };
 
 type ActivityLog = {
@@ -102,17 +91,8 @@ export default function VideoPlatformAdminPage() {
     const [videoFile, setVideoFile] = useState<File | null>(null);
     const [videoUrl, setVideoUrl] = useState('');
 
-    const [selectedVideoId, setSelectedVideoId] = useState<number | null>(null);
-    const [videoCodes, setVideoCodes] = useState<ShareCode[]>([]);
-
-    const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
-    const [customerCodes, setCustomerCodes] = useState<ShareCode[]>([]);
-
     const [activeTab, setActiveTab] = useState<'videos' | 'customers' | 'activity'>('videos');
     const [editVideoState, setEditVideoState] = useState<EditVideoState | null>(null);
-
-    const selectedVideo = useMemo(() => videos.find((item) => item.id === selectedVideoId) || null, [videos, selectedVideoId]);
-    const selectedCustomer = useMemo(() => customers.find((item) => item.id === selectedCustomerId) || null, [customers, selectedCustomerId]);
 
     useEffect(() => {
         void reloadAll();
@@ -245,10 +225,6 @@ export default function VideoPlatformAdminPage() {
         try {
             const res = await apiFetch(`/api/plugins/videoplattform/videos/${id}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Video konnte nicht gelöscht werden');
-            if (selectedVideoId === id) {
-                setSelectedVideoId(null);
-                setVideoCodes([]);
-            }
             toast.success('Video gelöscht');
             await reloadAll();
         } catch (err) {
@@ -345,123 +321,10 @@ export default function VideoPlatformAdminPage() {
         try {
             const res = await apiFetch(`/api/plugins/videoplattform/customers/${id}`, { method: 'DELETE' });
             if (!res.ok) throw new Error('Kunde konnte nicht gelöscht werden');
-            if (selectedCustomerId === id) {
-                setSelectedCustomerId(null);
-                setCustomerCodes([]);
-            }
             toast.success('Kunde gelöscht');
             await reloadAll();
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Kunde konnte nicht gelöscht werden');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function loadVideoCodes(videoId: number) {
-        setSelectedVideoId(videoId);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/videos/${videoId}/codes`);
-            if (!res.ok) throw new Error('Codes konnten nicht geladen werden');
-            const payload = await res.json();
-            setVideoCodes(Array.isArray(payload.items) ? payload.items : []);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Codes konnten nicht geladen werden');
-            setVideoCodes([]);
-        }
-    }
-
-    async function loadCustomerCodes(customerIdValue: number) {
-        setSelectedCustomerId(customerIdValue);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/customers/${customerIdValue}/codes`);
-            if (!res.ok) throw new Error('Codes konnten nicht geladen werden');
-            const payload = await res.json();
-            setCustomerCodes(Array.isArray(payload.items) ? payload.items : []);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Codes konnten nicht geladen werden');
-            setCustomerCodes([]);
-        }
-    }
-
-    async function createVideoCode(videoId: number) {
-        setBusy(true);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/videos/${videoId}/codes`, {
-                method: 'POST',
-                body: JSON.stringify({}),
-            });
-            if (!res.ok) throw new Error('Code konnte nicht erstellt werden');
-            toast.success('Video-Code erstellt');
-            await Promise.all([reloadAll(), loadVideoCodes(videoId)]);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Code konnte nicht erstellt werden');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function createCustomerCode(customerIdValue: number) {
-        setBusy(true);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/customers/${customerIdValue}/codes`, {
-                method: 'POST',
-                body: JSON.stringify({}),
-            });
-            if (!res.ok) throw new Error('Code konnte nicht erstellt werden');
-            toast.success('Kunden-Code erstellt');
-            await Promise.all([reloadAll(), loadCustomerCodes(customerIdValue)]);
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Code konnte nicht erstellt werden');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function toggleCode(item: ShareCode) {
-        setBusy(true);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/codes/${item.id}`, {
-                method: 'PATCH',
-                body: JSON.stringify({ isActive: !item.isActive }),
-            });
-            if (!res.ok) throw new Error('Code konnte nicht aktualisiert werden');
-            toast.success('Code aktualisiert');
-            if (item.scope === 'video' && selectedVideoId) {
-                await Promise.all([reloadAll(), loadVideoCodes(selectedVideoId)]);
-            }
-            if (item.scope === 'customer' && selectedCustomerId) {
-                await Promise.all([reloadAll(), loadCustomerCodes(selectedCustomerId)]);
-            }
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Code konnte nicht aktualisiert werden');
-        } finally {
-            setBusy(false);
-        }
-    }
-
-    async function deleteCode(item: ShareCode) {
-        const ok = await modal.confirm({
-            title: 'Freigabecode löschen',
-            message: `Code ${item.code} wirklich löschen?`,
-            confirmText: 'Löschen',
-            variant: 'danger',
-        });
-        if (!ok) return;
-
-        setBusy(true);
-        try {
-            const res = await apiFetch(`/api/plugins/videoplattform/codes/${item.id}`, { method: 'DELETE' });
-            if (!res.ok) throw new Error('Code konnte nicht gelöscht werden');
-            toast.success('Code gelöscht');
-            if (item.scope === 'video' && selectedVideoId) {
-                await Promise.all([reloadAll(), loadVideoCodes(selectedVideoId)]);
-            }
-            if (item.scope === 'customer' && selectedCustomerId) {
-                await Promise.all([reloadAll(), loadCustomerCodes(selectedCustomerId)]);
-            }
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Code konnte nicht gelöscht werden');
         } finally {
             setBusy(false);
         }
@@ -476,7 +339,7 @@ export default function VideoPlatformAdminPage() {
             <div className="vp-admin-shell">
                 <aside className="vp-admin-sidebar">
                     <div className="vp-admin-brand">Videoplattform</div>
-                    <p className="text-muted">Videos und Codes</p>
+                    <p className="text-muted">Videoverwaltung</p>
 
                     <div className="vp-sidebar-nav">
                         <button className={`btn ${activeTab === 'videos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('videos')}>Videos</button>
@@ -495,8 +358,8 @@ export default function VideoPlatformAdminPage() {
 
                 <div className="vp-admin-content">
                     <div className="page-header vp-header-card">
-                        <h1 className="page-title">Videos & Freigabecodes</h1>
-                        <p className="page-subtitle">Zentrale Verwaltung für Inhalte, Kunden und Zugriffscodes</p>
+                        <h1 className="page-title">Videoplattform</h1>
+                        <p className="page-subtitle">Zentrale Verwaltung für Inhalte und Kundenzuordnung</p>
                     </div>
 
             {activeTab === 'videos' && (
@@ -559,41 +422,17 @@ export default function VideoPlatformAdminPage() {
                                         <p className="text-muted">
                                             {video.customerName || 'Ohne Kunde'} | {video.category} | {formatBytes(video.sizeBytes)}
                                         </p>
-                                        <p className="text-muted">Aktive Codes: {video.activeCodeCount} | Erstellt: {formatDate(video.createdAt)}</p>
+                                        <p className="text-muted">Erstellt: {formatDate(video.createdAt)}</p>
                                         {video.description ? <p>{video.description}</p> : null}
                                     </div>
                                     <div className="vp-action-row" style={{ padding: '0 var(--space-md) var(--space-md) var(--space-md)' }}>
                                         <button className="btn btn-secondary" onClick={() => openEditVideoModal(video)} disabled={busy}>Bearbeiten</button>
-                                        <button className="btn btn-secondary" onClick={() => loadVideoCodes(video.id)}>Codes anzeigen</button>
-                                        <button className="btn btn-secondary" onClick={() => createVideoCode(video.id)} disabled={busy}>Code erstellen</button>
                                         <button className="btn btn-danger" onClick={() => deleteVideo(video.id)} disabled={busy}>Löschen</button>
                                     </div>
                                 </article>
                             ))}
                         </div>
                     </div>
-
-                    {selectedVideo && (
-                        <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
-                            <div className="card-title">Codes für Video: {selectedVideo.title}</div>
-                            <div className="vp-code-list" style={{ marginTop: 'var(--space-sm)' }}>
-                                {videoCodes.length === 0 && <p className="text-muted">Noch keine Codes vorhanden.</p>}
-                                {videoCodes.map((item) => (
-                                    <div key={item.id} className="vp-code-row">
-                                        <code>{item.code}</code>
-                                        <span className={`badge ${item.isActive ? 'badge-success' : 'badge-danger'}`}>
-                                            {item.isActive ? 'Aktiv' : 'Inaktiv'}
-                                        </span>
-                                        <span className="text-muted">Ablauf: {formatDate(item.expiresAt)}</span>
-                                        <button className="btn btn-secondary" onClick={() => toggleCode(item)} disabled={busy}>
-                                            {item.isActive ? 'Deaktivieren' : 'Aktivieren'}
-                                        </button>
-                                        <button className="btn btn-danger" onClick={() => deleteCode(item)} disabled={busy}>Löschen</button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                 </>
             )}
 
@@ -611,11 +450,9 @@ export default function VideoPlatformAdminPage() {
                                 <article key={customer.id} className="vp-item">
                                     <div className="vp-item-main">
                                         <strong>{customer.name}</strong>
-                                        <p className="text-muted">Videos: {customer.videoCount} • Aktive Codes: {customer.activeCodeCount}</p>
+                                        <p className="text-muted">Videos: {customer.videoCount}</p>
                                     </div>
                                     <div className="vp-item-actions">
-                                        <button className="btn btn-secondary" onClick={() => loadCustomerCodes(customer.id)}>Codes anzeigen</button>
-                                        <button className="btn btn-secondary" onClick={() => createCustomerCode(customer.id)} disabled={busy}>Code erstellen</button>
                                         {customerSource !== 'crm' && (
                                             <button className="btn btn-danger" onClick={() => deleteCustomer(customer.id)} disabled={busy}>Löschen</button>
                                         )}
@@ -624,28 +461,6 @@ export default function VideoPlatformAdminPage() {
                             ))}
                         </div>
                     </div>
-
-                    {selectedCustomer && (
-                        <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
-                            <div className="card-title">Codes für Kunde: {selectedCustomer.name}</div>
-                            <div className="vp-code-list" style={{ marginTop: 'var(--space-sm)' }}>
-                                {customerCodes.length === 0 && <p className="text-muted">Noch keine Codes vorhanden.</p>}
-                                {customerCodes.map((item) => (
-                                    <div key={item.id} className="vp-code-row">
-                                        <code>{item.code}</code>
-                                        <span className={`badge ${item.isActive ? 'badge-success' : 'badge-danger'}`}>
-                                            {item.isActive ? 'Aktiv' : 'Inaktiv'}
-                                        </span>
-                                        <span className="text-muted">Ablauf: {formatDate(item.expiresAt)}</span>
-                                        <button className="btn btn-secondary" onClick={() => toggleCode(item)} disabled={busy}>
-                                            {item.isActive ? 'Deaktivieren' : 'Aktivieren'}
-                                        </button>
-                                        <button className="btn btn-danger" onClick={() => deleteCode(item)} disabled={busy}>Löschen</button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
                 </>
             )}
 
