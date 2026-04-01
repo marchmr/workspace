@@ -491,9 +491,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (keyword) {
             builder = builder.andWhere((qb: any) => {
                 qb.whereRaw('LOWER(v.title) LIKE ?', [`%${keyword}%`])
-                    .orWhereRaw(\"LOWER(COALESCE(v.description, '')) LIKE ?\", [`%${keyword}%`])
+                    .orWhereRaw("LOWER(COALESCE(v.description, '')) LIKE ?", [`%${keyword}%`])
                     .orWhereRaw('LOWER(v.category) LIKE ?', [`%${keyword}%`])
-                    .orWhereRaw(\"LOWER(COALESCE(c.name, '')) LIKE ?\", [`%${keyword}%`]);
+                    .orWhereRaw("LOWER(COALESCE(c.name, '')) LIKE ?", [`%${keyword}%`]);
             });
         }
 
