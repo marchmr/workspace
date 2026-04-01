@@ -16,6 +16,14 @@ type ProvisionStep = {
     details?: string;
 };
 
+type Guidance = {
+    errorCode: string;
+    title: string;
+    why: string;
+    nextSteps: string[];
+    commands: string[];
+};
+
 type ProvisionStatus = {
     host: string;
     configFile: string;
@@ -23,6 +31,8 @@ type ProvisionStatus = {
     configExists: boolean;
     enabledExists: boolean;
     sslCertExists: boolean;
+    domainLinked: boolean;
+    domainLinkedReason: string;
     dns: {
         expectedServerIps: string[];
         resolvedA: string[];
@@ -38,6 +48,15 @@ type ProvisionResponse = {
     sslCertExists: boolean;
     steps: ProvisionStep[];
     manualCommands: string[];
+    failedStep?: string | null;
+    guidance?: Guidance | null;
+};
+
+type PreflightResponse = {
+    host: string;
+    ok: boolean;
+    checks: ProvisionStep[];
+    guidance: Guidance[];
 };
 
 export default function VideoPlatformSettingsPage() {
@@ -48,8 +67,10 @@ export default function VideoPlatformSettingsPage() {
     const [saving, setSaving] = useState(false);
     const [checking, setChecking] = useState(false);
     const [provisioning, setProvisioning] = useState(false);
+    const [preflighting, setPreflighting] = useState(false);
     const [status, setStatus] = useState<ProvisionStatus | null>(null);
     const [lastProvision, setLastProvision] = useState<ProvisionResponse | null>(null);
+    const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -126,6 +147,32 @@ export default function VideoPlatformSettingsPage() {
         }
     }
 
+    async function runPreflight() {
+        const normalized = normalizeHost(host);
+        if (!normalized) {
+            toast.error('Bitte eine gültige Subdomain eintragen');
+            return;
+        }
+
+        setPreflighting(true);
+        try {
+            const res = await apiFetch(`/api/admin/subdomain-provisioning/videoplattform/preflight?host=${encodeURIComponent(normalized)}`);
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Preflight fehlgeschlagen');
+
+            setPreflight(payload as PreflightResponse);
+            if (payload?.ok) {
+                toast.success('Preflight erfolgreich');
+            } else {
+                toast.error('Preflight hat Probleme gefunden');
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Preflight fehlgeschlagen');
+        } finally {
+            setPreflighting(false);
+        }
+    }
+
     async function runProvisioning() {
         const normalized = normalizeHost(host);
         if (!normalized) {
@@ -152,13 +199,22 @@ export default function VideoPlatformSettingsPage() {
             if (payload?.ok) {
                 toast.success('Subdomain erfolgreich eingerichtet');
             } else {
-                toast.error('Einrichtung unvollständig. Details siehe Protokoll.');
+                toast.error('Einrichtung unvollständig. Details siehe Assistent.');
             }
             await checkProvisionStatus();
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Automatische Einrichtung fehlgeschlagen');
         } finally {
             setProvisioning(false);
+        }
+    }
+
+    async function copyCommand(command: string) {
+        try {
+            await navigator.clipboard.writeText(command);
+            toast.success('Befehl kopiert');
+        } catch {
+            toast.error('Kopieren nicht möglich');
         }
     }
 
@@ -185,7 +241,10 @@ export default function VideoPlatformSettingsPage() {
                 </button>
             </form>
 
-            <div className="vp-inline-form" style={{ marginTop: 'var(--space-sm)' }}>
+            <div className="vp-action-row" style={{ marginTop: 'var(--space-sm)' }}>
+                <button className="btn btn-secondary" type="button" onClick={runPreflight} disabled={preflighting}>
+                    {preflighting ? 'Prüfe Umgebung...' : 'System-Preflight'}
+                </button>
                 <button className="btn btn-secondary" type="button" onClick={checkProvisionStatus} disabled={checking}>
                     {checking ? 'Prüfe...' : 'DNS/Nginx/SSL prüfen'}
                 </button>
@@ -197,6 +256,8 @@ export default function VideoPlatformSettingsPage() {
             {status && (
                 <div className="vp-provision-box">
                     <strong>Status für {status.host}</strong>
+                    <p className="text-muted">Domain verknüpft: {status.domainLinked ? 'ja' : 'nein'}</p>
+                    <p className="text-muted">{status.domainLinkedReason}</p>
                     <p className="text-muted">DNS: {status.dns.pointsToServer ? 'zeigt auf Server' : 'zeigt nicht auf Server'}</p>
                     <p className="text-muted">A: {status.dns.resolvedA.join(', ') || '—'}</p>
                     <p className="text-muted">AAAA: {status.dns.resolvedAAAA.join(', ') || '—'}</p>
@@ -204,6 +265,23 @@ export default function VideoPlatformSettingsPage() {
                     <p className="text-muted">Nginx Enabled: {status.enabledExists ? 'aktiv' : 'inaktiv'}</p>
                     <p className="text-muted">SSL: {status.sslCertExists ? 'aktiv' : 'nicht aktiv'}</p>
                     {status.dns.warning && <p className="text-muted">{status.dns.warning}</p>}
+                </div>
+            )}
+
+            {preflight && (
+                <div className="vp-provision-box">
+                    <strong>Preflight: {preflight.ok ? 'Bereit' : 'Handlungsbedarf'}</strong>
+                    <div className="vp-code-list" style={{ marginTop: 'var(--space-xs)' }}>
+                        {preflight.checks.map((step) => (
+                            <div key={`pre-${step.key}`} className="vp-code-row">
+                                <span className={`badge ${step.ok ? 'badge-success' : 'badge-danger'}`}>
+                                    {step.ok ? 'OK' : 'Fehler'}
+                                </span>
+                                <span>{step.message}</span>
+                                {step.details ? <code>{step.details}</code> : null}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -221,11 +299,28 @@ export default function VideoPlatformSettingsPage() {
                             </div>
                         ))}
                     </div>
+
+                    {lastProvision.guidance && (
+                        <div className="vp-guidance" style={{ marginTop: 'var(--space-sm)' }}>
+                            <strong>Automatische Hilfestellung ({lastProvision.guidance.errorCode})</strong>
+                            <p>{lastProvision.guidance.title}</p>
+                            <p className="text-muted">{lastProvision.guidance.why}</p>
+                            <div className="vp-guidance-list">
+                                {lastProvision.guidance.nextSteps.map((item, index) => (
+                                    <p key={`step-${index}`}><strong>{index + 1}.</strong> {item}</p>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     {lastProvision.manualCommands.length > 0 && (
                         <div style={{ marginTop: 'var(--space-sm)' }}>
-                            <p className="text-muted">Manuelle Befehle:</p>
+                            <p className="text-muted">Terminal-Befehle für diesen Fehlerfall:</p>
                             {lastProvision.manualCommands.map((cmd) => (
-                                <code key={cmd} style={{ display: 'block', marginTop: 4 }}>{cmd}</code>
+                                <div key={cmd} className="vp-command-row">
+                                    <code>{cmd}</code>
+                                    <button className="btn btn-secondary" type="button" onClick={() => copyCommand(cmd)}>Kopieren</button>
+                                </div>
                             ))}
                         </div>
                     )}
@@ -233,7 +328,7 @@ export default function VideoPlatformSettingsPage() {
             )}
 
             <p className="text-muted" style={{ marginTop: 'var(--space-sm)', fontSize: 'var(--font-size-sm)' }}>
-                Hinweis: DNS und Reverse-Proxy müssen ebenfalls auf diese Subdomain zeigen.
+                Hinweis: Der Assistent zeigt bei Fehlern jetzt konkrete nächste Schritte und passende Terminal-Befehle an.
             </p>
         </div>
     );

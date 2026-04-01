@@ -129,3 +129,42 @@ Hinweis: `npm run build` war lokal nicht direkt ausführbar, weil `node_modules/
 - Für echte Erreichbarkeit der Kundenoberfläche muss die konfigurierte Subdomain (DNS + Proxy) auf diese Instanz zeigen.
 - Optional kann `VITE_PUBLIC_HOSTS` weiterhin für Host-basiertes Frontend-Routing gesetzt werden.
 - Auch ohne diese Variable schützt der Plugin-Backend-Hostcheck die Public-API gegen falsche Hosts.
+
+## Nachträgliche Korrekturen (01.04.2026, abends)
+
+### 1) Kundenquelle auf CRM umgestellt
+- Problem: Die Videoplattform hatte eine eigene Kundenpflege und nutzte nicht die CRM-Kunden.
+- Umsetzung:
+  - Backend prüft jetzt, ob `crm_customers` vorhanden ist.
+  - Wenn ja, ist die Quelle `crm` und CRM-Kunden werden nach `vp_customers` synchronisiert (nur als technische Zuordnung für Videos/Codes).
+  - API `GET /api/plugins/videoplattform/customers` liefert zusätzlich Header `X-Videoplattform-Customer-Source: crm|videoplattform`.
+  - In CRM-Modus sind manuelle Kunden-Operationen blockiert:
+    - `POST /customers` -> 409
+    - `PUT /customers/:id` -> 409
+    - `DELETE /customers/:id` -> 409
+  - Frontend blendet im CRM-Modus „Neuer Kunde“ und „Löschen“ aus und zeigt stattdessen den Hinweis, dass Kunden im CRM gepflegt werden.
+
+### 2) Domain-Verknüpfung explizit im Status angezeigt
+- Problem: Im Settings-UI war nur Einrichtungsstatus sichtbar, nicht klar „Domain verknüpft“.
+- Umsetzung:
+  - `getSubdomainStatus` liefert jetzt:
+    - `domainLinked` (boolean)
+    - `domainLinkedReason` (Text)
+  - UI zeigt zusätzlich:
+    - `Domain verknüpft: ja/nein`
+    - erklärenden Grundtext.
+
+### 3) Neue Migration für CRM-Link in Videoplattform-Kunden
+- Neue Datei:
+  - `plugins/videoplattform/backend/migrations/20260401_002_link_vp_customers_to_crm.ts`
+- Inhalt:
+  - fügt `vp_customers.crm_customer_id` hinzu (FK auf `crm_customers.id`)
+  - ergänzt Index auf `(tenant_id, crm_customer_id)`
+  - versucht Unique-Index auf `(tenant_id, crm_customer_id)` anzulegen.
+
+### Betroffene Dateien
+- `plugins/videoplattform/backend/index.ts`
+- `plugins/videoplattform/backend/migrations/20260401_002_link_vp_customers_to_crm.ts`
+- `plugins/videoplattform/frontend/pages/VideoPlatformAdminPage.tsx`
+- `backend/src/services/subdomainProvisioning.ts`
+- `plugins/videoplattform/frontend/admin/VideoPlatformSettingsPage.tsx`

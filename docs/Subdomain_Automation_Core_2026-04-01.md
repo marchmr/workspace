@@ -15,6 +15,9 @@ Zusätzlich abgesichert:
 - Vorhandene Config wird vor Änderung als Backup-Datei gesichert (`.bak.<timestamp>`)
 - Bei Fehlern in `nginx -t` oder Reload wird automatisch Rollback versucht
 - Schreibfehler auf read-only Pfaden liefern klare Hinweise für Dev-Konfiguration
+- Backup wird in ein beschreibbares Temp-Backup-Verzeichnis ausgelagert (nicht mehr neben `/etc`-Dateien)
+- Strukturierte Fehlercodes mit Schritt-für-Schritt-Anleitung werden an die UI geliefert
+- Neuer Preflight-Check zeigt Probleme vor der eigentlichen Provisionierung
 
 ## Neu im Core
 
@@ -42,6 +45,7 @@ Funktionen:
 - registriert in `backend/src/server.ts`
 
 Endpunkte:
+- `GET /api/admin/subdomain-provisioning/videoplattform/preflight?host=...`
 - `GET /api/admin/subdomain-provisioning/videoplattform/status?host=...`
 - `POST /api/admin/subdomain-provisioning/videoplattform/provision`
 
@@ -55,6 +59,7 @@ Datei:
 - `plugins/videoplattform/frontend/admin/VideoPlatformSettingsPage.tsx`
 
 Neue Aktionen:
+- `System-Preflight`
 - `DNS/Nginx/SSL prüfen`
 - `Automatisch einrichten`
 
@@ -63,7 +68,8 @@ Neue Anzeige:
 - Nginx-Status (Config/Enabled)
 - SSL-Status
 - Schrittprotokoll der letzten Provisionierung
-- Manuelle Fallback-Befehle bei Fehlern
+- Manuelle Fallback-Befehle bei Fehlern (kopierbar)
+- Automatische Hilfestellung: Fehlercode, Ursache, konkrete nächste Schritte
 
 ### Public-Route Verhalten im Core
 Datei:

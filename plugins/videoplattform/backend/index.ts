@@ -43,6 +43,12 @@ interface CodeRecord {
     created_at: string;
 }
 
+type CustomerSourceMode = 'videoplattform' | 'crm';
+
+type ResolvedCustomerSource = {
+    mode: CustomerSourceMode;
+};
+
 function normalizeHost(value: string | undefined): string {
     return String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
@@ -230,6 +236,78 @@ function sendVideoFile(request: FastifyRequest, reply: FastifyReply, filePath: s
         });
 }
 
+function buildCustomerDisplayName(customer: any): string {
+    const type = String(customer?.type || '').toLowerCase();
+    const companyName = String(customer?.company_name || '').trim();
+    const firstName = String(customer?.first_name || '').trim();
+    const lastName = String(customer?.last_name || '').trim();
+
+    if (type === 'company' && companyName) return companyName;
+    const fullName = `${firstName} ${lastName}`.trim();
+    if (fullName) return fullName;
+    if (companyName) return companyName;
+    return `CRM-Kunde #${customer?.id ?? ''}`.trim();
+}
+
+async function resolveCustomerSource(db: any): Promise<ResolvedCustomerSource> {
+    const crmTableExists = await db.schema.hasTable('crm_customers').catch(() => false);
+    if (!crmTableExists) return { mode: 'videoplattform' };
+    return { mode: 'crm' };
+}
+
+async function syncCustomersFromCrm(db: any, tenantId: number): Promise<void> {
+    const hasCrmColumn = await db.schema.hasColumn('vp_customers', 'crm_customer_id').catch(() => false);
+    if (!hasCrmColumn) return;
+
+    const crmRows = await db('crm_customers')
+        .where({ tenant_id: tenantId })
+        .whereIn('status', ['active', 'prospect', 'inactive'])
+        .select('id', 'type', 'company_name', 'first_name', 'last_name', 'created_at');
+
+    for (const crmRow of crmRows) {
+        const crmId = Number(crmRow.id);
+        const name = buildCustomerDisplayName(crmRow).slice(0, 255) || `CRM-Kunde #${crmId}`;
+
+        const existingByCrm = await db('vp_customers')
+            .where({ tenant_id: tenantId, crm_customer_id: crmId })
+            .first('id', 'name');
+
+        if (existingByCrm) {
+            if (String(existingByCrm.name || '') !== name) {
+                await db('vp_customers')
+                    .where({ id: existingByCrm.id, tenant_id: tenantId })
+                    .update({ name });
+            }
+            continue;
+        }
+
+        const existingByName = await db('vp_customers')
+            .where({ tenant_id: tenantId, name })
+            .first('id', 'crm_customer_id');
+
+        if (existingByName && !existingByName.crm_customer_id) {
+            await db('vp_customers')
+                .where({ id: existingByName.id, tenant_id: tenantId })
+                .update({ crm_customer_id: crmId });
+            continue;
+        }
+
+        await db('vp_customers').insert({
+            tenant_id: tenantId,
+            name,
+            crm_customer_id: crmId,
+            created_at: crmRow.created_at || new Date(),
+        });
+    }
+}
+
+async function assertCustomerExists(db: any, tenantId: number, customerId: number, source: ResolvedCustomerSource): Promise<boolean> {
+    const query = db('vp_customers').where({ id: customerId, tenant_id: tenantId });
+    if (source.mode === 'crm') query.whereNotNull('crm_customer_id');
+    const customer = await query.first('id');
+    return Boolean(customer);
+}
+
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
 
@@ -252,9 +330,14 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     }
 
-    fastify.get('/customers', { preHandler: [requirePermission('videoplattform.view')] }, async (request) => {
+    fastify.get('/customers', { preHandler: [requirePermission('videoplattform.view')] }, async (request, reply) => {
         const tenantId = getTenantId(request);
-        const rows = await db('vp_customers as c')
+        const source = await resolveCustomerSource(db);
+        if (source.mode === 'crm') {
+            await syncCustomersFromCrm(db, tenantId);
+        }
+
+        let query = db('vp_customers as c')
             .where('c.tenant_id', tenantId)
             .select(
                 'c.id',
@@ -264,6 +347,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 db.raw("(SELECT COUNT(*) FROM vp_share_codes sc WHERE sc.tenant_id = c.tenant_id AND sc.customer_id = c.id AND sc.scope = 'customer' AND sc.is_active = 1 AND (sc.expires_at IS NULL OR sc.expires_at >= NOW())) AS active_code_count")
             )
             .orderBy('c.created_at', 'desc');
+
+        if (source.mode === 'crm') {
+            query = query.whereNotNull('c.crm_customer_id');
+        }
+
+        const rows = await query;
+        reply.header('X-Videoplattform-Customer-Source', source.mode);
 
         return rows.map((row: any) => ({
             id: row.id,
@@ -276,6 +366,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.post('/customers', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
         const tenantId = getTenantId(request);
+        const source = await resolveCustomerSource(db);
+        if (source.mode === 'crm') {
+            return reply.status(409).send({ error: 'Kunden werden aus dem CRM synchronisiert und können hier nicht manuell erstellt werden.' });
+        }
+
         const name = String((request.body as any)?.name || '').trim();
         if (!name) {
             return reply.status(400).send({ error: 'Kundenname ist erforderlich' });
@@ -299,6 +394,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.put('/customers/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
         const tenantId = getTenantId(request);
+        const source = await resolveCustomerSource(db);
+        if (source.mode === 'crm') {
+            return reply.status(409).send({ error: 'Kunden werden aus dem CRM synchronisiert und können hier nicht manuell bearbeitet werden.' });
+        }
+
         const id = Number((request.params as any)?.id);
         const name = String((request.body as any)?.name || '').trim();
 
@@ -327,6 +427,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.delete('/customers/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
         const tenantId = getTenantId(request);
+        const source = await resolveCustomerSource(db);
+        if (source.mode === 'crm') {
+            return reply.status(409).send({ error: 'Kunden werden aus dem CRM synchronisiert und können hier nicht gelöscht werden.' });
+        }
+
         const id = Number((request.params as any)?.id);
 
         if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
@@ -354,6 +459,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.get('/videos', { preHandler: [requirePermission('videoplattform.view')] }, async (request) => {
         const tenantId = getTenantId(request);
+        const source = await resolveCustomerSource(db);
+        if (source.mode === 'crm') {
+            await syncCustomersFromCrm(db, tenantId);
+        }
         const query = request.query as Record<string, any>;
         const customerId = Number(query.customerId || 0);
         const keyword = String(query.keyword || '').trim().toLowerCase();
@@ -420,7 +529,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         let customerExists = null;
         if (customerId) {
-            customerExists = await db('vp_customers').where({ id: customerId, tenant_id: tenantId }).first('id');
+            const source = await resolveCustomerSource(db);
+            customerExists = await assertCustomerExists(db, tenantId, customerId, source);
             if (!customerExists) return reply.status(400).send({ error: 'Kunde nicht gefunden' });
         }
 
@@ -510,7 +620,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (body.customerId !== undefined) {
             const customerId = Number(body.customerId || 0) || null;
             if (customerId) {
-                const customer = await db('vp_customers').where({ id: customerId, tenant_id: tenantId }).first('id');
+                const source = await resolveCustomerSource(db);
+                const customer = await assertCustomerExists(db, tenantId, customerId, source);
                 if (!customer) return reply.status(400).send({ error: 'Kunde nicht gefunden' });
             }
             update.customer_id = customerId;
@@ -665,7 +776,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const id = Number((request.params as any)?.id);
         if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
 
-        const exists = await db('vp_customers').where({ id, tenant_id: tenantId }).first('id');
+        const source = await resolveCustomerSource(db);
+        const exists = await assertCustomerExists(db, tenantId, id, source);
         if (!exists) return reply.status(404).send({ error: 'Kunde nicht gefunden' });
 
         return { items: await listCodesForScope(tenantId, 'customer', id) };
@@ -676,7 +788,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const id = Number((request.params as any)?.id);
         if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
 
-        const customer = await db('vp_customers').where({ id, tenant_id: tenantId }).first('id');
+        const source = await resolveCustomerSource(db);
+        const customer = await assertCustomerExists(db, tenantId, id, source);
         if (!customer) return reply.status(404).send({ error: 'Kunde nicht gefunden' });
 
         const body = (request.body || {}) as Record<string, unknown>;
@@ -795,7 +908,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     });
 
-    fastify.get('/public/config', async (request, reply) => {
+    fastify.get('/public/config', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
 
@@ -806,7 +923,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         };
     });
 
-    fastify.post('/public/access/by-code', async (request, reply) => {
+    fastify.post('/public/access/by-code', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
 
@@ -884,7 +1004,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         };
     });
 
-    fastify.get('/public/stream/:videoId', async (request, reply) => {
+    fastify.get('/public/stream/:videoId', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
 
@@ -964,5 +1088,30 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         sendVideoFile(request, reply, absPath, video.mime_type || 'video/mp4');
     });
 
-    fastify.get('/public/health', async () => ({ ok: true, plugin: PLUGIN_ID }));
+    fastify.get('/public/health', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async () => ({ ok: true, plugin: PLUGIN_ID }));
+
+    fastify.head('/public/config', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        reply.status(200).send();
+    });
+
+    fastify.head('/public/stream/:videoId', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        reply.status(200).send();
+    });
+
+    fastify.head('/public/health', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        reply.status(200).send();
+    });
 }

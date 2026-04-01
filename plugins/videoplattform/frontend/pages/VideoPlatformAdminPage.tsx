@@ -68,6 +68,7 @@ export default function VideoPlatformAdminPage() {
 
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
+    const [customerSource, setCustomerSource] = useState<'videoplattform' | 'crm'>('videoplattform');
 
     const [newCustomerName, setNewCustomerName] = useState('');
 
@@ -107,6 +108,8 @@ export default function VideoPlatformAdminPage() {
                 throw new Error('Daten konnten nicht geladen werden');
             }
 
+            const sourceHeader = customersRes.headers.get('X-Videoplattform-Customer-Source');
+            setCustomerSource(sourceHeader === 'crm' ? 'crm' : 'videoplattform');
             setCustomers(await customersRes.json());
             setVideos(await videosRes.json());
             setLogs(await logsRes.json());
@@ -426,13 +429,20 @@ export default function VideoPlatformAdminPage() {
 
             {activeTab === 'customers' && (
                 <>
-                    <div className="card">
-                        <div className="card-title">Neuer Kunde</div>
-                        <form onSubmit={createCustomer} className="vp-inline-form">
-                            <input className="input" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Kundenname" required />
-                            <button className="btn btn-primary" type="submit" disabled={busy}>Kunde erstellen</button>
-                        </form>
-                    </div>
+                    {customerSource === 'crm' ? (
+                        <div className="card">
+                            <div className="card-title">Kundenquelle</div>
+                            <p className="text-muted">Kunden werden aus dem CRM-Plugin synchronisiert. Anlage und Löschen erfolgt im CRM.</p>
+                        </div>
+                    ) : (
+                        <div className="card">
+                            <div className="card-title">Neuer Kunde</div>
+                            <form onSubmit={createCustomer} className="vp-inline-form">
+                                <input className="input" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Kundenname" required />
+                                <button className="btn btn-primary" type="submit" disabled={busy}>Kunde erstellen</button>
+                            </form>
+                        </div>
+                    )}
 
                     <div className="card" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="card-title">Kunden ({customers.length})</div>
@@ -446,7 +456,9 @@ export default function VideoPlatformAdminPage() {
                                     <div className="vp-item-actions">
                                         <button className="btn btn-secondary" onClick={() => loadCustomerCodes(customer.id)}>Codes anzeigen</button>
                                         <button className="btn btn-secondary" onClick={() => createCustomerCode(customer.id)} disabled={busy}>Code erstellen</button>
-                                        <button className="btn btn-danger" onClick={() => deleteCustomer(customer.id)} disabled={busy}>Löschen</button>
+                                        {customerSource !== 'crm' && (
+                                            <button className="btn btn-danger" onClick={() => deleteCustomer(customer.id)} disabled={busy}>Löschen</button>
+                                        )}
                                     </div>
                                 </article>
                             ))}

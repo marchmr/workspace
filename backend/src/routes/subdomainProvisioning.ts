@@ -1,12 +1,26 @@
 import { FastifyInstance } from 'fastify';
 import { requirePermission } from '../core/permissions.js';
-import { getSubdomainStatus, provisionSubdomain } from '../services/subdomainProvisioning.js';
+import { getSubdomainStatus, provisionSubdomain, runSubdomainPreflight } from '../services/subdomainProvisioning.js';
 
 function parseHost(value: unknown): string {
     return String(value || '').trim();
 }
 
 export default async function subdomainProvisioningRoutes(fastify: FastifyInstance): Promise<void> {
+    fastify.get('/subdomain-provisioning/videoplattform/preflight', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const host = parseHost((request.query as any)?.host);
+        if (!host) {
+            return reply.status(400).send({ error: 'host ist erforderlich' });
+        }
+
+        try {
+            const result = await runSubdomainPreflight(host);
+            return reply.send(result);
+        } catch (error: any) {
+            return reply.status(400).send({ error: error?.message || 'Preflight konnte nicht geladen werden' });
+        }
+    });
+
     fastify.get('/subdomain-provisioning/videoplattform/status', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const host = parseHost((request.query as any)?.host);
         if (!host) {
