@@ -166,6 +166,7 @@ export default function DateiaustauschPage() {
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
+    const [downloadPending, setDownloadPending] = useState(false);
 
     async function loadRows() {
         setLoading(true);
@@ -328,22 +329,30 @@ export default function DateiaustauschPage() {
     }
 
     async function triggerDownload(url: string, fallbackName: string) {
-        const response = await fetch(url);
-        if (!response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            throw new Error(payload?.error || `Download fehlgeschlagen (${response.status}).`);
+        if (downloadPending) {
+            throw new Error('Download läuft bereits. Bitte kurz warten.');
         }
-        const blob = await response.blob();
-        if (!blob || blob.size === 0) throw new Error('Download ist leer oder ungültig.');
-        const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(objectUrl);
+        setDownloadPending(true);
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload?.error || `Download fehlgeschlagen (${response.status}).`);
+            }
+            const blob = await response.blob();
+            if (!blob || blob.size === 0) throw new Error('Download ist leer oder ungültig.');
+            const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        } finally {
+            setDownloadPending(false);
+        }
     }
 
     async function downloadEntry(entry: BrowserEntry | null) {
@@ -456,7 +465,7 @@ export default function DateiaustauschPage() {
                                 >
                                     <ActionIcon path={ICONS.up} />
                                 </button>
-                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry).catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} disabled={!selectedCustomerId} title="Download" aria-label="Download">
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry).catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} disabled={!selectedCustomerId || downloadPending} title="Download" aria-label="Download">
                                     <ActionIcon path={ICONS.download} />
                                 </button>
                                 </div>
@@ -615,6 +624,7 @@ export default function DateiaustauschPage() {
                                                 });
                                                 setMenuState(null);
                                             }}
+                                            disabled={downloadPending}
                                         >
                                             Download
                                         </button>
@@ -657,6 +667,7 @@ export default function DateiaustauschPage() {
                                                 setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
                                             });
                                         }}
+                                        disabled={downloadPending}
                                     >
                                         Herunterladen
                                     </button>

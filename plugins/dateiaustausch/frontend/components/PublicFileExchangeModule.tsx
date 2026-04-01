@@ -175,6 +175,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const [dragOver, setDragOver] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
+    const [downloadPending, setDownloadPending] = useState(false);
+    const downloadInFlightRef = useRef(false);
     const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
     const newFolderInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -513,24 +515,34 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     }
 
     async function triggerDownload(url: string, fallbackName: string) {
-        const response = await fetch(url, { headers: { 'x-public-session-token': sessionToken } });
-        if (!response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            throw new Error(payload?.error || `Download fehlgeschlagen (${response.status}).`);
+        if (downloadInFlightRef.current) {
+            throw new Error('Download läuft bereits. Bitte kurz warten.');
         }
-        const blob = await response.blob();
-        if (!blob || blob.size === 0) {
-            throw new Error('Download ist leer oder ungültig.');
+        downloadInFlightRef.current = true;
+        setDownloadPending(true);
+        try {
+            const response = await fetch(url, { headers: { 'x-public-session-token': sessionToken } });
+            if (!response.ok) {
+                const payload = await response.json().catch(() => ({}));
+                throw new Error(payload?.error || `Download fehlgeschlagen (${response.status}).`);
+            }
+            const blob = await response.blob();
+            if (!blob || blob.size === 0) {
+                throw new Error('Download ist leer oder ungültig.');
+            }
+            const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        } finally {
+            downloadInFlightRef.current = false;
+            setDownloadPending(false);
         }
-        const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
-        const objectUrl = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        URL.revokeObjectURL(objectUrl);
     }
 
     async function downloadEntry(entry: BrowserEntry | null) {
@@ -547,6 +559,16 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
         if (!entry.file.currentVersionId) return;
         await triggerDownload(buildDownloadUrl(entry.file, sessionToken), entry.file.displayName);
+    }
+
+    async function downloadCurrentSelection() {
+        if (selectedEntries.length > 1) {
+            for (const entry of selectedEntries) {
+                await downloadEntry(entry);
+            }
+            return;
+        }
+        await downloadEntry(selectedEntry);
     }
 
     useEffect(() => {
@@ -694,7 +716,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => hiddenUploadInputRef.current?.click()} title="Hochladen" aria-label="Hochladen">
                                     <ActionIcon path={ICONS.upload} />
                                 </button>
-                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry).catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} title="Download" aria-label="Download">
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadCurrentSelection().catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} disabled={downloadPending} title="Download" aria-label="Download">
                                     <ActionIcon path={ICONS.download} />
                                 </button>
                                 <button
@@ -747,7 +769,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         >
                                             <ActionIcon path={ICONS.eye} />
                                         </button>
-                                        <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry).catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} title="Download" aria-label="Download">
+                                        <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadCurrentSelection().catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} disabled={downloadPending} title="Download" aria-label="Download">
                                             <ActionIcon path={ICONS.download} />
                                         </button>
                                         <button className="btn btn-danger kp-icon-btn" type="button" onClick={() => requestDelete(selectedEntries)} title="Löschen" aria-label="Löschen">
@@ -959,6 +981,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             <button
                                 className="kp-fm-menu-item tile-grid-context-menu-item"
                                 type="button"
+                                disabled={downloadPending}
                                 onClick={() => {
                                     const folderPath = menuState.key.replace('folder:', '');
                                     const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
@@ -1052,6 +1075,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         <button
                                             className="kp-fm-menu-item tile-grid-context-menu-item"
                                             type="button"
+                                            disabled={downloadPending}
                                             onClick={() => {
                                                 triggerDownload(buildDownloadUrl(file, sessionToken), file.displayName).catch((err) => {
                                                     setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
@@ -1108,6 +1132,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 <button
                                     className="btn btn-primary"
                                     type="button"
+                                    disabled={downloadPending}
                                     onClick={() => {
                                         triggerDownload(buildDownloadUrl(previewFile, sessionToken), previewFile.displayName).catch((err) => {
                                             setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');

@@ -1386,7 +1386,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.get('/public/folders/download', {
         exposeHeadRoute: false,
-        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        config: { policy: { public: true }, rateLimit: { max: 80, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
         const sessionToken = resolvePublicSessionToken(request);
@@ -1610,7 +1610,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return reply.send(createReadStream(absPath));
     });
 
-    fastify.get('/folders/download', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
+    fastify.get('/folders/download', {
+        preHandler: [requirePermission('dateiaustausch.view')],
+        config: { rateLimit: { max: 80, timeWindow: '1 minute' } },
+    }, async (request, reply) => {
         const tenantId = resolveTenantIdOrReply(request, reply);
         if (!tenantId) return;
         const customerId = Number((request.query as any)?.customerId || 0);
