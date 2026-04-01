@@ -18,11 +18,14 @@ type Video = {
     sourceType: 'upload' | 'url';
     videoUrl: string | null;
     fileName: string | null;
+    mimeType: string | null;
+    sizeBytes: number | null;
     category: string;
     customerId: number | null;
     customerName: string | null;
     createdAt: string;
     activeCodeCount: number;
+    streamUrl?: string;
 };
 
 type ShareCode = {
@@ -57,6 +60,15 @@ function formatDate(value: string | null | undefined): string {
         hour: '2-digit',
         minute: '2-digit',
     }).format(date);
+}
+
+function formatBytes(value: number | null | undefined): string {
+    const size = Number(value || 0);
+    if (!Number.isFinite(size) || size <= 0) return '—';
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 export default function VideoPlatformAdminPage() {
@@ -253,6 +265,59 @@ export default function VideoPlatformAdminPage() {
         }
     }
 
+    async function editVideo(video: Video) {
+        const nextTitle = window.prompt('Titel bearbeiten', video.title)?.trim();
+        if (!nextTitle) return;
+        const nextCategory = window.prompt('Kategorie bearbeiten', video.category)?.trim() || 'Allgemein';
+        const nextDescription = window.prompt('Beschreibung bearbeiten', video.description || '') ?? '';
+
+        setBusy(true);
+        try {
+            const res = await apiFetch(`/api/plugins/videoplattform/videos/${video.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({
+                    title: nextTitle,
+                    category: nextCategory,
+                    description: nextDescription,
+                    customerId: video.customerId,
+                }),
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                throw new Error(payload?.error || 'Video konnte nicht aktualisiert werden');
+            }
+            toast.success('Video aktualisiert');
+            await reloadAll();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Video konnte nicht aktualisiert werden');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function replaceVideoFile(videoId: number, file: File | null) {
+        if (!file) return;
+        setBusy(true);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await apiFetch(`/api/plugins/videoplattform/videos/${videoId}/replace`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                throw new Error(payload?.error || 'Video konnte nicht ersetzt werden');
+            }
+            toast.success('Video-Datei ersetzt');
+            await reloadAll();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Video konnte nicht ersetzt werden');
+        } finally {
+            setBusy(false);
+        }
+    }
+
     async function deleteCustomer(id: number) {
         if (!window.confirm('Kunde wirklich löschen? Zugeordnete Videos bleiben erhalten, aber ohne Kundenzuordnung.')) return;
         setBusy(true);
@@ -443,15 +508,48 @@ export default function VideoPlatformAdminPage() {
 
                     <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="card-title">Videos ({videos.length})</div>
-                        <div className="vp-list" style={{ marginTop: 'var(--space-sm)' }}>
+                        <div className="vp-video-grid" style={{ marginTop: 'var(--space-sm)' }}>
                             {videos.map((video) => (
-                                <article key={video.id} className="vp-item">
-                                    <div className="vp-item-main">
-                                        <strong>{video.title}</strong>
-                                        <p className="text-muted">{video.customerName || 'Ohne Kunde'} • {video.category} • {formatDate(video.createdAt)}</p>
-                                        <p className="text-muted">Aktive Codes: {video.activeCodeCount}</p>
+                                <article key={video.id} className="vp-video-card">
+                                    <div className="vp-video-preview">
+                                        {video.sourceType === 'upload' ? (
+                                            <video
+                                                controls
+                                                playsInline
+                                                preload="metadata"
+                                                controlsList="nodownload"
+                                                src={`/api/plugins/videoplattform/videos/${video.id}/stream`}
+                                            />
+                                        ) : (
+                                            <a className="btn btn-primary" href={video.videoUrl || '#'} target="_blank" rel="noreferrer">
+                                                Externes Video öffnen
+                                            </a>
+                                        )}
                                     </div>
-                                    <div className="vp-item-actions">
+                                    <div className="vp-video-body">
+                                        <h3>{video.title}</h3>
+                                        <p className="text-muted">
+                                            {video.customerName || 'Ohne Kunde'} | {video.category} | {formatBytes(video.sizeBytes)}
+                                        </p>
+                                        <p className="text-muted">Aktive Codes: {video.activeCodeCount} | Erstellt: {formatDate(video.createdAt)}</p>
+                                        {video.description ? <p>{video.description}</p> : null}
+                                    </div>
+                                    <div className="vp-action-row" style={{ padding: '0 var(--space-md) var(--space-md) var(--space-md)' }}>
+                                        <button className="btn btn-secondary" onClick={() => editVideo(video)} disabled={busy}>Bearbeiten</button>
+                                        <label className="btn btn-secondary" style={{ cursor: busy ? 'not-allowed' : 'pointer' }}>
+                                            Video austauschen
+                                            <input
+                                                type="file"
+                                                accept="video/*"
+                                                style={{ display: 'none' }}
+                                                disabled={busy}
+                                                onChange={(e) => {
+                                                    const file = e.target.files?.[0] || null;
+                                                    e.currentTarget.value = '';
+                                                    void replaceVideoFile(video.id, file);
+                                                }}
+                                            />
+                                        </label>
                                         <button className="btn btn-secondary" onClick={() => loadVideoCodes(video.id)}>Codes anzeigen</button>
                                         <button className="btn btn-secondary" onClick={() => createVideoCode(video.id)} disabled={busy}>Code erstellen</button>
                                         <button className="btn btn-danger" onClick={() => deleteVideo(video.id)} disabled={busy}>Löschen</button>

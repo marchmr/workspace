@@ -485,46 +485,70 @@ function parseOptionalDate(input: unknown): string | null {
     return date.toISOString().slice(0, 19).replace('T', ' ');
 }
 
-function sendVideoFile(request: FastifyRequest, reply: FastifyReply, filePath: string, mimeType?: string | null): void {
+async function sendVideoFile(request: FastifyRequest, reply: FastifyReply, filePath: string, mimeType?: string | null): Promise<void> {
     const rangeHeader = String(request.headers.range || '');
+    try {
+        const stat = await fs.stat(filePath);
+        const size = stat.size;
 
-    fs.stat(filePath)
-        .then((stat) => {
-            const size = stat.size;
-
-            if (!rangeHeader) {
-                reply.header('Content-Type', mimeType || 'video/mp4');
-                reply.header('Content-Length', String(size));
-                reply.header('Cache-Control', 'no-store');
-                reply.send(createReadStream(filePath));
-                return;
-            }
-
-            const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-            if (!match) {
-                reply.status(416).send();
-                return;
-            }
-
-            const start = match[1] ? Number(match[1]) : 0;
-            const end = match[2] ? Number(match[2]) : size - 1;
-
-            if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end >= size || start > end) {
-                reply.status(416).send();
-                return;
-            }
-
-            reply.status(206);
-            reply.header('Content-Range', `bytes ${start}-${end}/${size}`);
-            reply.header('Accept-Ranges', 'bytes');
-            reply.header('Content-Length', String(end - start + 1));
+        if (!rangeHeader) {
             reply.header('Content-Type', mimeType || 'video/mp4');
+            reply.header('Content-Length', String(size));
             reply.header('Cache-Control', 'no-store');
-            reply.send(createReadStream(filePath, { start, end }));
-        })
-        .catch(() => {
-            reply.status(404).send({ error: 'Videodatei nicht gefunden' });
-        });
+            return reply.send(createReadStream(filePath));
+        }
+
+        const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+        if (!match) {
+            return reply.status(416).send();
+        }
+
+        const start = match[1] ? Number(match[1]) : 0;
+        const end = match[2] ? Number(match[2]) : size - 1;
+
+        if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end >= size || start > end) {
+            return reply.status(416).send();
+        }
+
+        reply.status(206);
+        reply.header('Content-Range', `bytes ${start}-${end}/${size}`);
+        reply.header('Accept-Ranges', 'bytes');
+        reply.header('Content-Length', String(end - start + 1));
+        reply.header('Content-Type', mimeType || 'video/mp4');
+        reply.header('Cache-Control', 'no-store');
+        return reply.send(createReadStream(filePath, { start, end }));
+    } catch {
+        return reply.status(404).send({ error: 'Videodatei nicht gefunden' });
+    }
+}
+
+async function resolveUploadVideoAbsolutePath(video: { tenant_id: number; file_path: string }): Promise<string | null> {
+    const normalizedPath = normalizeLocalVideoPath(video.file_path);
+    const tenantPrefix = `${video.tenant_id}/`;
+    const withoutTenantPrefix = normalizedPath.startsWith(tenantPrefix) ? normalizedPath.slice(tenantPrefix.length) : normalizedPath;
+    const pluginRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID);
+
+    const candidates: string[] = [
+        path.join(pluginRoot, normalizedPath),
+        path.join(pluginRoot, 'videos', normalizedPath),
+    ];
+
+    if (!normalizedPath.startsWith(tenantPrefix)) {
+        candidates.push(path.join(pluginRoot, String(video.tenant_id), normalizedPath));
+        candidates.push(path.join(pluginRoot, 'videos', String(video.tenant_id), normalizedPath));
+    } else {
+        candidates.push(path.join(pluginRoot, 'videos', String(video.tenant_id), withoutTenantPrefix));
+    }
+
+    for (const candidate of candidates) {
+        try {
+            await fs.access(candidate);
+            return candidate;
+        } catch {
+            // try next
+        }
+    }
+    return null;
 }
 
 function buildCustomerDisplayName(customer: any): string {
@@ -1006,10 +1030,34 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             entityId: String(id),
             pluginId: PLUGIN_ID,
             previousState: { sourceType: existing.source_type, filePath: existing.file_path },
-            newState: { sourceType: 'upload', filePath: relPath },
+            newState: { sourceType: 'upload', filePath: stored.filePath },
         }, request);
 
         return { success: true };
+    });
+
+    fastify.get('/videos/:id/stream', { preHandler: [requirePermission('videoplattform.view')] }, async (request, reply) => {
+        const tenantId = getTenantId(request);
+        const id = Number((request.params as any)?.id);
+        if (!Number.isInteger(id) || id <= 0) return reply.status(400).send({ error: 'Ungültige ID' });
+
+        const video = await db('vp_videos')
+            .where({ tenant_id: tenantId, id })
+            .first();
+        if (!video) return reply.status(404).send({ error: 'Video nicht gefunden' });
+
+        if (video.source_type === 'url') {
+            if (!video.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
+            return reply.redirect(video.video_url);
+        }
+
+        if (!video.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });
+        const absPath = await resolveUploadVideoAbsolutePath(video);
+        if (!absPath) {
+            request.log.warn(`Videodatei nicht gefunden (admin stream), videoId=${video.id}, rel=${video.file_path}`);
+            return reply.status(404).send({ error: 'Videodatei nicht gefunden' });
+        }
+        return sendVideoFile(request, reply, absPath, video.mime_type || 'video/mp4');
     });
 
     fastify.delete('/videos/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
@@ -1475,10 +1523,12 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }
 
         if (!streamVideo.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });
-
-        const normalizedPath = normalizeLocalVideoPath(streamVideo.file_path);
-        const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, normalizedPath);
-        sendVideoFile(request, reply, absPath, streamVideo.mime_type || 'video/mp4');
+        const absPath = await resolveUploadVideoAbsolutePath(streamVideo);
+        if (!absPath) {
+            request.log.warn(`Videodatei nicht gefunden (public stream), videoId=${streamVideo.id}, rel=${streamVideo.file_path}`);
+            return reply.status(404).send({ error: 'Videodatei nicht gefunden' });
+        }
+        return sendVideoFile(request, reply, absPath, streamVideo.mime_type || 'video/mp4');
     });
 
     fastify.get('/public/health', {
