@@ -6,10 +6,11 @@ import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
 import { config } from '../../../backend/src/core/config.js';
-import { decrypt } from '../../../backend/src/core/encryption.js';
+import { decrypt, encrypt } from '../../../backend/src/core/encryption.js';
 
 const PLUGIN_ID = 'videoplattform';
 const PUBLIC_SUBDOMAIN_SETTING_KEY = 'videoplattform.public_subdomain';
+const PUBLIC_LOGO_FILE_SETTING_KEY = 'videoplattform.public_logo_file';
 const DEFAULT_PUBLIC_SUBDOMAIN = 'kunden.webdesign-hammer.de';
 const MAX_VIDEO_SIZE_BYTES = 3 * 1024 * 1024 * 1024; // 3 GB
 
@@ -50,6 +51,89 @@ type ResolvedCustomerSource = {
     hasLinkColumn: boolean;
 };
 
+async function ensureVideoplattformSchema(db: any): Promise<void> {
+    const hasCustomers = await db.schema.hasTable('vp_customers');
+    if (!hasCustomers) {
+        await db.schema.createTable('vp_customers', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.string('name', 255).notNullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.unique(['tenant_id', 'name']);
+            table.index(['tenant_id', 'created_at']);
+        });
+    }
+
+    const hasCrmLink = await db.schema.hasColumn('vp_customers', 'crm_customer_id').catch(() => false);
+    if (!hasCrmLink) {
+        await db.schema.alterTable('vp_customers', (table: any) => {
+            table.integer('crm_customer_id').unsigned().nullable().references('id').inTable('crm_customers').onDelete('SET NULL');
+            table.index(['tenant_id', 'crm_customer_id'], 'vp_customers_tenant_crm_idx');
+        });
+    }
+
+    const hasVideos = await db.schema.hasTable('vp_videos');
+    if (!hasVideos) {
+        await db.schema.createTable('vp_videos', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.string('title', 255).notNullable();
+            table.text('description').nullable();
+            table.enum('source_type', ['upload', 'url']).notNullable().defaultTo('upload');
+            table.text('video_url').nullable();
+            table.string('file_name', 255).nullable();
+            table.string('file_path', 600).nullable();
+            table.string('mime_type', 120).nullable();
+            table.bigInteger('size_bytes').nullable();
+            table.string('category', 120).notNullable().defaultTo('Allgemein');
+            table.integer('customer_id').unsigned().nullable().references('id').inTable('vp_customers').onDelete('SET NULL');
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.timestamp('updated_at').defaultTo(db.fn.now());
+            table.index(['tenant_id', 'created_at']);
+            table.index(['tenant_id', 'customer_id']);
+            table.index(['tenant_id', 'category']);
+        });
+    }
+
+    const hasShareCodes = await db.schema.hasTable('vp_share_codes');
+    if (!hasShareCodes) {
+        await db.schema.createTable('vp_share_codes', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.enum('scope', ['video', 'customer']).notNullable().defaultTo('video');
+            table.integer('video_id').unsigned().nullable().references('id').inTable('vp_videos').onDelete('CASCADE');
+            table.integer('customer_id').unsigned().nullable().references('id').inTable('vp_customers').onDelete('CASCADE');
+            table.string('code', 40).notNullable();
+            table.boolean('is_active').notNullable().defaultTo(true);
+            table.timestamp('expires_at').nullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.unique(['tenant_id', 'code']);
+            table.index(['tenant_id', 'scope']);
+            table.index(['tenant_id', 'video_id']);
+            table.index(['tenant_id', 'customer_id']);
+        });
+    }
+
+    const hasActivityLogs = await db.schema.hasTable('vp_activity_logs');
+    if (!hasActivityLogs) {
+        await db.schema.createTable('vp_activity_logs', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().nullable().references('id').inTable('tenants').onDelete('SET NULL');
+            table.string('event_type', 80).notNullable();
+            table.string('ip', 120).nullable();
+            table.text('user_agent').nullable();
+            table.integer('video_id').unsigned().nullable().references('id').inTable('vp_videos').onDelete('SET NULL');
+            table.integer('customer_id').unsigned().nullable().references('id').inTable('vp_customers').onDelete('SET NULL');
+            table.string('code', 40).nullable();
+            table.boolean('success').notNullable().defaultTo(false);
+            table.text('detail').nullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.index(['tenant_id', 'created_at']);
+            table.index(['event_type', 'created_at']);
+        });
+    }
+}
+
 function normalizeHost(value: string | undefined): string {
     return String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
@@ -78,6 +162,29 @@ async function readPublicSubdomain(db: any): Promise<string> {
     } catch {
         return DEFAULT_PUBLIC_SUBDOMAIN;
     }
+}
+
+async function readPublicLogoFile(db: any): Promise<string | null> {
+    const row = await db('settings')
+        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_LOGO_FILE_SETTING_KEY })
+        .whereNull('tenant_id')
+        .first('value_encrypted');
+
+    if (!row?.value_encrypted) return null;
+    try {
+        const value = decrypt(String(row.value_encrypted)).trim();
+        return value || null;
+    } catch {
+        return null;
+    }
+}
+
+function logoMimeTypeFromFileName(fileName: string): string {
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    if (ext === '.svg') return 'image/svg+xml';
+    return 'image/jpeg';
 }
 
 function sanitizeCode(input: unknown): string {
@@ -315,6 +422,29 @@ async function assertCustomerExists(db: any, tenantId: number, customerId: numbe
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
+    await ensureVideoplattformSchema(db);
+    const brandingDir = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding');
+
+    async function upsertPluginSetting(key: string, value: string): Promise<void> {
+        const encrypted = encrypt(value);
+        const existing = await db('settings')
+            .where({ plugin_id: PLUGIN_ID, key })
+            .whereNull('tenant_id')
+            .first('id');
+
+        if (existing) {
+            await db('settings').where({ id: existing.id }).update({ value_encrypted: encrypted });
+            return;
+        }
+
+        await db('settings').insert({
+            key,
+            value_encrypted: encrypted,
+            category: 'plugin',
+            plugin_id: PLUGIN_ID,
+            tenant_id: null,
+        });
+    }
 
     async function listCodesForScope(tenantId: number, scope: 'video' | 'customer', id: number): Promise<any[]> {
         const base = db('vp_share_codes')
@@ -881,6 +1011,61 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return { success: true };
     });
 
+    fastify.get('/admin/branding/logo', { preHandler: [requirePermission('settings.manage')] }, async () => {
+        const fileName = await readPublicLogoFile(db);
+        return {
+            exists: Boolean(fileName),
+            url: fileName ? '/api/plugins/videoplattform/public/logo' : null,
+            fileName,
+        };
+    });
+
+    fastify.post('/admin/branding/logo', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const file = await (request as any).file();
+        if (!file) return reply.status(400).send({ error: 'Logo-Datei ist erforderlich' });
+
+        const mimeType = String(file.mimetype || '').toLowerCase();
+        if (!mimeType.startsWith('image/')) {
+            return reply.status(400).send({ error: 'Nur Bilddateien sind erlaubt (png, jpg, webp, svg)' });
+        }
+
+        const buffer = await file.toBuffer();
+        if (buffer.length <= 0) {
+            return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
+        }
+        if (buffer.length > 4 * 1024 * 1024) {
+            return reply.status(413).send({ error: 'Logo ist zu groß (max. 4 MB)' });
+        }
+
+        await fs.mkdir(brandingDir, { recursive: true });
+        const previousFileName = await readPublicLogoFile(db);
+        const ext = path.extname(String(file.filename || '')).toLowerCase() || (mimeType === 'image/png' ? '.png' : '.jpg');
+        const nextFileName = `portal-logo-${Date.now()}-${randomUUID()}${ext}`;
+        const targetPath = path.join(brandingDir, nextFileName);
+        await fs.writeFile(targetPath, buffer);
+
+        await upsertPluginSetting(PUBLIC_LOGO_FILE_SETTING_KEY, nextFileName);
+
+        if (previousFileName && previousFileName !== nextFileName) {
+            await fs.rm(path.join(brandingDir, previousFileName), { force: true }).catch(() => undefined);
+        }
+
+        return {
+            success: true,
+            url: `/api/plugins/videoplattform/public/logo?v=${Date.now()}`,
+            fileName: nextFileName,
+        };
+    });
+
+    fastify.delete('/admin/branding/logo', { preHandler: [requirePermission('settings.manage')] }, async () => {
+        const previousFileName = await readPublicLogoFile(db);
+        if (previousFileName) {
+            await fs.rm(path.join(brandingDir, previousFileName), { force: true }).catch(() => undefined);
+        }
+        await upsertPluginSetting(PUBLIC_LOGO_FILE_SETTING_KEY, '');
+        return { success: true };
+    });
+
     fastify.get('/activity', { preHandler: [requirePermission('videoplattform.view')] }, async (request) => {
         const tenantId = getTenantId(request);
         const limitRaw = Number((request.query as any)?.limit || 100);
@@ -922,9 +1107,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!ok) return;
 
         const configuredHost = await readPublicSubdomain(db);
+        const fallbackLogoFile = await readPublicLogoFile(db);
         return {
             expectedHost: configuredHost,
             brand: 'Webdesign Hammer',
+            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
         };
     });
 
@@ -953,6 +1140,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         let videos: VideoRecord[] = [];
         let customerName: string | null = null;
+        let tenantLogoUrl: string | null = null;
 
         if (codeRow.scope === 'video' && codeRow.video_id) {
             const video = await db('vp_videos as v')
@@ -980,7 +1168,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                     this.on('c.id', '=', 'v.customer_id').andOn('c.tenant_id', '=', 'v.tenant_id');
                 })
                 .where('v.tenant_id', codeRow.tenant_id)
-                .andWhere('v.customer_id', codeRow.customer_id)
+                .andWhere((qb: any) => {
+                    qb.where('v.customer_id', codeRow.customer_id).orWhereNull('v.customer_id');
+                })
                 .select('v.*', 'c.name as customer_name')
                 .orderBy('v.created_at', 'desc');
         }
@@ -1000,11 +1190,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             return reply.status(404).send({ error: 'Keine Videos für diesen Code verfügbar' });
         }
 
+        const tenant = await db('tenants')
+            .where({ id: codeRow.tenant_id })
+            .first('id', 'logo_file');
+        if (tenant?.logo_file) {
+            tenantLogoUrl = `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?code=${encodeURIComponent(code)}`;
+        }
+
+        const fallbackLogoFile = await readPublicLogoFile(db);
+
         return {
             code,
             scope: codeRow.scope,
             customerId: codeRow.customer_id,
             customerName,
+            tenantLogoUrl,
+            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
             videos: videos.map((video) => formatVideo(video)),
         };
     });
@@ -1054,7 +1255,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }
 
         const allowed = (codeRow.scope === 'video' && Number(codeRow.video_id) === videoId)
-            || (codeRow.scope === 'customer' && Number(codeRow.customer_id) > 0 && Number(codeRow.customer_id) === Number(video.customer_id));
+            || (codeRow.scope === 'customer'
+                && Number(codeRow.customer_id) > 0
+                && (Number(codeRow.customer_id) === Number(video.customer_id) || video.customer_id === null));
 
         if (!allowed) {
             await logActivity(db, {
@@ -1098,6 +1301,56 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async () => ({ ok: true, plugin: PLUGIN_ID }));
+
+    fastify.get('/public/logo', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        const fileName = await readPublicLogoFile(db);
+        if (!fileName) return reply.status(404).send({ error: 'Kein Portal-Logo hinterlegt' });
+        const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding', fileName);
+        try {
+            await fs.access(absPath);
+            reply.header('Cache-Control', 'public, max-age=300');
+            reply.type(logoMimeTypeFromFileName(fileName));
+            return reply.send(createReadStream(absPath));
+        } catch {
+            return reply.status(404).send({ error: 'Logo-Datei nicht gefunden' });
+        }
+    });
+
+    fastify.get('/public/tenant-logo/:tenantId', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const tenantId = Number((request.params as any)?.tenantId);
+        const code = sanitizeCode((request.query as any)?.code);
+        if (!Number.isInteger(tenantId) || tenantId <= 0) return reply.status(400).send({ error: 'Ungültige Tenant-ID' });
+        if (!code) return reply.status(400).send({ error: 'Code ist erforderlich' });
+
+        const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first('tenant_id', 'expires_at');
+        if (!codeRow || isCodeExpired(codeRow.expires_at) || Number(codeRow.tenant_id) !== tenantId) {
+            return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
+        }
+
+        const tenant = await db('tenants').where({ id: tenantId }).first('logo_file');
+        if (!tenant?.logo_file) return reply.status(404).send({ error: 'Kein Tenant-Logo vorhanden' });
+
+        const absPath = path.join(config.app.uploadsDir, 'tenant-logos', String(tenant.logo_file));
+        try {
+            await fs.access(absPath);
+            reply.header('Cache-Control', 'private, max-age=300');
+            reply.type(logoMimeTypeFromFileName(String(tenant.logo_file)));
+            return reply.send(createReadStream(absPath));
+        } catch {
+            return reply.status(404).send({ error: 'Tenant-Logo-Datei nicht gefunden' });
+        }
+    });
 
     fastify.head('/public/config', {
         config: { policy: { public: true } },

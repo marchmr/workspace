@@ -69,6 +69,7 @@ export default function VideoPlatformAdminPage() {
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [customerSource, setCustomerSource] = useState<'videoplattform' | 'crm'>('videoplattform');
+    const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
     const [newCustomerName, setNewCustomerName] = useState('');
 
@@ -154,6 +155,7 @@ export default function VideoPlatformAdminPage() {
         event.preventDefault();
         if (!title.trim()) return;
         setBusy(true);
+        setUploadProgress(null);
 
         try {
             let res: Response;
@@ -168,9 +170,8 @@ export default function VideoPlatformAdminPage() {
                 if (customerId) data.append('customerId', customerId);
                 data.append('file', videoFile);
 
-                res = await apiFetch('/api/plugins/videoplattform/videos', {
-                    method: 'POST',
-                    body: data,
+                res = await uploadVideoWithProgress('/api/plugins/videoplattform/videos', data, (percent) => {
+                    setUploadProgress(percent);
                 });
             } else {
                 res = await apiFetch('/api/plugins/videoplattform/videos', {
@@ -196,13 +197,41 @@ export default function VideoPlatformAdminPage() {
             setCustomerId('');
             setVideoUrl('');
             setVideoFile(null);
+            setUploadProgress(null);
             toast.success('Video gespeichert');
             await reloadAll();
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Video konnte nicht erstellt werden');
         } finally {
+            setUploadProgress(null);
             setBusy(false);
         }
+    }
+
+    function uploadVideoWithProgress(url: string, formData: FormData, onProgress: (percent: number) => void): Promise<Response> {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', url, true);
+            xhr.withCredentials = true;
+
+            xhr.upload.onprogress = (event) => {
+                if (!event.lengthComputable) return;
+                const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+                onProgress(percent);
+            };
+
+            xhr.onerror = () => reject(new Error('Upload fehlgeschlagen'));
+            xhr.onload = () => {
+                const body = xhr.responseText || '';
+                resolve(new Response(body, {
+                    status: xhr.status,
+                    statusText: xhr.statusText,
+                    headers: { 'Content-Type': xhr.getResponseHeader('Content-Type') || 'application/json' },
+                }));
+            };
+
+            xhr.send(formData);
+        });
     }
 
     async function deleteVideo(id: number) {
@@ -351,22 +380,35 @@ export default function VideoPlatformAdminPage() {
 
     return (
         <div className="vp-admin-page">
-            <div className="page-header">
-                <h1 className="page-title">Videoplattform</h1>
-                <p className="page-subtitle">Videos, Kunden und Freigabecodes zentral verwalten</p>
-            </div>
+            <div className="vp-admin-shell">
+                <aside className="vp-admin-sidebar">
+                    <div className="vp-admin-brand">Videoplattform</div>
+                    <p className="text-muted">Videos und Codes</p>
 
-            <div className="vp-tabbar">
-                <button className={`btn ${activeTab === 'videos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('videos')}>Videos</button>
-                {customerSource !== 'crm' && (
-                    <button className={`btn ${activeTab === 'customers' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('customers')}>Kunden</button>
-                )}
-                <button className={`btn ${activeTab === 'activity' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('activity')}>Aktivität</button>
-            </div>
+                    <div className="vp-sidebar-nav">
+                        <button className={`btn ${activeTab === 'videos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('videos')}>Videos</button>
+                        {customerSource !== 'crm' && (
+                            <button className={`btn ${activeTab === 'customers' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('customers')}>Kunden</button>
+                        )}
+                        <button className={`btn ${activeTab === 'activity' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('activity')}>Aktivität</button>
+                    </div>
+
+                    <div className="vp-sidebar-stats">
+                        <div><strong>{videos.length}</strong> Videos</div>
+                        <div><strong>{customers.length}</strong> Kunden</div>
+                        <div><strong>{logs.length}</strong> Logs</div>
+                    </div>
+                </aside>
+
+                <div className="vp-admin-content">
+                    <div className="page-header vp-header-card">
+                        <h1 className="page-title">Videos & Freigabecodes</h1>
+                        <p className="page-subtitle">Zentrale Verwaltung für Inhalte, Kunden und Zugriffscodes</p>
+                    </div>
 
             {activeTab === 'videos' && (
                 <>
-                    <div className="card">
+                    <div className="card vp-panel">
                         <div className="card-title">Neues Video</div>
                         <form onSubmit={createVideo} className="vp-form-grid">
                             <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Titel" required />
@@ -382,7 +424,15 @@ export default function VideoPlatformAdminPage() {
                             <textarea className="input vp-textarea" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Beschreibung" />
 
                             {videoType === 'upload' ? (
-                                <input className="input" type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] || null)} required />
+                                <>
+                                    <input className="input" type="file" accept="video/*" onChange={(e) => setVideoFile(e.target.files?.[0] || null)} required />
+                                    {busy && uploadProgress !== null && (
+                                        <div className="vp-upload-progress">
+                                            <div className="vp-upload-progress-bar" style={{ width: `${uploadProgress}%` }} />
+                                            <span>{uploadProgress}%</span>
+                                        </div>
+                                    )}
+                                </>
                             ) : (
                                 <input className="input" value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)} placeholder="https://..." required />
                             )}
@@ -391,7 +441,7 @@ export default function VideoPlatformAdminPage() {
                         </form>
                     </div>
 
-                    <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                    <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="card-title">Videos ({videos.length})</div>
                         <div className="vp-list" style={{ marginTop: 'var(--space-sm)' }}>
                             {videos.map((video) => (
@@ -412,7 +462,7 @@ export default function VideoPlatformAdminPage() {
                     </div>
 
                     {selectedVideo && (
-                        <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                        <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                             <div className="card-title">Codes für Video: {selectedVideo.title}</div>
                             <div className="vp-code-list" style={{ marginTop: 'var(--space-sm)' }}>
                                 {videoCodes.length === 0 && <p className="text-muted">Noch keine Codes vorhanden.</p>}
@@ -438,12 +488,12 @@ export default function VideoPlatformAdminPage() {
             {activeTab === 'customers' && (
                 <>
                     {customerSource === 'crm' ? (
-                        <div className="card">
+                        <div className="card vp-panel">
                             <div className="card-title">Kundenquelle</div>
                             <p className="text-muted">Kunden werden aus dem CRM-Plugin synchronisiert. Anlage und Löschen erfolgt im CRM.</p>
                         </div>
                     ) : (
-                        <div className="card">
+                        <div className="card vp-panel">
                             <div className="card-title">Neuer Kunde</div>
                             <form onSubmit={createCustomer} className="vp-inline-form">
                                 <input className="input" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Kundenname" required />
@@ -452,7 +502,7 @@ export default function VideoPlatformAdminPage() {
                         </div>
                     )}
 
-                    <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                    <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="card-title">Kunden ({customers.length})</div>
                         <div className="vp-list" style={{ marginTop: 'var(--space-sm)' }}>
                             {customers.map((customer) => (
@@ -474,7 +524,7 @@ export default function VideoPlatformAdminPage() {
                     </div>
 
                     {selectedCustomer && (
-                        <div className="card" style={{ marginTop: 'var(--space-md)' }}>
+                        <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                             <div className="card-title">Codes für Kunde: {selectedCustomer.name}</div>
                             <div className="vp-code-list" style={{ marginTop: 'var(--space-sm)' }}>
                                 {customerCodes.length === 0 && <p className="text-muted">Noch keine Codes vorhanden.</p>}
@@ -498,7 +548,7 @@ export default function VideoPlatformAdminPage() {
             )}
 
             {activeTab === 'activity' && (
-                <div className="card">
+                <div className="card vp-panel">
                     <div className="card-title">Aktivitätsprotokoll</div>
                     <div className="table-container" style={{ marginTop: 'var(--space-sm)' }}>
                         <table>
@@ -534,6 +584,8 @@ export default function VideoPlatformAdminPage() {
                     </div>
                 </div>
             )}
+                </div>
+            </div>
         </div>
     );
 }

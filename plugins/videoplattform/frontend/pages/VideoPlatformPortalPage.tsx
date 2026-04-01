@@ -17,6 +17,8 @@ type AccessResponse = {
     scope: 'video' | 'customer';
     customerId: number | null;
     customerName: string | null;
+    tenantLogoUrl?: string | null;
+    logoUrl?: string | null;
     videos: PortalVideo[];
 };
 
@@ -39,6 +41,7 @@ export default function VideoPlatformPortalPage() {
     const [access, setAccess] = useState<AccessResponse | null>(null);
     const [expectedHost, setExpectedHost] = useState('');
     const [keyword, setKeyword] = useState('');
+    const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -50,6 +53,9 @@ export default function VideoPlatformPortalPage() {
                 if (!active) return;
                 if (typeof data.expectedHost === 'string') {
                     setExpectedHost(data.expectedHost);
+                }
+                if (typeof data.logoUrl === 'string' && data.logoUrl) {
+                    setPortalLogoUrl(`${data.logoUrl}${data.logoUrl.includes('?') ? '&' : '?'}v=${Date.now()}`);
                 }
             })
             .catch(() => {
@@ -95,6 +101,13 @@ export default function VideoPlatformPortalPage() {
             localStorage.setItem(STORAGE_KEY, payload.code);
             setCode(payload.code);
             setAccess(payload as AccessResponse);
+            const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
+            const fallbackLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+            if (tenantLogo) {
+                setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            } else if (fallbackLogo) {
+                setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Code ungültig oder abgelaufen');
             setAccess(null);
@@ -114,6 +127,13 @@ export default function VideoPlatformPortalPage() {
             <div className="vp-public-shell">
                 {!access ? (
                     <section className="card vp-access-card">
+                        <div className="vp-portal-brand">
+                            {portalLogoUrl ? (
+                                <img src={portalLogoUrl} alt="Kundenportal Logo" />
+                            ) : (
+                                <div className="vp-portal-brand-fallback">Kundenportal</div>
+                            )}
+                        </div>
                         <h1 className="page-title" style={{ marginBottom: 'var(--space-sm)' }}>Videofreigabe</h1>
                         <p className="text-muted" style={{ marginBottom: 'var(--space-md)' }}>
                             Bitte Freigabecode eingeben, um Ihre Videos zu öffnen.
@@ -143,7 +163,7 @@ export default function VideoPlatformPortalPage() {
                         {error && <p className="text-danger" style={{ marginTop: 'var(--space-sm)' }}>{error}</p>}
                     </section>
                 ) : (
-                    <section className="card">
+                    <section className="card vp-panel vp-portal-panel">
                         <div className="vp-head-row">
                             <div>
                                 <h1 className="page-title">Ihre Videos</h1>

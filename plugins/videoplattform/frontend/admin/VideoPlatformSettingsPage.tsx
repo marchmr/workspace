@@ -68,6 +68,9 @@ export default function VideoPlatformSettingsPage() {
     const [checking, setChecking] = useState(false);
     const [provisioning, setProvisioning] = useState(false);
     const [preflighting, setPreflighting] = useState(false);
+    const [logoUrl, setLogoUrl] = useState<string | null>(null);
+    const [logoLoading, setLogoLoading] = useState(false);
+    const [logoUploading, setLogoUploading] = useState(false);
     const [status, setStatus] = useState<ProvisionStatus | null>(null);
     const [lastProvision, setLastProvision] = useState<ProvisionResponse | null>(null);
     const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
@@ -90,6 +93,20 @@ export default function VideoPlatformSettingsPage() {
             })
             .finally(() => {
                 if (active) setLoading(false);
+            });
+
+        setLogoLoading(true);
+        apiFetch('/api/plugins/videoplattform/admin/branding/logo')
+            .then(async (res) => {
+                if (!active || !res.ok) return;
+                const payload = await res.json().catch(() => ({}));
+                setLogoUrl(typeof payload?.url === 'string' ? `${payload.url}${payload.url.includes('?') ? '&' : '?'}v=${Date.now()}` : null);
+            })
+            .catch(() => {
+                // ignore
+            })
+            .finally(() => {
+                if (active) setLogoLoading(false);
             });
 
         return () => {
@@ -218,6 +235,42 @@ export default function VideoPlatformSettingsPage() {
         }
     }
 
+    async function uploadPortalLogo(file: File | null) {
+        if (!file) return;
+        setLogoUploading(true);
+        try {
+            const data = new FormData();
+            data.append('file', file);
+            const res = await apiFetch('/api/plugins/videoplattform/admin/branding/logo', {
+                method: 'POST',
+                body: data,
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Logo konnte nicht hochgeladen werden');
+            setLogoUrl(typeof payload?.url === 'string' ? payload.url : `/api/plugins/videoplattform/public/logo?v=${Date.now()}`);
+            toast.success('Portal-Logo gespeichert');
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Logo konnte nicht hochgeladen werden');
+        } finally {
+            setLogoUploading(false);
+        }
+    }
+
+    async function removePortalLogo() {
+        setLogoUploading(true);
+        try {
+            const res = await apiFetch('/api/plugins/videoplattform/admin/branding/logo', { method: 'DELETE' });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Logo konnte nicht entfernt werden');
+            setLogoUrl(null);
+            toast.success('Portal-Logo entfernt');
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Logo konnte nicht entfernt werden');
+        } finally {
+            setLogoUploading(false);
+        }
+    }
+
     if (loading) {
         return <p className="text-muted">Einstellungen werden geladen...</p>;
     }
@@ -240,6 +293,42 @@ export default function VideoPlatformSettingsPage() {
                     {saving ? 'Speichere...' : 'Speichern'}
                 </button>
             </form>
+
+            <div className="vp-provision-box">
+                <strong>Kundenportal Logo</strong>
+                <p className="text-muted">
+                    Reihenfolge im Portal: 1. Tenant-Logo (falls vorhanden), 2. dieses Fallback-Logo.
+                </p>
+                <div className="vp-logo-row">
+                    <div className="vp-logo-preview">
+                        {logoLoading ? (
+                            <span className="text-muted">Lade Logo...</span>
+                        ) : logoUrl ? (
+                            <img src={logoUrl} alt="Portal-Logo" />
+                        ) : (
+                            <span className="text-muted">Kein Fallback-Logo</span>
+                        )}
+                    </div>
+                    <div className="vp-logo-actions">
+                        <label className="btn btn-secondary" style={{ cursor: logoUploading ? 'not-allowed' : 'pointer' }}>
+                            {logoUploading ? 'Lädt...' : 'Logo hochladen'}
+                            <input
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                                style={{ display: 'none' }}
+                                disabled={logoUploading}
+                                onChange={(e) => {
+                                    void uploadPortalLogo(e.target.files?.[0] || null);
+                                    e.currentTarget.value = '';
+                                }}
+                            />
+                        </label>
+                        <button className="btn btn-danger" type="button" onClick={removePortalLogo} disabled={logoUploading || !logoUrl}>
+                            Logo entfernen
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             <div className="vp-action-row" style={{ marginTop: 'var(--space-sm)' }}>
                 <button className="btn btn-secondary" type="button" onClick={runPreflight} disabled={preflighting}>

@@ -84,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const isLoginRoute = window.location.pathname === '/login';
+    const isKnownPublicPortalRoute = window.location.pathname.startsWith('/kundenportal-videos');
 
     const refreshUser = useCallback(async () => {
         try {
@@ -102,12 +103,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isLoginRoute) {
+        if (isLoginRoute || isKnownPublicPortalRoute) {
             setLoading(false);
             return;
         }
         refreshUser();
-    }, [refreshUser, isLoginRoute]);
+    }, [refreshUser, isLoginRoute, isKnownPublicPortalRoute]);
 
     const login = async (
         username: string,
