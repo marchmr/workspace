@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Fix
+
+#### Core
+- `install.sh` setzt jetzt automatisch alle Voraussetzungen für die Subdomain-Automation (systemd Drop-In + sudoers + `SUBDOMAIN_*` Defaults)
+- `update.sh` zieht dieselben Subdomain-/SSL-Voraussetzungen nach jedem Update automatisch nach
+- Verbesserte Fehlerklassifizierung im Subdomain-Provisioning für `certbot`-Lock-/Rechtefehler und `nginx -t` Log-/PID-Probleme
+
+#### UI
+- In den Plugin-Settings wird bei fehlgeschlagener Provisionierung nun ein separater Block `Genauer Fehler` mit Roh-Fehlermeldung angezeigt
+- Fix-Befehle bleiben darunter direkt kopierbar sichtbar
+
 ## [1.20.0] - 2026-03-30
 
 ### Neu

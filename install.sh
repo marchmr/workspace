@@ -107,6 +107,55 @@ APP_DIR="/opt/mike-workspace"
 APP_USER="mike"
 GIT_REPO="https://github.com/marchmr/workspace.git"
 NODE_VERSION="20"
+SERVICE_NAME="mike-workspace"
+
+upsert_env_file() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -q "^${key}=" "$env_file"; then
+    sed -i "s#^${key}=.*#${key}=${value}#" "$env_file"
+  else
+    printf "\n%s=%s\n" "$key" "$value" >> "$env_file"
+  fi
+}
+
+configure_subdomain_provisioning_prereqs() {
+  print_step "Subdomain-Automation (Nginx/SSL) vorkonfigurieren..."
+
+  local dropin_dir="/etc/systemd/system/${SERVICE_NAME}.service.d"
+  local dropin_file="${dropin_dir}/subdomain-provisioning.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+NoNewPrivileges=false
+ReadWritePaths=$APP_DIR
+ReadWritePaths=/etc/nginx
+ReadWritePaths=/etc/nginx/sites-available
+ReadWritePaths=/etc/nginx/sites-enabled
+ReadWritePaths=/etc/letsencrypt
+ReadWritePaths=/var/lib/letsencrypt
+ReadWritePaths=/var/log/letsencrypt
+ReadWritePaths=/var/log/nginx
+ReadWritePaths=/run
+ReadWritePaths=/run/sudo
+ReadWritePaths=/run/sudo/ts
+EOF
+  print_ok "Systemd Drop-In gesetzt: $dropin_file"
+
+  local sudoers_file="/etc/sudoers.d/mike-subdomain-provisioning"
+  cat > "$sudoers_file" <<EOF
+$APP_USER ALL=(root) NOPASSWD: /usr/bin/install, /usr/bin/ln, /usr/sbin/nginx, /bin/systemctl, /usr/bin/certbot
+EOF
+  chmod 440 "$sudoers_file"
+  if visudo -cf "$sudoers_file" >/dev/null 2>&1; then
+    print_ok "sudoers-Regel aktiv: $sudoers_file"
+  else
+    print_error "sudoers-Datei ungültig: $sudoers_file"
+    exit 1
+  fi
+}
 
 # ============================================
 # START
@@ -425,6 +474,16 @@ COOKIE_SECURE=auto
 # Update (GitHub Releases)
 UPDATE_URL=https://api.github.com/repos/marchmr/workspace
 UPDATE_REQUIRE_HASH=true
+
+# Subdomain-Automation (Kundenportal)
+SUBDOMAIN_PROVISIONING_ENABLED=true
+SUBDOMAIN_PROVISIONING_USE_SUDO=true
+SUBDOMAIN_FRONTEND_DIST_DIR=$APP_DIR/frontend/dist
+SUBDOMAIN_BACKEND_PROXY_URL=http://127.0.0.1:3000
+SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR=/etc/nginx/sites-available
+SUBDOMAIN_NGINX_SITES_ENABLED_DIR=/etc/nginx/sites-enabled
+SUBDOMAIN_EXPECTED_SERVER_IPS=$(hostname -I | awk '{print $1}')
+SUBDOMAIN_SSL_EMAIL=${SSL_EMAIL:-}
 EOF
 print_ok ".env erstellt"
 
@@ -715,6 +774,8 @@ SyslogIdentifier=mike-workspace
 [Install]
 WantedBy=multi-user.target
 EOF
+
+configure_subdomain_provisioning_prereqs
 
 systemctl daemon-reload
 systemctl enable mike-workspace 2>/dev/null

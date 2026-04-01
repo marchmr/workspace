@@ -38,6 +38,85 @@ REQUIRED_APT_PACKAGES=(
   python3-certbot-nginx
 )
 
+upsert_env_file() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  if grep -q "^${key}=" "$env_file"; then
+    sed -i "s#^${key}=.*#${key}=${value}#" "$env_file"
+  else
+    printf "\n%s=%s\n" "$key" "$value" >> "$env_file"
+  fi
+}
+
+ensure_env_key_if_missing() {
+  local env_file="$1"
+  local key="$2"
+  local value="$3"
+  if ! grep -q "^${key}=" "$env_file"; then
+    printf "\n%s=%s\n" "$key" "$value" >> "$env_file"
+  fi
+}
+
+configure_subdomain_provisioning_prereqs() {
+  local dropin_dir="/etc/systemd/system/${SERVICE}.service.d"
+  local dropin_file="${dropin_dir}/subdomain-provisioning.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+NoNewPrivileges=false
+ReadWritePaths=$APP_DIR
+ReadWritePaths=/etc/nginx
+ReadWritePaths=/etc/nginx/sites-available
+ReadWritePaths=/etc/nginx/sites-enabled
+ReadWritePaths=/etc/letsencrypt
+ReadWritePaths=/var/lib/letsencrypt
+ReadWritePaths=/var/log/letsencrypt
+ReadWritePaths=/var/log/nginx
+ReadWritePaths=/run
+ReadWritePaths=/run/sudo
+ReadWritePaths=/run/sudo/ts
+EOF
+
+  local sudoers_file="/etc/sudoers.d/mike-subdomain-provisioning"
+  cat > "$sudoers_file" <<EOF
+$APP_USER ALL=(root) NOPASSWD: /usr/bin/install, /usr/bin/ln, /usr/sbin/nginx, /bin/systemctl, /usr/bin/certbot
+EOF
+  chmod 440 "$sudoers_file"
+  if ! visudo -cf "$sudoers_file" >/dev/null 2>&1; then
+    echo -e "  ${RED}[FAIL]${NC} Ungueltige sudoers-Datei: $sudoers_file"
+    exit 1
+  fi
+}
+
+ensure_subdomain_automation_defaults() {
+  local env_file="$APP_DIR/backend/.env"
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  local server_ip
+  server_ip="$(hostname -I | awk '{print $1}')"
+  local ssl_email=""
+  ssl_email="$(grep '^SUBDOMAIN_SSL_EMAIL=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  if [ -z "$ssl_email" ]; then
+    ssl_email="$(grep '^SSL_EMAIL=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  fi
+
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_PROVISIONING_ENABLED" "true"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_PROVISIONING_USE_SUDO" "true"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_FRONTEND_DIST_DIR" "$APP_DIR/frontend/dist"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_BACKEND_PROXY_URL" "http://127.0.0.1:3000"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR" "/etc/nginx/sites-available"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_NGINX_SITES_ENABLED_DIR" "/etc/nginx/sites-enabled"
+  ensure_env_key_if_missing "$env_file" "SUBDOMAIN_EXPECTED_SERVER_IPS" "$server_ip"
+
+  if [ -n "$ssl_email" ]; then
+    upsert_env_file "$env_file" "SUBDOMAIN_SSL_EMAIL" "$ssl_email"
+  fi
+}
+
 echo ""
 echo -e "${BOLD}MIKE WorkSpace - Update${NC}"
 echo -e "================================================"
@@ -383,6 +462,12 @@ if [ -f "$SERVICE_FILE" ]; then
     echo -e "  ${GREEN}[OK]${NC} Service-Konfiguration bereits aktuell"
   fi
 fi
+
+echo -e "\n${CYAN}> Subdomain-Automation absichern...${NC}"
+ensure_subdomain_automation_defaults
+configure_subdomain_provisioning_prereqs
+echo -e "  ${GREEN}[OK]${NC} Systemvoraussetzungen fuer automatische Subdomain-Einrichtung aktualisiert"
+systemctl daemon-reload
 
 # ============================================
 # Service neu starten

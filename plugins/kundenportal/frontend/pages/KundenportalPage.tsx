@@ -76,6 +76,14 @@ function NavIcon({ nav }: { nav: PortalNavKey }) {
     );
 }
 
+function HamburgerIcon() {
+    return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+    );
+}
+
 export default function KundenportalPage() {
     const [activeTab, setActiveTab] = useState<PortalTab>('videos');
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -254,9 +262,9 @@ export default function KundenportalPage() {
                                     <div className="vp-portal-brand-fallback">Kundenportal</div>
                                 )}
                             </div>
-                            <span className="vp-access-badge">Sicherer Zugang</span>
                         </div>
 
+                        <p className="vp-login-kicker">Kundenportal</p>
                         <h1 className="page-title vp-access-title">Kundenportal Login</h1>
                         <p className="text-muted vp-access-subtitle">
                             Melden Sie sich mit Ihrer Ansprechpartner-E-Mail und einem 6-stelligen Code an.
@@ -288,19 +296,20 @@ export default function KundenportalPage() {
                 ) : (
                     <section className={`kp-portal ${mobileNavOpen ? 'is-mobile-nav-open' : ''}`}>
                         <div className="kp-mobile-topbar card">
-                            <div className="kp-mobile-brand">
-                                <strong>Kundenportal</strong>
-                                <span className="text-muted">{customerHeader.displayName}</span>
-                            </div>
                             <button
-                                className="btn btn-secondary"
+                                className="btn btn-secondary kp-menu-btn"
                                 type="button"
                                 aria-expanded={mobileNavOpen}
                                 aria-controls="kp-mobile-drawer"
                                 onClick={() => setMobileNavOpen((prev) => !prev)}
                             >
-                                {mobileNavOpen ? 'Schließen' : 'Menü'}
+                                <span className="kp-menu-icon"><HamburgerIcon /></span>
+                                <span>{mobileNavOpen ? 'Schließen' : 'Menü'}</span>
                             </button>
+                            <div className="kp-mobile-brand">
+                                <strong>Kundenportal</strong>
+                                <span className="text-muted">{customerHeader.displayName}</span>
+                            </div>
                         </div>
                         <button
                             className={`kp-drawer-backdrop ${mobileNavOpen ? 'is-visible' : ''}`}

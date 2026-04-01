@@ -217,6 +217,41 @@ function guidanceForFailure(args: {
     }
 
     if (failedStep === 'nginx_test') {
+        if (contains(d, '/var/log/nginx/error.log') && contains(d, 'read-only file system')) {
+            return {
+                errorCode: 'E_NGINX_LOG_READONLY',
+                title: 'nginx -t kann Error-Log nicht schreiben',
+                why: 'Der Prozess hat keinen Schreibzugriff auf /var/log/nginx (Systemd-Hardening/Rechte).',
+                nextSteps: [
+                    'Systemd-ReadWritePaths für mike-workspace prüfen und /var/log/nginx enthalten.',
+                    'Nginx-Logverzeichnis-Rechte prüfen.',
+                    'Danach Provisionierung erneut starten.',
+                ],
+                commands: [
+                    'sudo systemctl show mike-workspace -p NoNewPrivileges -p ReadWritePaths',
+                    'sudo ls -ld /var/log/nginx',
+                    'sudo -u mike sudo -n nginx -t',
+                ],
+            };
+        }
+
+        if (contains(d, '"pid" directive is duplicate')) {
+            return {
+                errorCode: 'E_NGINX_DUPLICATE_PID_DIRECTIVE',
+                title: 'Nginx-Konfiguration enthält doppelte pid-Direktive',
+                why: 'In /etc/nginx/nginx.conf ist die Direktive "pid" mehrfach gesetzt.',
+                nextSteps: [
+                    'Nginx-Hauptkonfiguration prüfen.',
+                    'Doppelte "pid"-Zeile entfernen.',
+                    'Nginx testen und Provisionierung erneut ausführen.',
+                ],
+                commands: [
+                    'sudo nginx -t',
+                    'sudo nl -ba /etc/nginx/nginx.conf | sed -n \'1,80p\'',
+                ],
+            };
+        }
+
         return {
             errorCode: 'E_NGINX_TEST_FAILED',
             title: 'nginx -t fehlgeschlagen',
@@ -267,6 +302,43 @@ function guidanceForFailure(args: {
     }
 
     if (failedStep === 'ssl') {
+        if (contains(d, 'unable to lock /etc/nginx')) {
+            return {
+                errorCode: 'E_CERTBOT_NGINX_LOCK',
+                title: 'Certbot kann /etc/nginx nicht sperren',
+                why: 'Der Certbot-Run hat keine ausreichenden Rechte auf /etc/nginx oder der Lock ist blockiert.',
+                nextSteps: [
+                    'Systemd/Sudo-Rechte für den Service-User prüfen.',
+                    'Lock-Dateien kontrollieren und ggf. entfernen.',
+                    'Certbot manuell testen und dann erneut provisionieren.',
+                ],
+                commands: [
+                    'sudo systemctl show mike-workspace -p NoNewPrivileges -p ReadWritePaths',
+                    'sudo -u mike sudo -n test -w /etc/nginx && echo OK || echo FAIL',
+                    'sudo rm -f /var/lib/letsencrypt/.certbot.lock /var/lib/letsencrypt/lock /etc/letsencrypt/.certbot.lock',
+                    `sudo certbot --nginx -d ${host} --email ${config.subdomainProvisioning.sslEmail || 'you@example.com'} --agree-tos --non-interactive --redirect`,
+                ],
+            };
+        }
+
+        if (contains(d, '/var/log/letsencrypt') && contains(d, 'permission denied')) {
+            return {
+                errorCode: 'E_CERTBOT_LOG_PERMISSION',
+                title: 'Certbot kann Logdatei nicht schreiben',
+                why: 'Der Certbot-Prozess darf nicht nach /var/log/letsencrypt schreiben.',
+                nextSteps: [
+                    'Log-Verzeichnis und Systemd-ReadWritePaths prüfen.',
+                    'Certbot manuell ausführen.',
+                    'Nach erfolgreichem Lauf Status erneut prüfen.',
+                ],
+                commands: [
+                    'sudo ls -ld /var/log/letsencrypt',
+                    'sudo systemctl show mike-workspace -p ReadWritePaths',
+                    `sudo certbot --nginx -d ${host} --email ${config.subdomainProvisioning.sslEmail || 'you@example.com'} --agree-tos --non-interactive --redirect`,
+                ],
+            };
+        }
+
         return {
             errorCode: 'E_CERTBOT_FAILED',
             title: 'SSL-Zertifikat konnte nicht ausgestellt werden',

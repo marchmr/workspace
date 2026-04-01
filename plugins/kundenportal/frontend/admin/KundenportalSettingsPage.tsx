@@ -78,6 +78,7 @@ export default function KundenportalSettingsPage() {
     const [status, setStatus] = useState<ProvisionStatus | null>(null);
     const [lastProvision, setLastProvision] = useState<ProvisionResponse | null>(null);
     const [preflight, setPreflight] = useState<PreflightResponse | null>(null);
+    const failedProvisionStep = lastProvision?.steps.find((step) => !step.ok) || null;
 
     useEffect(() => {
         let active = true;
@@ -425,6 +426,15 @@ export default function KundenportalSettingsPage() {
                             </div>
                         ))}
                     </div>
+
+                    {failedProvisionStep?.details && (
+                        <div style={{ marginTop: 'var(--space-sm)' }}>
+                            <strong>Genauer Fehler</strong>
+                            <pre style={{ marginTop: 'var(--space-xs)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                {failedProvisionStep.details}
+                            </pre>
+                        </div>
+                    )}
 
                     {lastProvision.guidance && (
                         <div className="vp-guidance" style={{ marginTop: 'var(--space-sm)' }}>

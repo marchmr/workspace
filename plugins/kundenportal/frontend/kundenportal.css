@@ -1,11 +1,21 @@
+.kp-page,
+.kp-page * {
+    box-sizing: border-box;
+}
+
 .kp-page .vp-public-shell {
     width: 100%;
-    max-width: none;
+    max-width: 1680px;
+    margin: 0 auto;
 }
 
 .kp-page.vp-public-page {
-    background: var(--color-bg);
-    padding: var(--space-md);
+    background:
+        radial-gradient(circle at 0% 0%, rgba(37, 99, 235, 0.12), transparent 45%),
+        radial-gradient(circle at 100% 100%, rgba(29, 78, 216, 0.08), transparent 48%),
+        linear-gradient(180deg, #ecf2fb 0%, #dbe6f6 100%);
+    padding: clamp(12px, 2vw, 24px);
+    overflow-x: clip;
 }
 
 .kp-page .kp-portal {
@@ -16,18 +26,38 @@
 .kp-page .kp-mobile-topbar {
     display: none;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: var(--space-sm);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    padding: var(--space-sm) var(--space-md);
-    box-shadow: none;
-    background: var(--color-surface);
+    border: 1px solid #d7e1ef;
+    border-radius: 16px;
+    padding: var(--space-sm);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
 
 .kp-page .kp-mobile-brand {
     display: grid;
     gap: 2px;
+    min-width: 0;
+}
+
+.kp-page .kp-menu-btn {
+    min-width: 108px;
+    justify-content: center;
+    gap: 8px;
+}
+
+.kp-page .kp-menu-icon {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.kp-page .kp-menu-icon svg {
+    width: 16px;
+    height: 16px;
 }
 
 .kp-page .kp-drawer-backdrop {
@@ -36,36 +66,38 @@
 
 .kp-page .kp-portal-layout {
     display: grid;
-    grid-template-columns: 280px minmax(0, 1fr);
+    grid-template-columns: 300px minmax(0, 1fr);
     gap: var(--space-md);
     align-items: start;
 }
 
 .kp-page .kp-sidebar {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    box-shadow: none;
+    border: 1px solid #d6e1ef;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
     padding: var(--space-md);
     display: grid;
     gap: var(--space-sm);
     position: sticky;
     top: var(--space-sm);
+    min-width: 0;
 }
 
 .kp-page .kp-sidebar-brand {
-    min-height: 72px;
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
+    min-height: 84px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     display: flex;
     align-items: center;
-    justify-content: center;
-    padding: var(--space-xs);
+    justify-content: flex-start;
+    padding: 0;
 }
 
 .kp-page .kp-sidebar-brand img {
     max-width: 100%;
+    max-height: 74px;
     object-fit: contain;
 }
 
@@ -76,11 +108,16 @@
 }
 
 .kp-page .kp-sidebar-customer {
-    border-top: 1px solid var(--color-border);
-    border-bottom: 1px solid var(--color-border);
+    border-top: 1px solid #dde6f2;
+    border-bottom: 1px solid #dde6f2;
     padding: var(--space-sm) 0;
     display: grid;
     gap: 4px;
+}
+
+.kp-page .kp-sidebar-customer p {
+    margin: 0;
+    overflow-wrap: anywhere;
 }
 
 .kp-page .kp-sidebar-name {
@@ -165,13 +202,14 @@
 }
 
 .kp-page .kp-main {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    box-shadow: none;
+    border: 1px solid #d6e1ef;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.07);
     padding: calc(var(--space-lg) + 2px);
     display: grid;
     gap: var(--space-md);
+    min-width: 0;
 }
 
 .kp-page .kp-main-header {
@@ -196,18 +234,20 @@
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-md);
+    align-items: start;
 }
 
 .kp-page .kp-video-card {
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border: 1px solid #d8e2ef;
+    border-radius: 16px;
     overflow: hidden;
-    background: var(--color-surface);
-    box-shadow: none;
+    background: #fff;
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
     transition: border-color 0.18s ease;
     opacity: 0;
     transform: translateY(8px);
     animation: kpFadeUp 0.28s ease forwards;
+    min-width: 0;
 }
 
 .kp-page .kp-video-card:hover {
@@ -254,16 +294,17 @@
 }
 
 .kp-page .kp-coming-soon {
-    border: 1px dashed var(--color-border-strong);
-    border-radius: var(--radius-md);
+    border: 1px dashed #c5d3e5;
+    border-radius: 14px;
     padding: var(--space-lg);
-    background: #f8fafc;
+    background: #f7fbff;
+    max-width: 860px;
 }
 
 .kp-page .kp-empty-state {
-    border: 1px dashed var(--color-border-strong);
-    border-radius: var(--radius-md);
-    background: #f8fafc;
+    border: 1px dashed #c5d3e5;
+    border-radius: 14px;
+    background: #f7fbff;
     padding: calc(var(--space-lg) * 1.1);
     display: grid;
     justify-items: center;
@@ -286,6 +327,66 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+}
+
+.kp-page .vp-public-shell-login {
+    min-height: calc(100vh - var(--topbar-height) - 2rem);
+    align-items: center;
+}
+
+.kp-page .vp-access-card {
+    width: min(720px, 100%);
+    margin: 0 auto;
+    border: 1px solid #cdd9ea;
+    border-radius: 24px;
+    box-shadow: 0 26px 50px rgba(15, 23, 42, 0.12);
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    padding: clamp(18px, 2.2vw, 30px);
+}
+
+.kp-page .vp-access-head {
+    justify-content: center;
+    margin-bottom: var(--space-xs);
+}
+
+.kp-page .vp-portal-brand {
+    justify-content: center;
+    width: 100%;
+}
+
+.kp-page .vp-portal-brand img {
+    max-width: min(360px, 80%);
+}
+
+.kp-page .vp-login-kicker {
+    margin: 0 0 6px 0;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #607591;
+}
+
+.kp-page .vp-access-title,
+.kp-page .vp-access-subtitle,
+.kp-page .vp-access-form .vp-label,
+.kp-page .vp-access-error {
+    text-align: center;
+}
+
+.kp-page .vp-access-subtitle {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.kp-page .vp-access-form {
+    width: min(560px, 100%);
+    margin: 0 auto;
+}
+
+.kp-page .vp-access-submit {
+    width: 100%;
 }
 
 .kp-page .kp-empty-icon svg {
@@ -440,14 +541,15 @@
         left: 0;
         top: 0;
         bottom: 0;
-        width: min(84vw, 340px);
-        max-width: 340px;
-        border-radius: 0 var(--radius-md) var(--radius-md) 0;
+        width: min(86vw, 320px);
+        max-width: 320px;
+        border-radius: 0 18px 18px 0;
         transform: translateX(-110%);
         transition: transform 0.24s ease;
         overflow-y: auto;
         z-index: 50;
         top: 0;
+        padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0px));
     }
 
     .kp-page .kp-portal-layout.kp-nav-open .kp-sidebar {
@@ -460,6 +562,7 @@
 
     .kp-page .kp-main-header {
         padding-bottom: var(--space-xs);
+        gap: var(--space-xs);
     }
 
     .kp-page .kp-main-logout {
@@ -474,6 +577,12 @@
         grid-template-columns: 1fr;
     }
 
+    .kp-page .kp-nav .is-disabled,
+    .kp-page .kp-nav-section:nth-of-type(2),
+    .kp-page .kp-sidebar-meta {
+        display: none;
+    }
+
     .vp-inline-form {
         grid-template-columns: 1fr;
     }
@@ -484,6 +593,45 @@
 
     .vp-command-row {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 1200px) {
+    .kp-page .kp-portal-layout {
+        grid-template-columns: 260px minmax(0, 1fr);
+    }
+
+    .kp-page .kp-video-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .kp-page.vp-public-page {
+        padding: 10px;
+    }
+
+    .kp-page .vp-access-card {
+        border-radius: 16px;
+        padding: 16px;
+    }
+
+    .kp-page .vp-portal-brand img {
+        max-width: min(300px, 88%);
+    }
+
+    .kp-page .kp-mobile-topbar {
+        border-radius: 12px;
+        padding: 10px;
+    }
+
+    .kp-page .kp-mobile-brand strong {
+        font-size: 1.05rem;
+    }
+
+    .kp-page .kp-main {
+        border-radius: 14px;
+        padding: 12px;
     }
 }
 
