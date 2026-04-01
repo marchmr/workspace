@@ -4,6 +4,7 @@ import path from 'path';
 import { createReadStream, createWriteStream } from 'fs';
 import { once } from 'events';
 import type { FastifyInstance } from 'fastify';
+import archiver from 'archiver';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
 import { config } from '../../../backend/src/core/config.js';
@@ -17,6 +18,9 @@ import {
 
 const PLUGIN_ID = 'dateiaustausch';
 const STORAGE_ROOT = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID);
+const MAX_FOLDER_ZIP_ITEMS = 3000;
+const MAX_FOLDER_ZIP_TOTAL_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
+const MAX_SCAN_QUEUE_PENDING = 200;
 
 type WorkflowStatus = 'pending' | 'clean' | 'rejected' | 'reviewed';
 
@@ -179,6 +183,148 @@ function normalizeWorkflowStatus(input: unknown): WorkflowStatus | null {
         return value;
     }
     return null;
+}
+
+type ZipFileEntry = {
+    itemId: number;
+    versionId: number;
+    folderPath: string;
+    displayName: string;
+    storageKey: string;
+    sizeBytes: number;
+};
+
+function sanitizeZipPathPart(input: string): string {
+    return String(input || '')
+        .trim()
+        .replace(/\\/g, '_')
+        .replace(/\//g, '_')
+        .replace(/\.\./g, '_')
+        .replace(/[^a-zA-Z0-9._ -]/g, '_')
+        .replace(/\s+/g, ' ')
+        .trim() || 'item';
+}
+
+function buildZipFileEntryName(baseFolderPath: string, itemFolderPath: string, fileName: string): string {
+    const normalizedBase = normalizeFolderPath(baseFolderPath);
+    const normalizedItemFolder = normalizeFolderPath(itemFolderPath);
+    let relativeFolder = normalizedItemFolder;
+    if (normalizedBase) {
+        if (normalizedItemFolder === normalizedBase) relativeFolder = '';
+        else if (normalizedItemFolder.startsWith(`${normalizedBase}/`)) relativeFolder = normalizedItemFolder.slice(normalizedBase.length + 1);
+    }
+
+    const pathParts = relativeFolder
+        .split('/')
+        .filter(Boolean)
+        .map((part) => sanitizeZipPathPart(part));
+
+    const safeFileName = sanitizeFileName(fileName);
+    return [...pathParts, safeFileName].join('/');
+}
+
+function getFolderNameForZip(folderPath: string): string {
+    const normalized = normalizeFolderPath(folderPath);
+    const parts = normalized.split('/').filter(Boolean);
+    return sanitizeZipPathPart(parts[parts.length - 1] || 'ordner');
+}
+
+async function loadCleanFolderZipEntries(db: any, args: {
+    tenantId: number;
+    customerId: number;
+    folderPath: string;
+}): Promise<ZipFileEntry[]> {
+    const normalizedFolderPath = normalizeFolderPath(args.folderPath);
+    const rows = await db('dtx_items as i')
+        .join('dtx_versions as v', 'v.id', 'i.current_version_id')
+        .where('i.tenant_id', args.tenantId)
+        .andWhere('i.customer_id', args.customerId)
+        .andWhere('i.workflow_status', 'clean')
+        .andWhere('v.scan_status', 'clean')
+        .andWhere('v.storage_zone', 'clean')
+        .modify((qb: any) => {
+            if (!normalizedFolderPath) return;
+            qb.andWhere((nested: any) => {
+                nested.where('i.folder_path', normalizedFolderPath).orWhere('i.folder_path', 'like', `${normalizedFolderPath}/%`);
+            });
+        })
+        .select(
+            'i.id as item_id',
+            'i.folder_path',
+            'i.display_name',
+            'v.id as version_id',
+            'v.storage_key',
+            'v.size_bytes',
+        )
+        .orderBy('i.folder_path', 'asc')
+        .orderBy('i.display_name', 'asc')
+        .limit(MAX_FOLDER_ZIP_ITEMS + 1);
+
+    if (rows.length > MAX_FOLDER_ZIP_ITEMS) {
+        throw new Error(`Zu viele Dateien im Ordner (max. ${MAX_FOLDER_ZIP_ITEMS}).`);
+    }
+
+    return rows.map((row: any) => ({
+        itemId: Number(row.item_id),
+        versionId: Number(row.version_id),
+        folderPath: String(row.folder_path || ''),
+        displayName: String(row.display_name || 'datei'),
+        storageKey: String(row.storage_key || ''),
+        sizeBytes: Number(row.size_bytes || 0),
+    }));
+}
+
+async function streamFolderZip(reply: any, args: {
+    fileName: string;
+    baseFolderPath: string;
+    entries: ZipFileEntry[];
+}): Promise<void> {
+    if (!args.entries.length) {
+        reply.status(404).send({ error: 'Keine sauberen Dateien in diesem Ordner gefunden.' });
+        return;
+    }
+
+    let totalBytes = 0;
+    for (const entry of args.entries) {
+        totalBytes += Math.max(0, Number(entry.sizeBytes || 0));
+        if (totalBytes > MAX_FOLDER_ZIP_TOTAL_BYTES) {
+            reply.status(413).send({ error: 'ZIP zu groß. Bitte Ordner weiter aufteilen.' });
+            return;
+        }
+    }
+
+    reply.header('Content-Type', 'application/zip');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+    reply.header('Content-Disposition', `attachment; filename="${sanitizeFileName(args.fileName)}.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('warning', () => undefined);
+    archive.on('error', (err) => {
+        reply.raw.destroy(err);
+    });
+    reply.raw.on('close', () => {
+        archive.abort();
+    });
+
+    reply.send(archive);
+
+    for (const entry of args.entries) {
+        const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
+        try {
+            const st = await fs.stat(absPath);
+            if (!st.isFile()) continue;
+        } catch {
+            continue;
+        }
+        const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
+        const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}/` : '';
+        const name = `${rootPrefix}${relativeName}`.replace(/^\/+/, '');
+        archive.file(absPath, { name: name || sanitizeFileName(entry.displayName) });
+    }
+
+    await archive.finalize();
 }
 
 function resolvePublicSessionToken(request: any, fileFields?: Record<string, any>): string {
@@ -431,6 +577,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     await fs.chmod(STORAGE_ROOT, 0o700).catch(() => undefined);
     const hasCrmCustomersTable = await db.schema.hasTable('crm_customers').catch(() => false);
     let scanQueue: Promise<void> = Promise.resolve();
+    let scanQueuePending = 0;
 
     fastify.get('/public/files', {
         exposeHeadRoute: false,
@@ -569,6 +716,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         policy: { public: true },
     }, async (request, reply) => {
         const uploadStart = Date.now();
+        if (scanQueuePending >= MAX_SCAN_QUEUE_PENDING) {
+            return reply.status(503).send({ error: 'Upload aktuell ausgelastet. Bitte in 1-2 Minuten erneut versuchen.' });
+        }
         const filePart = await (request as any).file();
         if (!filePart) return reply.status(400).send({ error: 'Datei ist erforderlich.' });
 
@@ -630,6 +780,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             const validationDoneMs = Date.now() - uploadStart;
             fastify.log.info({ validationDoneMs, itemId, versionId: result.versionId }, 'dateiaustausch: validation complete, scan queued');
 
+            scanQueuePending += 1;
             scanQueue = scanQueue
                 .then(() => processVersionMalwareScan(fastify, db, {
                     tenantId: Number(session.tenant_id),
@@ -639,6 +790,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 }))
                 .catch((queueError) => {
                     fastify.log.error({ queueError }, 'dateiaustausch scan queue failed');
+                })
+                .finally(() => {
+                    scanQueuePending = Math.max(0, scanQueuePending - 1);
                 });
 
             try {
@@ -746,7 +900,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     }, async (request, reply) => {
         const itemId = Number((request.params as any)?.itemId || 0);
         const versionId = Number((request.params as any)?.versionId || 0);
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
 
         if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
             return reply.status(400).send({ error: 'Ungültige Dateiversion.' });
@@ -755,6 +909,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const session = await verifyPublicSessionByToken(db, sessionToken);
         if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
         const version = await db('dtx_versions as v')
             .join('dtx_items as i', 'i.id', 'v.item_id')
@@ -781,6 +936,33 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const fileName = String(version.original_file_name || 'download.bin');
         applyHardenedDownloadHeaders(reply, String(version.mime_type || 'application/octet-stream'), fileName);
         return reply.send(createReadStream(absPath));
+    });
+
+    fastify.get('/public/folders/download', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const folderPath = normalizeFolderPath(String((request.query as any)?.folderPath || ''));
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const entries = await loadCleanFolderZipEntries(db, {
+            tenantId: Number(session.tenant_id),
+            customerId: Number(session.customer_id),
+            folderPath,
+        });
+
+        const folderName = folderPath ? getFolderNameForZip(folderPath) : 'Dateien';
+        await streamFolderZip(reply, {
+            fileName: `dateiaustausch-${folderName}-${new Date().toISOString().slice(0, 10)}`,
+            baseFolderPath: folderPath,
+            entries,
+        });
     });
 
     fastify.get('/public/files/:itemId/versions/:versionId/preview', {
@@ -976,6 +1158,33 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const fileName = String(version.original_file_name || 'download.bin');
         applyHardenedDownloadHeaders(reply, String(version.mime_type || 'application/octet-stream'), fileName);
         return reply.send(createReadStream(absPath));
+    });
+
+    fastify.get('/folders/download', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
+        const tenantId = request.user.tenantId;
+        const customerId = Number((request.query as any)?.customerId || 0);
+        const folderPath = normalizeFolderPath(String((request.query as any)?.folderPath || ''));
+        if (!Number.isInteger(customerId) || customerId <= 0) {
+            return reply.status(400).send({ error: 'customerId ist erforderlich.' });
+        }
+
+        const customerExists = await db('vp_customers')
+            .where({ tenant_id: tenantId, id: customerId })
+            .first('id');
+        if (!customerExists) return reply.status(404).send({ error: 'Kunde nicht gefunden.' });
+
+        const entries = await loadCleanFolderZipEntries(db, {
+            tenantId,
+            customerId,
+            folderPath,
+        });
+
+        const folderName = folderPath ? getFolderNameForZip(folderPath) : `kunde-${customerId}`;
+        await streamFolderZip(reply, {
+            fileName: `dateiaustausch-${folderName}-${new Date().toISOString().slice(0, 10)}`,
+            baseFolderPath: folderPath,
+            entries,
+        });
     });
 
     fastify.get('/items/:itemId/versions/:versionId/preview', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {

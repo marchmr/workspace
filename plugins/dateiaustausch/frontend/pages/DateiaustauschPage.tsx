@@ -302,6 +302,12 @@ export default function DateiaustauschPage() {
         window.open(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, '_blank', 'noopener,noreferrer');
     }
 
+    function downloadCurrentFolderZip() {
+        if (!selectedCustomerId) return;
+        const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
     const selectedCustomerLabel = useMemo(() => {
         const selected = customers.find((value) => value.customerId === selectedCustomerId);
         return selected?.label || 'Kein Kunde';
@@ -393,6 +399,9 @@ export default function DateiaustauschPage() {
                                         disabled={!currentPath}
                                     >
                                         Nach oben
+                                    </button>
+                                    <button className="btn btn-secondary" type="button" onClick={() => downloadCurrentFolderZip()} disabled={!selectedCustomerId}>
+                                        Ordner als ZIP
                                     </button>
                                     <button
                                         className="btn btn-secondary"
@@ -569,15 +578,29 @@ export default function DateiaustauschPage() {
                 {menuState && (
                     <div className="kp-fm-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
                         {menuState.key.startsWith('folder:') ? (
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setCurrentPath(menuState.key.replace('folder:', ''));
-                                    setMenuState(null);
-                                }}
-                            >
-                                Oeffnen
-                            </button>
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setCurrentPath(menuState.key.replace('folder:', ''));
+                                        setMenuState(null);
+                                    }}
+                                >
+                                    Oeffnen
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        if (!selectedCustomerId) return;
+                                        const folderPath = menuState.key.replace('folder:', '');
+                                        const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(folderPath)}`;
+                                        window.open(url, '_blank', 'noopener,noreferrer');
+                                        setMenuState(null);
+                                    }}
+                                >
+                                    Als ZIP herunterladen
+                                </button>
+                            </>
                         ) : (
                             (() => {
                                 const fileId = Number(menuState.key.replace('file:', ''));

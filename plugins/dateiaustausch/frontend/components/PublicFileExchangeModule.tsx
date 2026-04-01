@@ -415,6 +415,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
+    function downloadCurrentFolderZip() {
+        const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+
     useEffect(() => {
         if (!previewOpen) return;
         function onKeyDown(event: KeyboardEvent) {
@@ -543,6 +548,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 </button>
                                 <button className="btn btn-secondary" type="button" onClick={() => hiddenUploadInputRef.current?.click()}>
                                     Upload
+                                </button>
+                                <button className="btn btn-secondary" type="button" onClick={() => downloadCurrentFolderZip()}>
+                                    Ordner als ZIP
                                 </button>
                                 <button
                                     className="btn btn-secondary"
@@ -824,6 +832,17 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 }}
                             >
                                 Oeffnen
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const folderPath = menuState.key.replace('folder:', '');
+                                    const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
+                                    window.open(url, '_blank', 'noopener,noreferrer');
+                                    setMenuState(null);
+                                }}
+                            >
+                                Als ZIP herunterladen
                             </button>
                             <button
                                 type="button"
