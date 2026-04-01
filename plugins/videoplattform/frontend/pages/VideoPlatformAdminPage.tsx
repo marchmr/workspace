@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@mike/context/AuthContext';
-import { useToast } from '@mike/components/ModalProvider';
+import { useModal, useToast } from '@mike/components/ModalProvider';
 import '../videoplattform.css';
 
 type Customer = {
@@ -49,6 +49,16 @@ type ActivityLog = {
     customerName: string | null;
 };
 
+type EditVideoState = {
+    videoId: number;
+    title: string;
+    category: string;
+    description: string;
+    customerId: string;
+    replacementFile: File | null;
+    saving: boolean;
+};
+
 function formatDate(value: string | null | undefined): string {
     if (!value) return '—';
     const date = new Date(value);
@@ -73,6 +83,7 @@ function formatBytes(value: number | null | undefined): string {
 
 export default function VideoPlatformAdminPage() {
     const toast = useToast();
+    const modal = useModal();
 
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [videos, setVideos] = useState<Video[]>([]);
@@ -100,6 +111,7 @@ export default function VideoPlatformAdminPage() {
     const [customerCodes, setCustomerCodes] = useState<ShareCode[]>([]);
 
     const [activeTab, setActiveTab] = useState<'videos' | 'customers' | 'activity'>('videos');
+    const [editVideoState, setEditVideoState] = useState<EditVideoState | null>(null);
 
     const selectedVideo = useMemo(() => videos.find((item) => item.id === selectedVideoId) || null, [videos, selectedVideoId]);
     const selectedCustomer = useMemo(() => customers.find((item) => item.id === selectedCustomerId) || null, [customers, selectedCustomerId]);
@@ -247,7 +259,14 @@ export default function VideoPlatformAdminPage() {
     }
 
     async function deleteVideo(id: number) {
-        if (!window.confirm('Video wirklich löschen?')) return;
+        const ok = await modal.confirm({
+            title: 'Video löschen',
+            message: 'Video wirklich löschen?',
+            confirmText: 'Löschen',
+            variant: 'danger',
+        });
+        if (!ok) return;
+
         setBusy(true);
         try {
             const res = await apiFetch(`/api/plugins/videoplattform/videos/${id}`, { method: 'DELETE' });
@@ -265,61 +284,89 @@ export default function VideoPlatformAdminPage() {
         }
     }
 
-    async function editVideo(video: Video) {
-        const nextTitle = window.prompt('Titel bearbeiten', video.title)?.trim();
-        if (!nextTitle) return;
-        const nextCategory = window.prompt('Kategorie bearbeiten', video.category)?.trim() || 'Allgemein';
-        const nextDescription = window.prompt('Beschreibung bearbeiten', video.description || '') ?? '';
+    function openEditVideoModal(video: Video) {
+        setEditVideoState({
+            videoId: video.id,
+            title: video.title || '',
+            category: video.category || 'Allgemein',
+            description: video.description || '',
+            customerId: video.customerId ? String(video.customerId) : '',
+            replacementFile: null,
+            saving: false,
+        });
+    }
 
+    function closeEditVideoModal() {
+        if (editVideoState?.saving) return;
+        setEditVideoState(null);
+    }
+
+    async function saveEditVideo(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!editVideoState) return;
+
+        const snapshot = editVideoState;
+        const nextTitle = snapshot.title.trim();
+        if (!nextTitle) {
+            toast.error('Titel ist erforderlich');
+            return;
+        }
+
+        const nextCategory = snapshot.category.trim() || 'Allgemein';
+        const nextDescription = snapshot.description;
+        const nextCustomerId = snapshot.customerId ? Number(snapshot.customerId) : null;
+        const validCustomerId = Number.isFinite(nextCustomerId as number) ? nextCustomerId : null;
+
+        setEditVideoState((prev) => (prev ? { ...prev, saving: true } : prev));
         setBusy(true);
         try {
-            const res = await apiFetch(`/api/plugins/videoplattform/videos/${video.id}`, {
+            const res = await apiFetch(`/api/plugins/videoplattform/videos/${snapshot.videoId}`, {
                 method: 'PUT',
                 body: JSON.stringify({
                     title: nextTitle,
                     category: nextCategory,
                     description: nextDescription,
-                    customerId: video.customerId,
+                    customerId: validCustomerId,
                 }),
             });
             if (!res.ok) {
                 const payload = await res.json().catch(() => ({}));
                 throw new Error(payload?.error || 'Video konnte nicht aktualisiert werden');
             }
+
+            if (snapshot.replacementFile) {
+                const formData = new FormData();
+                formData.append('file', snapshot.replacementFile);
+                const replaceRes = await apiFetch(`/api/plugins/videoplattform/videos/${snapshot.videoId}/replace`, {
+                    method: 'POST',
+                    body: formData,
+                });
+                if (!replaceRes.ok) {
+                    const payload = await replaceRes.json().catch(() => ({}));
+                    throw new Error(payload?.error || 'Videodatei konnte nicht ersetzt werden');
+                }
+            }
+
             toast.success('Video aktualisiert');
             await reloadAll();
+            setEditVideoState(null);
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Video konnte nicht aktualisiert werden');
         } finally {
-            setBusy(false);
-        }
-    }
-
-    async function replaceVideoFile(videoId: number, file: File | null) {
-        if (!file) return;
-        setBusy(true);
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await apiFetch(`/api/plugins/videoplattform/videos/${videoId}/replace`, {
-                method: 'POST',
-                body: formData,
-            });
-            if (!res.ok) {
-                const payload = await res.json().catch(() => ({}));
-                throw new Error(payload?.error || 'Video konnte nicht ersetzt werden');
-            }
-            toast.success('Video-Datei ersetzt');
-            await reloadAll();
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Video konnte nicht ersetzt werden');
-        } finally {
+            setEditVideoState((prev) => (prev ? { ...prev, saving: false } : prev));
             setBusy(false);
         }
     }
 
     async function deleteCustomer(id: number) {
-        if (!window.confirm('Kunde wirklich löschen? Zugeordnete Videos bleiben erhalten, aber ohne Kundenzuordnung.')) return;
+        const ok = await modal.confirm({
+            title: 'Kunde löschen',
+            message: 'Kunde wirklich löschen?\nZugeordnete Videos bleiben erhalten, aber ohne Kundenzuordnung.',
+            confirmText: 'Löschen',
+            variant: 'danger',
+        });
+        if (!ok) return;
+
         setBusy(true);
         try {
             const res = await apiFetch(`/api/plugins/videoplattform/customers/${id}`, { method: 'DELETE' });
@@ -420,7 +467,14 @@ export default function VideoPlatformAdminPage() {
     }
 
     async function deleteCode(item: ShareCode) {
-        if (!window.confirm('Code wirklich löschen?')) return;
+        const ok = await modal.confirm({
+            title: 'Freigabecode löschen',
+            message: `Code ${item.code} wirklich löschen?`,
+            confirmText: 'Löschen',
+            variant: 'danger',
+        });
+        if (!ok) return;
+
         setBusy(true);
         try {
             const res = await apiFetch(`/api/plugins/videoplattform/codes/${item.id}`, { method: 'DELETE' });
@@ -535,21 +589,7 @@ export default function VideoPlatformAdminPage() {
                                         {video.description ? <p>{video.description}</p> : null}
                                     </div>
                                     <div className="vp-action-row" style={{ padding: '0 var(--space-md) var(--space-md) var(--space-md)' }}>
-                                        <button className="btn btn-secondary" onClick={() => editVideo(video)} disabled={busy}>Bearbeiten</button>
-                                        <label className="btn btn-secondary" style={{ cursor: busy ? 'not-allowed' : 'pointer' }}>
-                                            Video austauschen
-                                            <input
-                                                type="file"
-                                                accept="video/*"
-                                                style={{ display: 'none' }}
-                                                disabled={busy}
-                                                onChange={(e) => {
-                                                    const file = e.target.files?.[0] || null;
-                                                    e.currentTarget.value = '';
-                                                    void replaceVideoFile(video.id, file);
-                                                }}
-                                            />
-                                        </label>
+                                        <button className="btn btn-secondary" onClick={() => openEditVideoModal(video)} disabled={busy}>Bearbeiten</button>
                                         <button className="btn btn-secondary" onClick={() => loadVideoCodes(video.id)}>Codes anzeigen</button>
                                         <button className="btn btn-secondary" onClick={() => createVideoCode(video.id)} disabled={busy}>Code erstellen</button>
                                         <button className="btn btn-danger" onClick={() => deleteVideo(video.id)} disabled={busy}>Löschen</button>
@@ -684,6 +724,82 @@ export default function VideoPlatformAdminPage() {
             )}
                 </div>
             </div>
+
+            {editVideoState && (
+                <div className="modal-overlay" style={{ zIndex: 10000 }} onClick={closeEditVideoModal}>
+                    <div className="modal-card vp-edit-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Video bearbeiten</h3>
+                            <button className="modal-close" onClick={closeEditVideoModal}>×</button>
+                        </div>
+
+                        <form className="vp-edit-form" onSubmit={saveEditVideo}>
+                            <div className="vp-edit-grid">
+                                <div className="vp-settings">
+                                    <label className="form-label">Titel</label>
+                                    <input
+                                        className="input"
+                                        value={editVideoState.title}
+                                        onChange={(event) => setEditVideoState((prev) => prev ? { ...prev, title: event.target.value } : prev)}
+                                        required
+                                    />
+                                </div>
+                                <div className="vp-settings">
+                                    <label className="form-label">Kategorie</label>
+                                    <input
+                                        className="input"
+                                        value={editVideoState.category}
+                                        onChange={(event) => setEditVideoState((prev) => prev ? { ...prev, category: event.target.value } : prev)}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="vp-settings">
+                                <label className="form-label">Kunde</label>
+                                <select
+                                    className="input"
+                                    value={editVideoState.customerId}
+                                    onChange={(event) => setEditVideoState((prev) => prev ? { ...prev, customerId: event.target.value } : prev)}
+                                >
+                                    <option value="">Kein Kunde</option>
+                                    {customers.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                                </select>
+                            </div>
+
+                            <div className="vp-settings">
+                                <label className="form-label">Beschreibung</label>
+                                <textarea
+                                    className="input vp-textarea"
+                                    value={editVideoState.description}
+                                    onChange={(event) => setEditVideoState((prev) => prev ? { ...prev, description: event.target.value } : prev)}
+                                />
+                            </div>
+
+                            <div className="vp-settings">
+                                <label className="form-label">Videodatei ersetzen (optional)</label>
+                                <input
+                                    className="input"
+                                    type="file"
+                                    accept="video/*"
+                                    onChange={(event) => setEditVideoState((prev) => prev ? { ...prev, replacementFile: event.target.files?.[0] || null } : prev)}
+                                />
+                                {editVideoState.replacementFile && (
+                                    <p className="text-muted" style={{ marginTop: '6px' }}>{editVideoState.replacementFile.name}</p>
+                                )}
+                            </div>
+
+                            <div className="modal-actions">
+                                <button className="btn btn-secondary" type="button" onClick={closeEditVideoModal} disabled={editVideoState.saving}>
+                                    Schließen
+                                </button>
+                                <button className="btn btn-primary" type="submit" disabled={editVideoState.saving}>
+                                    {editVideoState.saving ? 'Speichert...' : 'Änderungen speichern'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

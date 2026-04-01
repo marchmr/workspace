@@ -340,6 +340,8 @@ Regeln:
 - Felder als `.input` oder `.form-input` im Dialog rendern (Größe/Abstände kommen aus dem Core-Design-System).
 - Bereichsstruktur mit `plugin-form-section`, `plugin-form-section-title` und `plugin-form-grid` nutzen.
 - Sichtbare deutsche Texte immer mit korrekten Umlauten schreiben: `ä`, `ö`, `ü`, `ß` (nicht `ae`, `oe`, `ue`, `ss`).
+- Keine nativen Browser-Dialoge verwenden (`window.alert`, `window.confirm`, `window.prompt`).
+  Stattdessen immer Core-Dialoge über `useModal()` bzw. `PluginFormDialog` nutzen.
 
 ### Plugin-Registry-System
 
