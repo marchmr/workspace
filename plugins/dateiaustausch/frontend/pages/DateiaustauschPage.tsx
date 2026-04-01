@@ -138,6 +138,15 @@ function getPreviewType(fileName: string): 'image' | 'pdf' | 'video' | 'other' {
     return 'other';
 }
 
+function parseFilenameFromDisposition(headerValue: string | null, fallback: string): string {
+    if (!headerValue) return fallback;
+    const utf = /filename\*=UTF-8''([^;]+)/i.exec(headerValue);
+    if (utf?.[1]) return decodeURIComponent(utf[1]);
+    const ascii = /filename="([^"]+)"/i.exec(headerValue);
+    if (ascii?.[1]) return ascii[1];
+    return fallback;
+}
+
 const ICONS = {
     refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6',
     download: 'M12 4v11m0 0-4-4m4 4 4-4M4 20h16',
@@ -318,30 +327,39 @@ export default function DateiaustauschPage() {
         );
     }
 
-    function triggerDownload(url: string) {
+    async function triggerDownload(url: string, fallbackName: string) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload?.error || `Download fehlgeschlagen (${response.status}).`);
+        }
+        const blob = await response.blob();
+        if (!blob || blob.size === 0) throw new Error('Download ist leer oder ungültig.');
+        const fileName = parseFilenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+        const objectUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
-        link.href = url;
-        link.rel = 'noreferrer noopener';
-        link.target = '_blank';
+        link.href = objectUrl;
+        link.download = fileName;
         document.body.appendChild(link);
         link.click();
         link.remove();
+        URL.revokeObjectURL(objectUrl);
     }
 
-    function downloadEntry(entry: BrowserEntry | null) {
+    async function downloadEntry(entry: BrowserEntry | null) {
         if (!selectedCustomerId) return;
         if (!entry) {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
-            triggerDownload(url);
+            await triggerDownload(url, `dateiaustausch-${currentPath || selectedCustomerId}.zip`);
             return;
         }
         if (entry.kind === 'folder') {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(entry.fullPath)}`;
-            triggerDownload(url);
+            await triggerDownload(url, `dateiaustausch-${entry.name}.zip`);
             return;
         }
         if (!entry.file.currentVersionId) return;
-        triggerDownload(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`);
+        await triggerDownload(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, entry.file.displayName);
     }
 
     const selectedCustomerLabel = useMemo(() => {
@@ -438,7 +456,7 @@ export default function DateiaustauschPage() {
                                 >
                                     <ActionIcon path={ICONS.up} />
                                 </button>
-                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId} title="Download" aria-label="Download">
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry).catch((err) => setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.'))} disabled={!selectedCustomerId} title="Download" aria-label="Download">
                                     <ActionIcon path={ICONS.download} />
                                 </button>
                                 </div>
@@ -559,7 +577,9 @@ export default function DateiaustauschPage() {
                                         if (!selectedCustomerId) return;
                                         const folderPath = menuState.key.replace('folder:', '');
                                         const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(folderPath)}`;
-                                        triggerDownload(url);
+                                        triggerDownload(url, `dateiaustausch-${folderPath || selectedCustomerId}.zip`).catch((err) => {
+                                            setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
+                                        });
                                         setMenuState(null);
                                     }}
                                 >
@@ -586,9 +606,18 @@ export default function DateiaustauschPage() {
                                         >
                                             Vorschau
                                         </button>
-                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
+                                        <button
+                                            className="kp-fm-menu-item tile-grid-context-menu-item"
+                                            type="button"
+                                            onClick={() => {
+                                                triggerDownload(`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`, file.displayName).catch((err) => {
+                                                    setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
+                                                });
+                                                setMenuState(null);
+                                            }}
+                                        >
                                             Download
-                                        </a>
+                                        </button>
                                     </>
                                 ) : (
                                     <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Download</span>
@@ -620,9 +649,17 @@ export default function DateiaustauschPage() {
                                     >
                                         Weiter
                                     </button>
-                                    <a className="btn btn-primary" href={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/download`} target="_blank" rel="noreferrer">
+                                    <button
+                                        className="btn btn-primary"
+                                        type="button"
+                                        onClick={() => {
+                                            triggerDownload(`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/download`, previewFile.displayName).catch((err) => {
+                                                setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
+                                            });
+                                        }}
+                                    >
                                         Herunterladen
-                                    </a>
+                                    </button>
                                     <button className="btn btn-secondary" type="button" onClick={() => setPreviewOpen(false)}>
                                         Schließen
                                     </button>

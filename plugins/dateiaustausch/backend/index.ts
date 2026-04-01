@@ -1328,6 +1328,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 }
             }
 
+            if (copiedCount === 0) {
+                return reply.status(409).send({ error: 'Keine kopierbaren Dateien gefunden (nur saubere Dateien koennen kopiert werden).' });
+            }
             return { success: true, copiedCount };
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Kopieren fehlgeschlagen.';
