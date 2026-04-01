@@ -336,14 +336,17 @@ async function runCommand(command: string, args: string[]): Promise<{ ok: boolea
     let effectiveCommand = command;
     let effectiveArgs = [...args];
 
-    // In gehärteten Systemd-Services ist /var/log und /run oft read-only.
-    // Mit -g überschreiben wir testweise error_log/pid auf /tmp, damit nginx -t trotzdem funktioniert.
+    // In gehärteten Systemd-Services ist /var/log oft read-only.
+    // Für nginx -t setzen wir daher nur ein temporäres Error-Log und schalten den Master-Prozess aus,
+    // damit kein PID-File geschrieben werden muss (ohne doppelte "pid"-Directive zu erzeugen).
     if (command === 'nginx' && args.length > 0 && args[0] === '-t') {
         const suffix = `${process.pid}-${Date.now()}`;
         effectiveArgs = [
             '-t',
+            '-e',
+            `/tmp/mike-nginx-test-${suffix}.log`,
             '-g',
-            `pid /tmp/mike-nginx-test-${suffix}.pid; error_log /tmp/mike-nginx-test-${suffix}.log;`,
+            'master_process off;',
         ];
     }
 

@@ -34,6 +34,7 @@ const STORAGE_SESSION_KEY = 'kundenportal.session';
 const STORAGE_EMAIL_KEY = 'kundenportal.email';
 
 type PortalTab = 'videos' | 'files';
+type PortalNavKey = 'videos' | 'files' | 'docs' | 'profile';
 
 function formatDate(value: string): string {
     const date = new Date(value);
@@ -43,8 +44,41 @@ function formatDate(value: string): string {
     }).format(date);
 }
 
+function NavIcon({ nav }: { nav: PortalNavKey }) {
+    if (nav === 'files') {
+        return (
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M4 7a2 2 0 0 1 2-2h5l2 2h5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+        );
+    }
+    if (nav === 'docs') {
+        return (
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M14 3v5h5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+        );
+    }
+    if (nav === 'profile') {
+        return (
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M4 21c1.2-3.3 4.1-5 8-5s6.8 1.7 8 5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            </svg>
+        );
+    }
+    return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M10 9.5v5l4-2.5-4-2.5z" fill="currentColor" />
+        </svg>
+    );
+}
+
 export default function KundenportalPage() {
     const [activeTab, setActiveTab] = useState<PortalTab>('videos');
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [email, setEmail] = useState(localStorage.getItem(STORAGE_EMAIL_KEY) || '');
     const [code, setCode] = useState('');
     const [codeRequested, setCodeRequested] = useState(false);
@@ -189,6 +223,7 @@ export default function KundenportalPage() {
         setCodeRequested(false);
         setError(null);
         setActiveTab('videos');
+        setMobileNavOpen(false);
     }
 
     return (
@@ -236,61 +271,140 @@ export default function KundenportalPage() {
                         {error && <p className="text-danger vp-access-error">{error}</p>}
                     </section>
                 ) : (
-                    <section className="card vp-panel vp-portal-panel">
-                        <div className="vp-head-row">
-                            <div>
-                                <h1 className="page-title">Kundenportal</h1>
-                                <div className="vp-customer-header">
-                                    <p className="vp-customer-display">{customerHeader.displayName}</p>
+                    <section className="kp-portal">
+                        <div className="kp-mobile-topbar card">
+                            <div className="kp-mobile-brand">
+                                <strong>Kundenportal</strong>
+                                <span className="text-muted">{customerHeader.displayName}</span>
+                            </div>
+                            <button className="btn btn-secondary" type="button" onClick={() => setMobileNavOpen((prev) => !prev)}>
+                                {mobileNavOpen ? 'Schließen' : 'Menü'}
+                            </button>
+                        </div>
+
+                        <div className={`kp-portal-layout ${mobileNavOpen ? 'kp-nav-open' : ''}`}>
+                            <aside className="kp-sidebar card">
+                                <div className="kp-sidebar-brand">
+                                    {portalLogoUrl ? (
+                                        <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
+                                    ) : (
+                                        <div className="kp-sidebar-brand-fallback">Kundenportal</div>
+                                    )}
+                                </div>
+
+                                <div className="kp-sidebar-customer">
+                                    <p className="kp-sidebar-name">{customerHeader.displayName}</p>
                                     {customerHeader.companyName && <p className="text-muted">Firma: {customerHeader.companyName}</p>}
                                     {customerHeader.contactName && <p className="text-muted">Ansprechpartner: {customerHeader.contactName}</p>}
                                 </div>
-                            </div>
-                            <button className="btn btn-secondary" onClick={resetAccess}>Abmelden</button>
-                        </div>
 
-                        <div className="kp-tabbar" style={{ marginTop: 'var(--space-md)' }}>
-                            <button className={`btn ${activeTab === 'videos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('videos')}>Videos</button>
-                            <button className={`btn ${activeTab === 'files' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('files')}>Dateiaustausch</button>
-                        </div>
+                                <nav className="kp-nav">
+                                    <p className="kp-nav-section">Aktiv</p>
+                                    <button
+                                        className={`btn kp-nav-btn ${activeTab === 'videos' ? 'btn-primary is-active' : 'btn-secondary'}`}
+                                        type="button"
+                                        onClick={() => { setActiveTab('videos'); setMobileNavOpen(false); }}
+                                    >
+                                        <span className="kp-nav-icon"><NavIcon nav="videos" /></span>
+                                        Videos
+                                    </button>
+                                    <button
+                                        className={`btn kp-nav-btn ${activeTab === 'files' ? 'btn-primary is-active' : 'btn-secondary'}`}
+                                        type="button"
+                                        onClick={() => { setActiveTab('files'); setMobileNavOpen(false); }}
+                                    >
+                                        <span className="kp-nav-icon"><NavIcon nav="files" /></span>
+                                        Dateiaustausch
+                                    </button>
 
-                        {activeTab === 'videos' && (
-                            <>
-                                <div className="vp-toolbar" style={{ marginTop: 'var(--space-md)' }}>
-                                    <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Suchen nach Titel, Beschreibung oder Kategorie" />
+                                    <p className="kp-nav-section" style={{ marginTop: '4px' }}>Demnächst</p>
+                                    <button className="btn kp-nav-btn is-disabled" type="button" disabled>
+                                        <span className="kp-nav-icon"><NavIcon nav="docs" /></span>
+                                        Dokumente
+                                        <span className="kp-nav-badge">Coming soon</span>
+                                    </button>
+                                    <button className="btn kp-nav-btn is-disabled" type="button" disabled>
+                                        <span className="kp-nav-icon"><NavIcon nav="profile" /></span>
+                                        Profil
+                                        <span className="kp-nav-badge">Coming soon</span>
+                                    </button>
+                                </nav>
+
+                                <div className="kp-sidebar-meta">
+                                    <p className="text-muted">Freigeschaltet bis: {formatDate(access.expiresAt)}</p>
+                                    <p className="text-muted">Videos: {access.videos.length}</p>
                                 </div>
 
-                                <div className="vp-video-grid vp-portal-video-grid" style={{ marginTop: 'var(--space-md)' }}>
-                                    {visibleVideos.length === 0 && <div className="vp-empty">Keine Videos gefunden.</div>}
-                                    {visibleVideos.map((video) => {
-                                        const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(access.sessionToken)}`;
-                                        return (
-                                            <article key={video.id} className="vp-video-card vp-portal-video-card">
-                                                <div className="vp-video-preview vp-portal-video-preview">
-                                                    {video.sourceType === 'upload' ? (
-                                                        <video className="vp-portal-player" controls playsInline controlsList="nodownload" src={streamUrl} />
-                                                    ) : (
-                                                        <a className="btn btn-primary" href={streamUrl} target="_blank" rel="noreferrer">Externes Video öffnen</a>
-                                                    )}
-                                                </div>
-                                                <div className="vp-video-body">
-                                                    <h3>{video.title}</h3>
-                                                    <p className="text-muted">{video.category} • {formatDate(video.createdAt)}</p>
-                                                    {video.description ? <p>{video.description}</p> : null}
-                                                </div>
-                                            </article>
-                                        );
-                                    })}
-                                </div>
-                            </>
-                        )}
+                                <button className="btn btn-secondary kp-logout" onClick={resetAccess}>Abmelden</button>
+                            </aside>
 
-                        {activeTab === 'files' && (
-                            <div className="kp-coming-soon" style={{ marginTop: 'var(--space-md)' }}>
-                                <h3>Dateiaustausch</h3>
-                                <p className="text-muted">Coming soon: Hier entsteht ein echtes Datei-Management für Austausch, Versionierung und Freigaben.</p>
-                            </div>
-                        )}
+                            <main className="kp-main card">
+                                <header className="kp-main-header">
+                                    <div>
+                                        <h1 className="page-title">Ihre Inhalte</h1>
+                                        <p className="text-muted">
+                                            {activeTab === 'videos' ? `${visibleVideos.length} von ${access.videos.length} Videos` : 'Sicherer Dateiaustausch mit Versionierung'}
+                                        </p>
+                                    </div>
+                                    <button className="btn btn-secondary kp-main-logout" onClick={resetAccess}>Abmelden</button>
+                                </header>
+
+                                {activeTab === 'videos' && (
+                                    <>
+                                        <div className="kp-searchbar">
+                                            <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Suchen nach Titel, Beschreibung oder Kategorie" />
+                                        </div>
+
+                                        <div className="kp-video-grid">
+                                            {visibleVideos.length === 0 && (
+                                                <div className="kp-empty-state">
+                                                    <div className="kp-empty-icon">
+                                                        <NavIcon nav="videos" />
+                                                    </div>
+                                                    <h3>Keine Videos gefunden</h3>
+                                                    <p className="text-muted">
+                                                        {keyword.trim()
+                                                            ? 'Versuchen Sie einen anderen Suchbegriff oder löschen Sie den Filter.'
+                                                            : 'Sobald neue Videos freigegeben sind, erscheinen sie hier automatisch.'}
+                                                    </p>
+                                                    {keyword.trim() ? (
+                                                        <button className="btn btn-secondary" type="button" onClick={() => setKeyword('')}>
+                                                            Suche zurücksetzen
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            )}
+                                            {visibleVideos.map((video) => {
+                                                const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(access.sessionToken)}`;
+                                                return (
+                                                    <article key={video.id} className="kp-video-card">
+                                                        <div className="kp-video-preview">
+                                                            {video.sourceType === 'upload' ? (
+                                                                <video className="kp-video-player" controls playsInline controlsList="nodownload" src={streamUrl} />
+                                                            ) : (
+                                                                <a className="btn btn-primary" href={streamUrl} target="_blank" rel="noreferrer">Externes Video öffnen</a>
+                                                            )}
+                                                        </div>
+                                                        <div className="kp-video-body">
+                                                            <h3>{video.title}</h3>
+                                                            <p className="text-muted">{video.category} • {formatDate(video.createdAt)}</p>
+                                                            {video.description ? <p>{video.description}</p> : null}
+                                                        </div>
+                                                    </article>
+                                                );
+                                            })}
+                                        </div>
+                                    </>
+                                )}
+
+                                {activeTab === 'files' && (
+                                    <div className="kp-coming-soon">
+                                        <h3>Dateiaustausch</h3>
+                                        <p className="text-muted">Coming soon: Hier entsteht ein echtes Datei-Management für Austausch, Versionierung und Freigaben.</p>
+                                    </div>
+                                )}
+                            </main>
+                        </div>
                     </section>
                 )}
             </div>
