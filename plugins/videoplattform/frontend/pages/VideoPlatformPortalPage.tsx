@@ -12,17 +12,18 @@ type PortalVideo = {
     createdAt: string;
 };
 
-type AccessResponse = {
-    code: string;
-    scope: 'video' | 'customer';
-    customerId: number | null;
+type SessionAccessResponse = {
+    sessionToken: string;
+    expiresAt: string;
+    customerId: number;
     customerName: string | null;
     tenantLogoUrl?: string | null;
     logoUrl?: string | null;
     videos: PortalVideo[];
 };
 
-const STORAGE_KEY = 'videoplattform.customer_code';
+const STORAGE_SESSION_KEY = 'videoplattform.portal_session';
+const STORAGE_EMAIL_KEY = 'videoplattform.portal_email';
 
 function formatDate(value: string): string {
     const date = new Date(value);
@@ -37,8 +38,10 @@ function formatDate(value: string): string {
 }
 
 export default function VideoPlatformPortalPage() {
-    const [code, setCode] = useState(localStorage.getItem(STORAGE_KEY) || '');
-    const [access, setAccess] = useState<AccessResponse | null>(null);
+    const [email, setEmail] = useState(localStorage.getItem(STORAGE_EMAIL_KEY) || '');
+    const [code, setCode] = useState('');
+    const [codeRequested, setCodeRequested] = useState(false);
+    const [access, setAccess] = useState<SessionAccessResponse | null>(null);
     const [expectedHost, setExpectedHost] = useState('');
     const [keyword, setKeyword] = useState('');
     const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
@@ -48,82 +51,122 @@ export default function VideoPlatformPortalPage() {
 
     useEffect(() => {
         let active = true;
+        const existingSession = localStorage.getItem(STORAGE_SESSION_KEY) || '';
+
         fetch('/api/plugins/videoplattform/public/config')
             .then((res) => res.json())
-            .then((data) => {
+            .then(async (data) => {
                 if (!active) return;
-                if (typeof data.expectedHost === 'string') {
-                    setExpectedHost(data.expectedHost);
-                }
+                if (typeof data.expectedHost === 'string') setExpectedHost(data.expectedHost);
                 if (typeof data.logoUrl === 'string' && data.logoUrl) {
                     setPortalLogoUrl(`${data.logoUrl}${data.logoUrl.includes('?') ? '&' : '?'}v=${Date.now()}`);
                 }
                 const logoHeight = Number(data?.logoHeight);
-                if (Number.isFinite(logoHeight)) {
-                    setPortalLogoHeight(Math.max(24, Math.min(180, Math.round(logoHeight))));
+                if (Number.isFinite(logoHeight)) setPortalLogoHeight(Math.max(24, Math.min(180, Math.round(logoHeight))));
+
+                if (existingSession) {
+                    const restoreRes = await fetch(`/api/plugins/videoplattform/public/access/by-session?sessionToken=${encodeURIComponent(existingSession)}`);
+                    const payload = await restoreRes.json().catch(() => ({}));
+                    if (restoreRes.ok) {
+                        setAccess(payload as SessionAccessResponse);
+                        const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
+                        const fallbackLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+                        if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                        else if (fallbackLogo) setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                    } else {
+                        localStorage.removeItem(STORAGE_SESSION_KEY);
+                    }
                 }
             })
-            .catch(() => {
-                // ignore
-            });
+            .catch(() => undefined);
 
-        return () => {
-            active = false;
-        };
+        return () => { active = false; };
     }, []);
 
     const visibleVideos = useMemo(() => {
         if (!access) return [];
         const normalized = keyword.trim().toLowerCase();
         if (!normalized) return access.videos;
-
         return access.videos.filter((video) => {
             const haystack = `${video.title} ${video.description} ${video.category} ${video.customerName || ''}`.toLowerCase();
             return haystack.includes(normalized);
         });
     }, [access, keyword]);
 
-    async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    async function requestCode(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const normalizedCode = code.trim().toUpperCase();
-        if (!normalizedCode) return;
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!normalizedEmail || !normalizedEmail.includes('@')) return;
 
         setLoading(true);
         setError(null);
-
         try {
-            const res = await fetch('/api/plugins/videoplattform/public/access/by-code', {
+            const res = await fetch('/api/plugins/videoplattform/public/auth/request-code', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code: normalizedCode }),
+                body: JSON.stringify({ email: normalizedEmail }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Code konnte nicht versendet werden.');
+            localStorage.setItem(STORAGE_EMAIL_KEY, normalizedEmail);
+            setEmail(normalizedEmail);
+            setCodeRequested(true);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Code konnte nicht versendet werden.');
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    async function verifyCode(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const normalizedEmail = email.trim().toLowerCase();
+        const normalizedCode = code.trim();
+        if (!normalizedEmail || !normalizedCode) return;
+
+        setLoading(true);
+        setError(null);
+        try {
+            const res = await fetch('/api/plugins/videoplattform/public/auth/verify-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email: normalizedEmail, code: normalizedCode }),
             });
 
-            const payload = await res.json();
-            if (!res.ok) {
-                throw new Error(payload?.error || 'Code ungültig oder abgelaufen');
-            }
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Code ungültig oder abgelaufen.');
 
-            localStorage.setItem(STORAGE_KEY, payload.code);
-            setCode(payload.code);
-            setAccess(payload as AccessResponse);
+            const sessionPayload = payload as SessionAccessResponse;
+            localStorage.setItem(STORAGE_SESSION_KEY, sessionPayload.sessionToken);
+            localStorage.setItem(STORAGE_EMAIL_KEY, normalizedEmail);
+            setAccess(sessionPayload);
+
             const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
             const fallbackLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
-            if (tenantLogo) {
-                setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
-            } else if (fallbackLogo) {
-                setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
-            }
+            if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            else if (fallbackLogo) setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Code ungültig oder abgelaufen');
+            setError(err instanceof Error ? err.message : 'Code ungültig oder abgelaufen.');
             setAccess(null);
         } finally {
             setLoading(false);
         }
     }
 
-    function resetAccess() {
+    async function resetAccess() {
+        const token = localStorage.getItem(STORAGE_SESSION_KEY) || '';
+        localStorage.removeItem(STORAGE_SESSION_KEY);
+        if (token) {
+            await fetch('/api/plugins/videoplattform/public/auth/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sessionToken: token }),
+            }).catch(() => undefined);
+        }
         setAccess(null);
         setKeyword('');
+        setCode('');
+        setCodeRequested(false);
         setError(null);
     }
 
@@ -142,9 +185,10 @@ export default function VideoPlatformPortalPage() {
                             </div>
                             <span className="vp-access-badge">Sicherer Zugang</span>
                         </div>
-                        <h1 className="page-title vp-access-title">Videofreigabe</h1>
+
+                        <h1 className="page-title vp-access-title">Kundenportal Login</h1>
                         <p className="text-muted vp-access-subtitle">
-                            Bitte Freigabecode eingeben, um Ihre Videos zu öffnen.
+                            Melden Sie sich mit Ihrer Ansprechpartner-E-Mail und einem 6-stelligen Code an.
                         </p>
 
                         {expectedHost && expectedHost !== window.location.hostname && (
@@ -153,20 +197,49 @@ export default function VideoPlatformPortalPage() {
                             </div>
                         )}
 
-                        <form onSubmit={onSubmit} className="vp-stack vp-access-form">
-                            <label className="vp-label" htmlFor="vp-code-input">Freigabecode</label>
-                            <input
-                                id="vp-code-input"
-                                className="input vp-input-center vp-code-input"
-                                value={code}
-                                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                                placeholder="VID-XXXXXXXX"
-                                required
-                            />
-                            <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>
-                                {loading ? 'Prüfe Code...' : 'Videos öffnen'}
-                            </button>
-                        </form>
+                        {!codeRequested ? (
+                            <form onSubmit={requestCode} className="vp-stack vp-access-form">
+                                <label className="vp-label" htmlFor="vp-email-input">E-Mail</label>
+                                <input
+                                    id="vp-email-input"
+                                    className="input"
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    placeholder="name@firma.de"
+                                    required
+                                />
+                                <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>
+                                    {loading ? 'Sende Code...' : 'Code anfordern'}
+                                </button>
+                            </form>
+                        ) : (
+                            <form onSubmit={verifyCode} className="vp-stack vp-access-form">
+                                <label className="vp-label" htmlFor="vp-code-input">6-stelliger Code</label>
+                                <input
+                                    id="vp-code-input"
+                                    className="input vp-input-center vp-code-input"
+                                    value={code}
+                                    onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    placeholder="123456"
+                                    required
+                                />
+                                <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>
+                                    {loading ? 'Prüfe Code...' : 'Anmelden'}
+                                </button>
+                                <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    onClick={() => {
+                                        setCodeRequested(false);
+                                        setCode('');
+                                        setError(null);
+                                    }}
+                                >
+                                    E-Mail ändern
+                                </button>
+                            </form>
+                        )}
 
                         {error && <p className="text-danger vp-access-error">{error}</p>}
                     </section>
@@ -175,30 +248,24 @@ export default function VideoPlatformPortalPage() {
                         <div className="vp-head-row">
                             <div>
                                 <h1 className="page-title">Ihre Videos</h1>
-                                <p className="text-muted">{access.customerName || 'Freigabe'}</p>
+                                <p className="text-muted">{access.customerName || 'Ihre Firma'}</p>
                             </div>
-                            <button className="btn btn-secondary" onClick={resetAccess}>Zurück</button>
+                            <button className="btn btn-secondary" onClick={resetAccess}>Abmelden</button>
                         </div>
 
-                        {access.scope === 'customer' && (
-                            <div className="vp-toolbar" style={{ marginTop: 'var(--space-md)' }}>
-                                <input
-                                    className="input"
-                                    value={keyword}
-                                    onChange={(e) => setKeyword(e.target.value)}
-                                    placeholder="Suchen nach Titel, Beschreibung oder Kategorie"
-                                />
-                            </div>
-                        )}
+                        <div className="vp-toolbar" style={{ marginTop: 'var(--space-md)' }}>
+                            <input
+                                className="input"
+                                value={keyword}
+                                onChange={(e) => setKeyword(e.target.value)}
+                                placeholder="Suchen nach Titel, Beschreibung oder Kategorie"
+                            />
+                        </div>
 
                         <div className="vp-video-grid" style={{ marginTop: 'var(--space-md)' }}>
-                            {visibleVideos.length === 0 && (
-                                <div className="vp-empty">Keine Videos gefunden.</div>
-                            )}
-
+                            {visibleVideos.length === 0 && <div className="vp-empty">Keine Videos gefunden.</div>}
                             {visibleVideos.map((video) => {
-                                const streamUrl = `${video.streamUrl}?code=${encodeURIComponent(access.code)}`;
-
+                                const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(access.sessionToken)}`;
                                 return (
                                     <article key={video.id} className="vp-video-card">
                                         <div className="vp-video-preview">
@@ -210,7 +277,6 @@ export default function VideoPlatformPortalPage() {
                                                 </a>
                                             )}
                                         </div>
-
                                         <div className="vp-video-body">
                                             <h3>{video.title}</h3>
                                             <p className="text-muted">{video.category} • {formatDate(video.createdAt)}</p>

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash, randomInt, randomUUID } from 'crypto';
 import { createReadStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
@@ -14,8 +14,12 @@ const PLUGIN_ID = 'videoplattform';
 const PUBLIC_SUBDOMAIN_SETTING_KEY = 'videoplattform.public_subdomain';
 const PUBLIC_LOGO_FILE_SETTING_KEY = 'videoplattform.public_logo_file';
 const PUBLIC_LOGO_HEIGHT_SETTING_KEY = 'videoplattform.public_logo_height';
+const PUBLIC_AUTH_MODE_SETTING_KEY = 'videoplattform.public_auth_mode';
 const DEFAULT_PUBLIC_SUBDOMAIN = 'kunden.webdesign-hammer.de';
+const DEFAULT_PUBLIC_AUTH_MODE = 'magic_code';
 const MAX_VIDEO_SIZE_BYTES = 3 * 1024 * 1024 * 1024; // 3 GB
+const MAGIC_CODE_TTL_MINUTES = 15;
+const MAGIC_SESSION_TTL_HOURS = 72;
 const execFileAsync = promisify(execFile);
 
 interface VideoRecord {
@@ -46,6 +50,27 @@ interface CodeRecord {
     is_active: 0 | 1 | boolean;
     expires_at: string | null;
     created_at: string;
+}
+
+interface MagicCodeRecord {
+    id: number;
+    tenant_id: number;
+    customer_id: number;
+    email_normalized: string;
+    email_hash: string;
+    code_hash: string;
+    expires_at: string;
+    used_at: string | null;
+}
+
+interface PublicSessionRecord {
+    id: number;
+    tenant_id: number;
+    customer_id: number;
+    email_normalized: string;
+    token_hash: string;
+    expires_at: string;
+    revoked_at: string | null;
 }
 
 type CustomerSourceMode = 'videoplattform' | 'crm';
@@ -136,6 +161,47 @@ async function ensureVideoplattformSchema(db: any): Promise<void> {
             table.index(['event_type', 'created_at']);
         });
     }
+
+    const hasMagicCodes = await db.schema.hasTable('vp_magic_codes');
+    if (!hasMagicCodes) {
+        await db.schema.createTable('vp_magic_codes', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.integer('customer_id').unsigned().notNullable().references('id').inTable('vp_customers').onDelete('CASCADE');
+            table.string('email_normalized', 255).notNullable();
+            table.string('email_hash', 64).notNullable();
+            table.string('code_hash', 64).notNullable();
+            table.timestamp('expires_at').notNullable();
+            table.timestamp('used_at').nullable();
+            table.integer('attempts').notNullable().defaultTo(0);
+            table.string('ip', 120).nullable();
+            table.text('user_agent').nullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.index(['tenant_id', 'customer_id', 'created_at']);
+            table.index(['email_hash', 'created_at']);
+            table.index(['expires_at']);
+        });
+    }
+
+    const hasPublicSessions = await db.schema.hasTable('vp_public_sessions');
+    if (!hasPublicSessions) {
+        await db.schema.createTable('vp_public_sessions', (table: any) => {
+            table.increments('id').primary();
+            table.integer('tenant_id').unsigned().notNullable().references('id').inTable('tenants').onDelete('CASCADE');
+            table.integer('customer_id').unsigned().notNullable().references('id').inTable('vp_customers').onDelete('CASCADE');
+            table.string('email_normalized', 255).notNullable();
+            table.string('token_hash', 64).notNullable();
+            table.timestamp('expires_at').notNullable();
+            table.timestamp('last_used_at').nullable();
+            table.timestamp('revoked_at').nullable();
+            table.string('ip', 120).nullable();
+            table.text('user_agent').nullable();
+            table.timestamp('created_at').defaultTo(db.fn.now());
+            table.unique(['token_hash']);
+            table.index(['tenant_id', 'customer_id']);
+            table.index(['expires_at']);
+        });
+    }
 }
 
 function normalizeHost(value: string | undefined): string {
@@ -204,6 +270,22 @@ async function readPublicLogoHeight(db: any): Promise<number> {
         return Math.max(24, Math.min(180, Math.round(value)));
     } catch {
         return 52;
+    }
+}
+
+async function readPublicAuthMode(db: any): Promise<'share_code' | 'magic_code'> {
+    const row = await db('settings')
+        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_AUTH_MODE_SETTING_KEY })
+        .whereNull('tenant_id')
+        .first('value_encrypted');
+
+    if (!row?.value_encrypted) return DEFAULT_PUBLIC_AUTH_MODE as 'magic_code';
+    try {
+        const raw = decrypt(String(row.value_encrypted)).trim().toLowerCase();
+        if (raw === 'share_code') return 'share_code';
+        return 'magic_code';
+    } catch {
+        return DEFAULT_PUBLIC_AUTH_MODE as 'magic_code';
     }
 }
 
@@ -372,6 +454,22 @@ async function ensurePlayableUploadForStreaming(db: any, video: VideoRecord, log
 
 function sanitizeCode(input: unknown): string {
     return String(input || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
+}
+
+function normalizeEmail(input: unknown): string {
+    return String(input || '').trim().toLowerCase();
+}
+
+function hashValue(input: string): string {
+    return createHash('sha256').update(input, 'utf8').digest('hex');
+}
+
+function createMagicCode(): string {
+    return String(randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+function createSessionToken(): string {
+    return `${randomUUID().replace(/-/g, '')}${randomUUID().replace(/-/g, '')}`;
 }
 
 function isCodeExpired(expiresAt: string | null): boolean {
@@ -625,6 +723,107 @@ async function assertCustomerExists(db: any, tenantId: number, customerId: numbe
     if (source.mode === 'crm') query.whereNotNull('crm_customer_id');
     const customer = await query.first('id');
     return Boolean(customer);
+}
+
+async function resolveCustomerByEmail(db: any, normalizedEmail: string): Promise<{ tenantId: number; crmCustomerId: number; customerName: string } | null> {
+    const hasCrmCustomers = await db.schema.hasTable('crm_customers').catch(() => false);
+    const hasCrmContacts = await db.schema.hasTable('crm_contacts').catch(() => false);
+    if (!hasCrmCustomers) return null;
+
+    if (hasCrmContacts) {
+        const contactMatch = await db('crm_contacts as cc')
+            .join('crm_customers as c', function joinCustomer() {
+                this.on('c.id', '=', 'cc.customer_id').andOn('c.tenant_id', '=', 'cc.tenant_id');
+            })
+            .whereRaw('LOWER(cc.email) = ?', [normalizedEmail])
+            .whereIn('c.status', ['active', 'prospect', 'inactive'])
+            .orderBy('cc.is_primary', 'desc')
+            .orderBy('cc.id', 'asc')
+            .select('c.id as crm_customer_id', 'c.tenant_id', 'c.company_name', 'c.first_name', 'c.last_name')
+            .first();
+
+        if (contactMatch) {
+            return {
+                tenantId: Number(contactMatch.tenant_id),
+                crmCustomerId: Number(contactMatch.crm_customer_id),
+                customerName: buildCustomerDisplayName(contactMatch),
+            };
+        }
+    }
+
+    const customerMatch = await db('crm_customers as c')
+        .whereRaw('LOWER(c.email) = ?', [normalizedEmail])
+        .whereIn('c.status', ['active', 'prospect', 'inactive'])
+        .orderBy('c.id', 'asc')
+        .select('c.id as crm_customer_id', 'c.tenant_id', 'c.company_name', 'c.first_name', 'c.last_name')
+        .first();
+
+    if (!customerMatch) return null;
+    return {
+        tenantId: Number(customerMatch.tenant_id),
+        crmCustomerId: Number(customerMatch.crm_customer_id),
+        customerName: buildCustomerDisplayName(customerMatch),
+    };
+}
+
+async function ensureVpCustomerForCrm(db: any, tenantId: number, crmCustomerId: number, customerName: string): Promise<number | null> {
+    const hasColumn = await db.schema.hasColumn('vp_customers', 'crm_customer_id').catch(() => false);
+    if (!hasColumn) return null;
+
+    const existingByCrm = await db('vp_customers')
+        .where({ tenant_id: tenantId, crm_customer_id: crmCustomerId })
+        .first('id', 'name');
+
+    if (existingByCrm) {
+        if (String(existingByCrm.name || '') !== customerName) {
+            await db('vp_customers')
+                .where({ id: existingByCrm.id, tenant_id: tenantId })
+                .update({ name: customerName });
+        }
+        return Number(existingByCrm.id);
+    }
+
+    const existingByName = await db('vp_customers')
+        .where({ tenant_id: tenantId, name: customerName })
+        .first('id', 'crm_customer_id');
+
+    if (existingByName) {
+        if (!existingByName.crm_customer_id) {
+            await db('vp_customers')
+                .where({ id: existingByName.id, tenant_id: tenantId })
+                .update({ crm_customer_id: crmCustomerId });
+        }
+        return Number(existingByName.id);
+    }
+
+    const [id] = await db('vp_customers').insert({
+        tenant_id: tenantId,
+        name: customerName,
+        crm_customer_id: crmCustomerId,
+        created_at: new Date(),
+    });
+    return Number(id);
+}
+
+async function verifyPublicSessionByToken(db: any, token: string): Promise<PublicSessionRecord | null> {
+    const hash = hashValue(token);
+    const row = await db('vp_public_sessions')
+        .where({ token_hash: hash })
+        .whereNull('revoked_at')
+        .andWhere('expires_at', '>=', db.fn.now())
+        .first();
+    return row as PublicSessionRecord || null;
+}
+
+async function getVideosForCustomer(db: any, tenantId: number, customerId: number): Promise<VideoRecord[]> {
+    return db('vp_videos as v')
+        .leftJoin('vp_customers as c', function joinCustomer() {
+            this.on('c.id', '=', 'v.customer_id').andOn('c.tenant_id', '=', 'v.tenant_id');
+        })
+        .where('v.tenant_id', tenantId)
+        .andWhere('v.customer_id', customerId)
+        .select('v.*', 'c.name as customer_name')
+        .orderBy('v.created_at', 'desc');
 }
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
@@ -1338,9 +1537,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const configuredHost = await readPublicSubdomain(db);
         const fallbackLogoFile = await readPublicLogoFile(db);
         const logoHeight = await readPublicLogoHeight(db);
+        const authMode = await readPublicAuthMode(db);
         return {
             expectedHost: configuredHost,
             brand: 'Webdesign Hammer',
+            authMode,
             logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
             logoHeight,
         };
@@ -1352,6 +1553,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
+        const authMode = await readPublicAuthMode(db);
+        if (authMode !== 'share_code') {
+            return reply.status(409).send({ error: 'Freigabecode-Login ist deaktiviert.' });
+        }
 
         const code = sanitizeCode((request.body as any)?.code);
         if (!code) return reply.status(400).send({ error: 'Freigabecode ist erforderlich' });
@@ -1441,6 +1646,207 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         };
     });
 
+    fastify.post('/public/auth/request-code', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const authMode = await readPublicAuthMode(db);
+        if (authMode !== 'magic_code') {
+            return reply.status(409).send({ error: 'Magic-Code-Login ist nicht aktiv.' });
+        }
+
+        const email = normalizeEmail((request.body as any)?.email);
+        if (!email || !email.includes('@')) {
+            return reply.status(400).send({ error: 'Gültige E-Mail ist erforderlich.' });
+        }
+
+        const resolved = await resolveCustomerByEmail(db, email);
+        // Immer generische Antwort für Datenschutz.
+        if (!resolved) return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
+
+        await syncCustomersFromCrm(db, resolved.tenantId).catch(() => undefined);
+        const vpCustomerId = await ensureVpCustomerForCrm(db, resolved.tenantId, resolved.crmCustomerId, resolved.customerName);
+        if (!vpCustomerId) return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
+
+        const code = createMagicCode();
+        const codeHash = hashValue(`${email}|${code}`);
+        const emailHash = hashValue(email);
+        const expiresAt = new Date(Date.now() + MAGIC_CODE_TTL_MINUTES * 60 * 1000);
+
+        await db('vp_magic_codes')
+            .where({ tenant_id: resolved.tenantId, customer_id: vpCustomerId, email_hash: emailHash })
+            .whereNull('used_at')
+            .andWhere('expires_at', '>=', db.fn.now())
+            .update({ used_at: db.fn.now() });
+
+        await db('vp_magic_codes').insert({
+            tenant_id: resolved.tenantId,
+            customer_id: vpCustomerId,
+            email_normalized: email,
+            email_hash: emailHash,
+            code_hash: codeHash,
+            expires_at: expiresAt,
+            ip: String(request.ip || '').slice(0, 120) || null,
+            user_agent: String(request.headers['user-agent'] || '').slice(0, 1000) || null,
+            created_at: new Date(),
+        });
+
+        await fastify.mail.send({
+            to: email,
+            subject: 'Ihr Login-Code für das Kundenportal',
+            text: `Hallo,\n\nIhr Login-Code lautet: ${code}\n\nDer Code ist ${MAGIC_CODE_TTL_MINUTES} Minuten gültig.\n\nWenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.`,
+            html: `<p>Hallo,</p><p>Ihr Login-Code lautet:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Der Code ist <strong>${MAGIC_CODE_TTL_MINUTES} Minuten</strong> gültig.</p><p>Wenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.</p>`,
+        });
+
+        await logActivity(db, {
+            tenantId: resolved.tenantId,
+            eventType: 'magic_code.requested',
+            request,
+            customerId: vpCustomerId,
+            success: true,
+            detail: 'Magic-Code per E-Mail versendet',
+        });
+
+        return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
+    });
+
+    fastify.post('/public/auth/verify-code', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const authMode = await readPublicAuthMode(db);
+        if (authMode !== 'magic_code') {
+            return reply.status(409).send({ error: 'Magic-Code-Login ist nicht aktiv.' });
+        }
+
+        const email = normalizeEmail((request.body as any)?.email);
+        const code = String((request.body as any)?.code || '').trim();
+        if (!email || !email.includes('@')) return reply.status(400).send({ error: 'Gültige E-Mail ist erforderlich.' });
+        if (!/^\d{6}$/.test(code)) return reply.status(400).send({ error: '6-stelliger Code erforderlich.' });
+
+        const emailHash = hashValue(email);
+        const codeHash = hashValue(`${email}|${code}`);
+        const row = await db('vp_magic_codes')
+            .where({ email_hash: emailHash, code_hash: codeHash })
+            .whereNull('used_at')
+            .andWhere('expires_at', '>=', db.fn.now())
+            .orderBy('created_at', 'desc')
+            .first();
+
+        if (!row) {
+            await logActivity(db, {
+                tenantId: null,
+                eventType: 'magic_code.verify',
+                request,
+                success: false,
+                detail: 'Ungültiger oder abgelaufener Magic-Code',
+            });
+            return reply.status(401).send({ error: 'Ungültiger oder abgelaufener Code.' });
+        }
+
+        await db('vp_magic_codes').where({ id: row.id }).update({ used_at: db.fn.now() });
+        await db('vp_public_sessions')
+            .where({ tenant_id: row.tenant_id, customer_id: row.customer_id, email_normalized: email })
+            .whereNull('revoked_at')
+            .update({ revoked_at: db.fn.now() });
+
+        const sessionToken = createSessionToken();
+        const sessionTokenHash = hashValue(sessionToken);
+        const sessionExpiresAt = new Date(Date.now() + MAGIC_SESSION_TTL_HOURS * 60 * 60 * 1000);
+
+        await db('vp_public_sessions').insert({
+            tenant_id: row.tenant_id,
+            customer_id: row.customer_id,
+            email_normalized: email,
+            token_hash: sessionTokenHash,
+            expires_at: sessionExpiresAt,
+            last_used_at: new Date(),
+            ip: String(request.ip || '').slice(0, 120) || null,
+            user_agent: String(request.headers['user-agent'] || '').slice(0, 1000) || null,
+            created_at: new Date(),
+        });
+
+        const customer = await db('vp_customers').where({ id: row.customer_id, tenant_id: row.tenant_id }).first('name');
+        const videos = await getVideosForCustomer(db, Number(row.tenant_id), Number(row.customer_id));
+        const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file');
+        const fallbackLogoFile = await readPublicLogoFile(db);
+
+        await logActivity(db, {
+            tenantId: row.tenant_id,
+            eventType: 'magic_code.verify',
+            request,
+            customerId: row.customer_id,
+            success: true,
+            detail: 'Portal-Login erfolgreich',
+        });
+
+        return {
+            sessionToken,
+            expiresAt: sessionExpiresAt.toISOString(),
+            customerId: row.customer_id,
+            customerName: customer?.name || null,
+            tenantLogoUrl: tenant?.logo_file
+                ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
+                : null,
+            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
+            videos: videos.map((video) => formatVideo(video)),
+        };
+    });
+
+    fastify.get('/public/access/by-session', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
+
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const customer = await db('vp_customers').where({ id: session.customer_id, tenant_id: session.tenant_id }).first('name');
+        const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
+        const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file');
+        const fallbackLogoFile = await readPublicLogoFile(db);
+
+        return {
+            sessionToken,
+            expiresAt: session.expires_at,
+            customerId: session.customer_id,
+            customerName: customer?.name || null,
+            tenantLogoUrl: tenant?.logo_file
+                ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
+                : null,
+            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
+            videos: videos.map((video) => formatVideo(video)),
+        };
+    });
+
+    fastify.post('/public/auth/logout', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = String((request.body as any)?.sessionToken || '').trim();
+        if (!sessionToken) return { success: true };
+        const tokenHash = hashValue(sessionToken);
+        await db('vp_public_sessions')
+            .where({ token_hash: tokenHash })
+            .whereNull('revoked_at')
+            .update({ revoked_at: db.fn.now() });
+        return { success: true };
+    });
+
     fastify.get('/public/stream/:videoId', {
         exposeHeadRoute: false,
         config: { policy: { public: true } },
@@ -1451,30 +1857,57 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const videoId = Number((request.params as any)?.videoId);
         const code = sanitizeCode((request.query as any)?.code);
+        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
         if (!Number.isInteger(videoId) || videoId <= 0) return reply.status(400).send({ error: 'Ungültige Video-ID' });
-        if (!code) return reply.status(400).send({ error: 'Code ist erforderlich' });
+        if (!code && !sessionToken) return reply.status(400).send({ error: 'Code oder Session-Token ist erforderlich' });
 
-        const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
-        if (!codeRow || isCodeExpired(codeRow.expires_at)) {
-            await logActivity(db, {
-                tenantId: codeRow?.tenant_id || null,
-                eventType: 'video_stream',
-                request,
-                code,
-                videoId,
-                success: false,
-                detail: 'Ungültiger oder abgelaufener Freigabecode',
-            });
-            return reply.status(403).send({ error: 'Code ungültig oder abgelaufen' });
+        let tenantId: number | null = null;
+        let customerId: number | null = null;
+        let accessKind: 'share_code' | 'magic_session' = 'share_code';
+
+        if (sessionToken) {
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session) {
+                await logActivity(db, {
+                    tenantId: null,
+                    eventType: 'video_stream',
+                    request,
+                    videoId,
+                    success: false,
+                    detail: 'Ungültige oder abgelaufene Session',
+                });
+                return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
+            }
+            tenantId = Number(session.tenant_id);
+            customerId = Number(session.customer_id);
+            accessKind = 'magic_session';
+            await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+        } else {
+            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
+            if (!codeRow || isCodeExpired(codeRow.expires_at)) {
+                await logActivity(db, {
+                    tenantId: codeRow?.tenant_id || null,
+                    eventType: 'video_stream',
+                    request,
+                    code,
+                    videoId,
+                    success: false,
+                    detail: 'Ungültiger oder abgelaufener Freigabecode',
+                });
+                return reply.status(403).send({ error: 'Code ungültig oder abgelaufen' });
+            }
+            tenantId = Number(codeRow.tenant_id);
+            if (codeRow.scope === 'customer' && Number(codeRow.customer_id) > 0) customerId = Number(codeRow.customer_id);
+            accessKind = 'share_code';
         }
 
         const video = await db('vp_videos')
-            .where({ tenant_id: codeRow.tenant_id, id: videoId })
+            .where({ tenant_id: tenantId, id: videoId })
             .first();
 
         if (!video) {
             await logActivity(db, {
-                tenantId: codeRow.tenant_id,
+                tenantId,
                 eventType: 'video_stream',
                 request,
                 code,
@@ -1485,14 +1918,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             return reply.status(404).send({ error: 'Video nicht gefunden' });
         }
 
-        const allowed = (codeRow.scope === 'video' && Number(codeRow.video_id) === videoId)
-            || (codeRow.scope === 'customer'
-                && Number(codeRow.customer_id) > 0
-                && (Number(codeRow.customer_id) === Number(video.customer_id) || video.customer_id === null));
+        let allowed = false;
+        if (accessKind === 'magic_session') {
+            allowed = Number(video.customer_id) > 0 && Number(video.customer_id) === Number(customerId);
+        } else {
+            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first();
+            allowed = Boolean(codeRow && (
+                (codeRow.scope === 'video' && Number(codeRow.video_id) === videoId)
+                || (codeRow.scope === 'customer'
+                    && Number(codeRow.customer_id) > 0
+                    && (Number(codeRow.customer_id) === Number(video.customer_id) || video.customer_id === null))
+            ));
+        }
 
         if (!allowed) {
             await logActivity(db, {
-                tenantId: codeRow.tenant_id,
+                tenantId,
                 eventType: 'video_stream',
                 request,
                 code,
@@ -1507,7 +1948,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const streamVideo = await ensurePlayableUploadForStreaming(db, video as VideoRecord, (msg) => request.log.warn(msg));
 
         await logActivity(db, {
-            tenantId: codeRow.tenant_id,
+            tenantId,
             eventType: 'video_stream',
             request,
             code,
@@ -1565,12 +2006,20 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const tenantId = Number((request.params as any)?.tenantId);
         const code = sanitizeCode((request.query as any)?.code);
+        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
         if (!Number.isInteger(tenantId) || tenantId <= 0) return reply.status(400).send({ error: 'Ungültige Tenant-ID' });
-        if (!code) return reply.status(400).send({ error: 'Code ist erforderlich' });
+        if (!code && !sessionToken) return reply.status(400).send({ error: 'Code oder Session-Token ist erforderlich' });
 
-        const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first('tenant_id', 'expires_at');
-        if (!codeRow || isCodeExpired(codeRow.expires_at) || Number(codeRow.tenant_id) !== tenantId) {
-            return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
+        if (sessionToken) {
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session || Number(session.tenant_id) !== tenantId) {
+                return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
+            }
+        } else {
+            const codeRow = await db('vp_share_codes').where({ code, is_active: true }).first('tenant_id', 'expires_at');
+            if (!codeRow || isCodeExpired(codeRow.expires_at) || Number(codeRow.tenant_id) !== tenantId) {
+                return reply.status(403).send({ error: 'Keine Berechtigung für dieses Logo' });
+            }
         }
 
         const tenant = await db('tenants').where({ id: tenantId }).first('logo_file');

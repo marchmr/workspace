@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../../context/AuthContext';
+import { useModal } from '../../components/ModalProvider';
 
 interface EmailAccount {
     id: number;
@@ -13,6 +14,13 @@ interface EmailAccount {
     from_address: string | null;
     from_name: string | null;
     is_default: boolean;
+    oauth_tenant_id?: string | null;
+    oauth_client_id?: string | null;
+    oauth_client_secret?: string | null;
+    oauth_refresh_token?: string | null;
+    oauth_access_token?: string | null;
+    oauth_access_expires_at?: string | null;
+    oauth_scope?: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -28,9 +36,17 @@ const emptyAccount: Omit<EmailAccount, 'id' | 'created_at' | 'updated_at'> = {
     from_address: '',
     from_name: '',
     is_default: false,
+    oauth_tenant_id: '',
+    oauth_client_id: '',
+    oauth_client_secret: '',
+    oauth_refresh_token: '',
+    oauth_access_token: '',
+    oauth_access_expires_at: '',
+    oauth_scope: 'https://outlook.office.com/SMTP.Send offline_access',
 };
 
 export default function EmailAccounts() {
+    const modal = useModal();
     const [accounts, setAccounts] = useState<EmailAccount[]>([]);
     const [loading, setLoading] = useState(true);
     const [editingId, setEditingId] = useState<number | 'new' | null>(null);
@@ -69,6 +85,13 @@ export default function EmailAccounts() {
             from_address: account.from_address || '',
             from_name: account.from_name || '',
             is_default: account.is_default,
+            oauth_tenant_id: account.oauth_tenant_id || '',
+            oauth_client_id: account.oauth_client_id || '',
+            oauth_client_secret: account.oauth_client_secret || '',
+            oauth_refresh_token: account.oauth_refresh_token || '',
+            oauth_access_token: account.oauth_access_token || '',
+            oauth_access_expires_at: account.oauth_access_expires_at || '',
+            oauth_scope: account.oauth_scope || 'https://outlook.office.com/SMTP.Send offline_access',
         });
         setMessage(null);
     };
@@ -107,7 +130,13 @@ export default function EmailAccounts() {
     };
 
     const handleDelete = async (id: number) => {
-        if (!confirm('E-Mail-Konto wirklich loeschen?')) return;
+        const ok = await modal.confirm({
+            title: 'E-Mail-Konto löschen',
+            message: 'E-Mail-Konto wirklich löschen?',
+            confirmText: 'Löschen',
+            variant: 'danger',
+        });
+        if (!ok) return;
         try {
             const res = await apiFetch(`/api/admin/email/accounts/${id}`, { method: 'DELETE' });
             if (res.ok) {
@@ -195,7 +224,7 @@ export default function EmailAccounts() {
                                 <label className="form-label">Provider</label>
                                 <select className="form-input" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>
                                     <option value="smtp">SMTP</option>
-                                    <option value="m365">Microsoft 365 (bald verfuegbar)</option>
+                                    <option value="m365">Microsoft 365 (OAuth2)</option>
                                 </select>
                             </div>
                         </div>
@@ -228,6 +257,51 @@ export default function EmailAccounts() {
                                         <option value="true">Ja (empfohlen)</option>
                                         <option value="false">Nein</option>
                                     </select>
+                                </div>
+                            </>
+                        )}
+
+                        {form.provider === 'm365' && (
+                            <>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 'var(--space-md)' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">SMTP Host</label>
+                                        <input className="form-input" value={form.smtp_host} onChange={(e) => setForm({ ...form, smtp_host: e.target.value })} placeholder="smtp.office365.com" />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Port</label>
+                                        <input className="form-input" type="number" value={form.smtp_port} onChange={(e) => setForm({ ...form, smtp_port: parseInt(e.target.value, 10) || 587 })} placeholder="587" />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">SMTP Benutzer (E-Mail)</label>
+                                        <input className="form-input" value={form.smtp_user} onChange={(e) => setForm({ ...form, smtp_user: e.target.value })} placeholder="konto@firma.de" />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Tenant ID</label>
+                                        <input className="form-input" value={form.oauth_tenant_id} onChange={(e) => setForm({ ...form, oauth_tenant_id: e.target.value })} placeholder="common oder Tenant GUID" />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Client ID</label>
+                                        <input className="form-input" value={form.oauth_client_id} onChange={(e) => setForm({ ...form, oauth_client_id: e.target.value })} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label className="form-label">Client Secret</label>
+                                        <input className="form-input" type="password" value={form.oauth_client_secret} onChange={(e) => setForm({ ...form, oauth_client_secret: e.target.value })} placeholder="••••••" />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'var(--space-md)' }}>
+                                    <div className="form-group">
+                                        <label className="form-label">Refresh Token</label>
+                                        <input className="form-input" value={form.oauth_refresh_token} onChange={(e) => setForm({ ...form, oauth_refresh_token: e.target.value })} placeholder="0.AAA..." />
+                                    </div>
+                                </div>
+                                <div className="form-group">
+                                    <label className="form-label">OAuth Scope</label>
+                                    <input className="form-input" value={form.oauth_scope} onChange={(e) => setForm({ ...form, oauth_scope: e.target.value })} placeholder="https://outlook.office.com/SMTP.Send offline_access" />
                                 </div>
                             </>
                         )}
