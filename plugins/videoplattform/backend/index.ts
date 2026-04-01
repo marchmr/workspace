@@ -47,6 +47,7 @@ type CustomerSourceMode = 'videoplattform' | 'crm';
 
 type ResolvedCustomerSource = {
     mode: CustomerSourceMode;
+    hasLinkColumn: boolean;
 };
 
 function normalizeHost(value: string | undefined): string {
@@ -251,8 +252,12 @@ function buildCustomerDisplayName(customer: any): string {
 
 async function resolveCustomerSource(db: any): Promise<ResolvedCustomerSource> {
     const crmTableExists = await db.schema.hasTable('crm_customers').catch(() => false);
-    if (!crmTableExists) return { mode: 'videoplattform' };
-    return { mode: 'crm' };
+    if (!crmTableExists) return { mode: 'videoplattform', hasLinkColumn: false };
+
+    const hasLinkColumn = await db.schema.hasColumn('vp_customers', 'crm_customer_id').catch(() => false);
+    if (!hasLinkColumn) return { mode: 'videoplattform', hasLinkColumn: false };
+
+    return { mode: 'crm', hasLinkColumn: true };
 }
 
 async function syncCustomersFromCrm(db: any, tenantId: number): Promise<void> {

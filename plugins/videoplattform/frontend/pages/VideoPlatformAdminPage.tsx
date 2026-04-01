@@ -95,6 +95,12 @@ export default function VideoPlatformAdminPage() {
         void reloadAll();
     }, []);
 
+    useEffect(() => {
+        if (customerSource === 'crm' && activeTab === 'customers') {
+            setActiveTab('videos');
+        }
+    }, [customerSource, activeTab]);
+
     async function reloadAll() {
         setLoading(true);
         try {
@@ -352,7 +358,9 @@ export default function VideoPlatformAdminPage() {
 
             <div className="vp-tabbar">
                 <button className={`btn ${activeTab === 'videos' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('videos')}>Videos</button>
-                <button className={`btn ${activeTab === 'customers' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('customers')}>Kunden</button>
+                {customerSource !== 'crm' && (
+                    <button className={`btn ${activeTab === 'customers' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('customers')}>Kunden</button>
+                )}
                 <button className={`btn ${activeTab === 'activity' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setActiveTab('activity')}>Aktivität</button>
             </div>
 
