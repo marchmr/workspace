@@ -355,16 +355,31 @@ export default function DateiaustauschPage() {
         }
     }
 
+    function triggerBrowserDownload(url: string): void {
+        const link = document.createElement('a');
+        link.href = url;
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
     async function downloadEntry(entry: BrowserEntry | null) {
         if (!selectedCustomerId) return;
         if (!entry) {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
-            await triggerDownload(url, `dateiaustausch-${currentPath || selectedCustomerId}.zip`);
+            if (downloadPending) return;
+            setDownloadPending(true);
+            triggerBrowserDownload(url);
+            window.setTimeout(() => setDownloadPending(false), 1200);
             return;
         }
         if (entry.kind === 'folder') {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(entry.fullPath)}`;
-            await triggerDownload(url, `dateiaustausch-${entry.name}.zip`);
+            if (downloadPending) return;
+            setDownloadPending(true);
+            triggerBrowserDownload(url);
+            window.setTimeout(() => setDownloadPending(false), 1200);
             return;
         }
         if (!entry.file.currentVersionId) return;
@@ -586,9 +601,10 @@ export default function DateiaustauschPage() {
                                         if (!selectedCustomerId) return;
                                         const folderPath = menuState.key.replace('folder:', '');
                                         const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(folderPath)}`;
-                                        triggerDownload(url, `dateiaustausch-${folderPath || selectedCustomerId}.zip`).catch((err) => {
-                                            setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
-                                        });
+                                        if (downloadPending) return;
+                                        setDownloadPending(true);
+                                        triggerBrowserDownload(url);
+                                        window.setTimeout(() => setDownloadPending(false), 1200);
                                         setMenuState(null);
                                     }}
                                 >

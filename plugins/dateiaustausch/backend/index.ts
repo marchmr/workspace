@@ -288,11 +288,6 @@ async function streamFolderZip(reply: any, args: {
     baseFolderPath: string;
     entries: ZipFileEntry[];
 }): Promise<void> {
-    if (!args.entries.length) {
-        reply.status(404).send({ error: 'Keine sauberen Dateien in diesem Ordner gefunden.' });
-        return;
-    }
-
     let totalBytes = 0;
     for (const entry of args.entries) {
         totalBytes += Math.max(0, Number(entry.sizeBytes || 0));
@@ -321,6 +316,11 @@ async function streamFolderZip(reply: any, args: {
         const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}` : '';
         let stagedFileCount = 0;
 
+        // Leere Ordner sollen ebenfalls herunterladbar sein.
+        // Daher wird immer ein Root-Ordner vorbereitet, damit zip kein "nothing to do" liefert.
+        const emptyFolderRoot = rootPrefix || 'Dateien';
+        await fs.mkdir(path.join(stageRoot, emptyFolderRoot), { recursive: true, mode: 0o700 });
+
         for (const entry of args.entries) {
             const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
             try {
@@ -339,12 +339,6 @@ async function streamFolderZip(reply: any, args: {
             stagedFileCount += 1;
         }
 
-        if (stagedFileCount === 0) {
-            cleanupTempRoot();
-            reply.status(404).send({ error: 'Keine herunterladbaren Dateien im Zielordner vorhanden.' });
-            return;
-        }
-
         try {
             await execFileAsync('zip', ['-qr', zipPath, '.'], { cwd: stageRoot, timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
         } catch {
@@ -360,6 +354,9 @@ async function streamFolderZip(reply: any, args: {
                 cleanupTempRoot();
                 reply.status(500).send({ error: 'ZIP-Erstellung fehlgeschlagen (leeres Archiv).' });
                 return;
+            }
+            if (stagedFileCount === 0) {
+                reply.header('X-Dateiaustausch-Empty-Folder', '1');
             }
         } catch {
             cleanupTempRoot();

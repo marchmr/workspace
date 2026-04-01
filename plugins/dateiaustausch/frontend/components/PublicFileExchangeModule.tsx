@@ -545,16 +545,44 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
+    function triggerBrowserDownload(url: string): void {
+        const link = document.createElement('a');
+        link.href = url;
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
     async function downloadEntry(entry: BrowserEntry | null) {
         if (!entry) {
             const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
-            const folderName = currentPath ? getBaseName(currentPath) : 'Dateien';
-            await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
+            if (downloadInFlightRef.current) return;
+            downloadInFlightRef.current = true;
+            setDownloadPending(true);
+            try {
+                triggerBrowserDownload(url);
+            } finally {
+                window.setTimeout(() => {
+                    downloadInFlightRef.current = false;
+                    setDownloadPending(false);
+                }, 1200);
+            }
             return;
         }
         if (entry.kind === 'folder') {
             const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(entry.fullPath)}`;
-            await triggerDownload(url, `dateiaustausch-${entry.name}.zip`);
+            if (downloadInFlightRef.current) return;
+            downloadInFlightRef.current = true;
+            setDownloadPending(true);
+            try {
+                triggerBrowserDownload(url);
+            } finally {
+                window.setTimeout(() => {
+                    downloadInFlightRef.current = false;
+                    setDownloadPending(false);
+                }, 1200);
+            }
             return;
         }
         if (!entry.file.currentVersionId) return;
@@ -985,9 +1013,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 onClick={() => {
                                     const folderPath = menuState.key.replace('folder:', '');
                                     const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
-                                    triggerDownload(url, `dateiaustausch-${getBaseName(folderPath)}.zip`).catch((err) => {
-                                        setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
-                                    });
+                                    if (downloadInFlightRef.current) return;
+                                    downloadInFlightRef.current = true;
+                                    setDownloadPending(true);
+                                    triggerBrowserDownload(url);
+                                    window.setTimeout(() => {
+                                        downloadInFlightRef.current = false;
+                                        setDownloadPending(false);
+                                    }, 1200);
                                     setMenuState(null);
                                 }}
                             >
