@@ -359,17 +359,10 @@ async function streamFolderZip(reply: any, args: {
         reply.header('Pragma', 'no-cache');
         reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
         reply.header('Content-Length', String(Number(zipStats.size || 0)));
-        const zipStream = createReadStream(zipPath);
-        zipStream.on('error', () => {
-            cleanupTempRoot();
-            if (!reply.sent) {
-                reply.status(500).send({ error: 'ZIP-Download fehlgeschlagen.' });
-                return;
-            }
-            reply.raw.destroy();
-        });
-        zipStream.on('close', cleanupTempRoot);
-        reply.send(zipStream);
+        reply.header('X-Dateiaustausch-Zip-Size', String(Number(zipStats.size || 0)));
+        const zipBuffer = await fs.readFile(zipPath);
+        cleanupTempRoot();
+        reply.send(zipBuffer);
         return;
     } catch (error) {
         cleanupTempRoot();
@@ -1387,7 +1380,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.get('/public/folders/download', {
         exposeHeadRoute: false,
-        config: { policy: { public: true }, rateLimit: { max: 80, timeWindow: '1 minute' } },
+        config: { policy: { public: true }, rateLimit: { max: 600, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
         const sessionToken = resolvePublicSessionToken(request);
@@ -1613,7 +1606,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
     fastify.get('/folders/download', {
         preHandler: [requirePermission('dateiaustausch.view')],
-        config: { rateLimit: { max: 80, timeWindow: '1 minute' } },
+        config: { rateLimit: { max: 600, timeWindow: '1 minute' } },
     }, async (request, reply) => {
         const tenantId = resolveTenantIdOrReply(request, reply);
         if (!tenantId) return;
