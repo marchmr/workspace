@@ -13,9 +13,10 @@ type SessionAccessResponse = {
         firstName?: string | null;
         lastName?: string | null;
     } | null;
-    tenantLogoUrl?: string | null;
-    tenantName?: string | null;
-    logoUrl?: string | null;
+    tenantName: string | null;
+    tenantLogoUrl: string | null;
+    logoUrl: string | null;
+    activePlugins?: string[];
 };
 
 const API_BASE = '/api/plugins/kundenportal/public';
@@ -61,14 +62,19 @@ function HamburgerIcon() {
 }
 
 export default function KundenportalPage() {
-    const portalTabs = useMemo(() => pluginRegistry.flatMap((p: any) => p.portalTabs || []), []);
+    const [access, setAccess] = useState<SessionAccessResponse | null>(null);
+
+    const portalTabs = useMemo(() => 
+        pluginRegistry
+            .filter((p: any) => !access?.activePlugins || access.activePlugins.includes(p.id))
+            .flatMap((p: any) => p.portalTabs || []), 
+    [access?.activePlugins]);
     
     const [activeTab, setActiveTab] = useState<string>(portalTabs[0]?.id || '');
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [email, setEmail] = useState(localStorage.getItem(STORAGE_EMAIL_KEY) || '');
     const [code, setCode] = useState('');
     const [codeRequested, setCodeRequested] = useState(false);
-    const [access, setAccess] = useState<SessionAccessResponse | null>(null);
     const [expectedHost, setExpectedHost] = useState('');
     const [portalBrand, setPortalBrand] = useState('Kundenportal');
     const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
@@ -78,7 +84,7 @@ export default function KundenportalPage() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!activeTab && portalTabs.length > 0) {
+        if (portalTabs.length > 0 && (!activeTab || !portalTabs.find(t => t.id === activeTab))) {
             setActiveTab(portalTabs[0].id);
         }
     }, [activeTab, portalTabs]);

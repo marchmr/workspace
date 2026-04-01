@@ -84,7 +84,7 @@ export function TopBar() {
         if (pinnedPaths.length === 0) return [];
 
         const allNavItems: PluginNavItem[] = pluginRegistry
-            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.name))
+            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.id))
             .flatMap((entry) => entry.navItems);
 
         const pathMap = new Map<string, PluginNavItem>();

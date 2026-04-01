@@ -34,7 +34,7 @@ export default function RegiePage() {
 
     const pluginNavItems = useMemo(() =>
         pluginRegistry
-            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.name))
+            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.id))
             .flatMap((entry) => entry.navItems)
             .slice()
             .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label)),

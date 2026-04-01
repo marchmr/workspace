@@ -37,7 +37,7 @@ export function GlobalSearch() {
 
     const pluginSearchProviders = useMemo(
         () => pluginRegistry
-            .filter((entry) => (!user?.activePlugins || user.activePlugins.includes(entry.name)) && entry.searchProvider && hasPermission(entry.searchProvider.permission))
+            .filter((entry) => (!user?.activePlugins || user.activePlugins.includes(entry.id)) && entry.searchProvider && hasPermission(entry.searchProvider.permission))
             .map((entry) => ({ pluginId: entry.id, pluginName: entry.name, provider: entry.searchProvider! })),
         [user]
     );
@@ -83,7 +83,7 @@ export function GlobalSearch() {
         ];
 
         const pluginActions = pluginRegistry
-            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.name))
+            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.id))
             .flatMap((entry) => entry.quickActions || []);
 
         return [...core, ...pluginActions].filter((a) => hasPermission(a.permission));

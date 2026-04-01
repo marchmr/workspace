@@ -610,6 +610,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
         const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
+        const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
 
         return {
             sessionToken,
@@ -622,6 +623,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
+            activePlugins,
         };
     });
 
@@ -644,6 +646,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
+        const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
 
         return {
             sessionToken,
@@ -656,6 +659,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
+            activePlugins,
         };
     });
 
