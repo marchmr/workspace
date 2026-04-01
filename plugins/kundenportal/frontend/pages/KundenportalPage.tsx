@@ -326,13 +326,16 @@ export default function KundenportalPage() {
         setFilesError(null);
         try {
             const formData = new FormData();
-            formData.append('file', selectedFile);
             formData.append('sessionToken', access.sessionToken);
             if (uploadFolderPath.trim()) formData.append('folderPath', uploadFolderPath.trim());
             if (uploadComment.trim()) formData.append('comment', uploadComment.trim());
+            formData.append('file', selectedFile);
 
-            const res = await fetch('/api/plugins/dateiaustausch/public/files/upload', {
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files/upload?sessionToken=${encodeURIComponent(access.sessionToken)}`, {
                 method: 'POST',
+                headers: {
+                    'x-public-session-token': access.sessionToken,
+                },
                 body: formData,
             });
             const payload = await res.json().catch(() => ({}));

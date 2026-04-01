@@ -362,7 +362,12 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const filePart = await (request as any).file();
         if (!filePart) return reply.status(400).send({ error: 'Datei ist erforderlich.' });
 
-        const sessionToken = String(getFieldValue(filePart.fields, 'sessionToken') || '').trim();
+        const sessionToken = String(
+            getFieldValue(filePart.fields, 'sessionToken')
+            || (request.query as any)?.sessionToken
+            || (request.headers as any)['x-public-session-token']
+            || '',
+        ).trim();
         const folderPath = normalizeFolderPath(String(getFieldValue(filePart.fields, 'folderPath') || ''));
         const comment = String(getFieldValue(filePart.fields, 'comment') || '').trim();
         const rawItemId = Number(getFieldValue(filePart.fields, 'itemId') || 0);
