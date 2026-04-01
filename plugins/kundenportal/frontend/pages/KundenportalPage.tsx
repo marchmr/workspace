@@ -99,15 +99,6 @@ export default function KundenportalPage() {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
-        if (!mobileNavOpen) return;
-        const previousOverflow = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
-        return () => {
-            document.body.style.overflow = previousOverflow;
-        };
-    }, [mobileNavOpen]);
-
-    useEffect(() => {
         let active = true;
         const existingSession = localStorage.getItem(STORAGE_SESSION_KEY) || '';
 
@@ -126,9 +117,9 @@ export default function KundenportalPage() {
                     if (restoreRes.ok) {
                         setAccess(payload as SessionAccessResponse);
                         const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
-                        const fallbackLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
-                        if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
-                        else if (fallbackLogo) setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                        const customLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+                        if (customLogo) setPortalLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                        else if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
                     } else {
                         localStorage.removeItem(STORAGE_SESSION_KEY);
                     }
@@ -169,6 +160,36 @@ export default function KundenportalPage() {
             contactName,
         };
     }, [access]);
+
+    // Dynamic title and favicon
+    useEffect(() => {
+        const originalTitle = document.title;
+        const originalHref = (document.querySelector('link[rel="icon"]') as HTMLLinkElement)?.href;
+        
+        const titleSuffix = customerHeader.displayName && customerHeader.displayName !== 'Ihre Firma' 
+            ? ` - ${customerHeader.displayName}` 
+            : '';
+        document.title = `Kundenportal${titleSuffix}`;
+        
+        let link = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
+        if (!link) {
+            link = document.createElement('link');
+            link.rel = 'icon';
+            document.head.appendChild(link);
+        }
+        if (portalLogoUrl) {
+            link.href = portalLogoUrl;
+        }
+
+        if (!mobileNavOpen) return;
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        return () => {
+            document.title = originalTitle;
+            if (originalHref) link.href = originalHref;
+            document.body.style.overflow = previousOverflow;
+        };
+    }, [mobileNavOpen, customerHeader.displayName, portalLogoUrl]);
 
     async function requestCode(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -219,9 +240,9 @@ export default function KundenportalPage() {
             setAccess(sessionPayload);
 
             const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
-            const fallbackLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
-            if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
-            else if (fallbackLogo) setPortalLogoUrl(`${fallbackLogo}${fallbackLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            const customLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+            if (customLogo) setPortalLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            else if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Code ungültig oder abgelaufen.');
             setAccess(null);

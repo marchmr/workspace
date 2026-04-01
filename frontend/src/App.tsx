@@ -5,6 +5,7 @@ import { WebSocketProvider } from './context/WebSocketContext';
 import ToastContainer from './components/ToastContainer';
 import { ModalProvider } from './components/ModalProvider';
 import { Layout } from './components/Layout';
+import { DynamicBranding } from './components/DynamicBranding';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
@@ -225,6 +226,7 @@ export default function App() {
             <ModalProvider>
                 <ToastContainer />
                 <BrowserRouter>
+                    <DynamicBranding />
                     {hostRouting.mode === 'public' ? publicRoutes : workspaceRoutes}
                 </BrowserRouter>
             </ModalProvider>

@@ -24,6 +24,7 @@
     width: 100%;
     max-width: 100%;
     overflow-x: clip;
+    justify-items: stretch;
 }
 
 .kp-page .kp-mobile-topbar {
@@ -72,6 +73,7 @@
     grid-template-columns: 300px minmax(0, 1fr);
     gap: var(--space-md);
     align-items: start;
+    justify-items: stretch;
     width: 100%;
     max-width: 100%;
     min-width: 0;
@@ -548,6 +550,7 @@
         width: 100%;
         max-width: 100%;
         min-width: 0;
+        justify-items: stretch;
     }
 
     .kp-page .kp-drawer-backdrop {
@@ -605,15 +608,21 @@
         width: 100%;
         max-width: 100%;
         min-width: 0;
+        justify-self: stretch;
+        justify-items: stretch;
     }
 
     .kp-page .kp-main-header {
         padding-bottom: var(--space-xs);
         gap: var(--space-xs);
+        display: grid;
+        grid-template-columns: 1fr;
+        align-items: start;
     }
 
     .kp-page .kp-main-logout {
         display: inline-flex;
+        justify-self: start;
     }
 
     .kp-page .kp-logout {
@@ -621,16 +630,21 @@
     }
 
     .kp-page .kp-video-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: 1fr !important;
         width: 100%;
         max-width: 100%;
         min-width: 0;
+        justify-items: stretch;
     }
 
     .kp-page .kp-video-card,
     .kp-page .kp-video-preview {
         width: 100%;
-        max-width: 100%;
+        max-width: none;
+    }
+
+    .kp-page .kp-video-card {
+        justify-self: stretch;
     }
 
     .kp-page .kp-nav .is-disabled,
@@ -666,7 +680,7 @@
     }
 }
 
-@media (max-width: 1200px) {
+@media (min-width: 901px) and (max-width: 1200px) {
     .kp-page .kp-portal-layout {
         grid-template-columns: 260px minmax(0, 1fr);
     }
