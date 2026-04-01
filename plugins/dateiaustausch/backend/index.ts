@@ -160,6 +160,19 @@ function applyHardenedDownloadHeaders(reply: any, mimeType: string, fileName: st
     reply.header('Content-Disposition', `attachment; filename="${sanitizedName}"; filename*=UTF-8''${encodedName}`);
 }
 
+function applyHardenedPreviewHeaders(reply: any, mimeType: string, fileName: string): void {
+    const encodedName = encodeFileNameForHeader(fileName);
+    const sanitizedName = fileName.replace(/"/g, '');
+    reply.header('Content-Type', mimeType || 'application/octet-stream');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('X-Frame-Options', 'SAMEORIGIN');
+    reply.header('Referrer-Policy', 'no-referrer');
+    reply.header('Cross-Origin-Resource-Policy', 'same-origin');
+    reply.header('Cache-Control', 'private, max-age=120');
+    reply.header('Content-Security-Policy', "default-src 'none'; sandbox");
+    reply.header('Content-Disposition', `inline; filename="${sanitizedName}"; filename*=UTF-8''${encodedName}`);
+}
+
 function normalizeWorkflowStatus(input: unknown): WorkflowStatus | null {
     const value = String(input || '').trim().toLowerCase();
     if (value === 'pending' || value === 'clean' || value === 'rejected' || value === 'reviewed') {
@@ -770,6 +783,49 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return reply.send(createReadStream(absPath));
     });
 
+    fastify.get('/public/files/:itemId/versions/:versionId/preview', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true }, rateLimit: { max: 60, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const itemId = Number((request.params as any)?.itemId || 0);
+        const versionId = Number((request.params as any)?.versionId || 0);
+        if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
+            return reply.status(400).send({ error: 'Ungueltige Dateiversion.' });
+        }
+
+        const sessionToken = resolvePublicSessionToken(request);
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungueltig.' });
+
+        const version = await db('dtx_versions as v')
+            .join('dtx_items as i', 'i.id', 'v.item_id')
+            .where('v.id', versionId)
+            .andWhere('v.item_id', itemId)
+            .andWhere('v.tenant_id', Number(session.tenant_id))
+            .andWhere('i.customer_id', Number(session.customer_id))
+            .select('v.*')
+            .first();
+
+        if (!version) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
+        if (String(version.scan_status || '') !== 'clean' || String(version.storage_zone || '') !== 'clean') {
+            return reply.status(403).send({ error: 'Datei ist noch nicht freigegeben.' });
+        }
+
+        const absPath = buildSafeStoragePath(STORAGE_ROOT, String(version.storage_key));
+        try {
+            await fs.access(absPath);
+        } catch {
+            return reply.status(404).send({ error: 'Datei nicht im Storage gefunden.' });
+        }
+
+        const fileName = String(version.original_file_name || 'preview.bin');
+        applyHardenedPreviewHeaders(reply, String(version.mime_type || 'application/octet-stream'), fileName);
+        return reply.send(createReadStream(absPath));
+    });
+
     fastify.get('/items', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request) => {
         const tenantId = request.user.tenantId;
         const query = request.query as Record<string, any>;
@@ -919,6 +975,34 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const fileName = String(version.original_file_name || 'download.bin');
         applyHardenedDownloadHeaders(reply, String(version.mime_type || 'application/octet-stream'), fileName);
+        return reply.send(createReadStream(absPath));
+    });
+
+    fastify.get('/items/:itemId/versions/:versionId/preview', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
+        const tenantId = request.user.tenantId;
+        const itemId = Number((request.params as any)?.itemId || 0);
+        const versionId = Number((request.params as any)?.versionId || 0);
+        if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
+            return reply.status(400).send({ error: 'Ungueltige Dateiversion.' });
+        }
+
+        const version = await db('dtx_versions')
+            .where({ id: versionId, item_id: itemId, tenant_id: tenantId })
+            .first();
+        if (!version) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
+        if (String(version.scan_status || '') !== 'clean' || String(version.storage_zone || '') !== 'clean') {
+            return reply.status(403).send({ error: 'Vorschau erst nach sauberem Malware-Scan verfuegbar.' });
+        }
+
+        const absPath = buildSafeStoragePath(STORAGE_ROOT, String(version.storage_key));
+        try {
+            await fs.access(absPath);
+        } catch {
+            return reply.status(404).send({ error: 'Datei nicht im Storage gefunden.' });
+        }
+
+        const fileName = String(version.original_file_name || 'preview.bin');
+        applyHardenedPreviewHeaders(reply, String(version.mime_type || 'application/octet-stream'), fileName);
         return reply.send(createReadStream(absPath));
     });
 }

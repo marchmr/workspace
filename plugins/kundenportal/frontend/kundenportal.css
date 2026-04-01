@@ -743,6 +743,10 @@
     background: rgba(37, 99, 235, 0.28);
 }
 
+.kp-page .kp-od-table tbody tr.is-new td {
+    animation: kpOdInsertGlow 1.2s ease;
+}
+
 .kp-page .kp-od-name {
     display: inline-flex;
     align-items: center;
@@ -805,6 +809,95 @@
     border-color: #5f95ff;
     background: #eef4ff;
     box-shadow: inset 0 0 0 1px rgba(122, 166, 255, 0.35);
+}
+
+.kp-page .kp-od-tile.is-new {
+    animation: kpOdInsertGlow 1.2s ease;
+}
+
+.kp-page .kp-od-tile-editor .input {
+    min-height: 38px;
+}
+
+.kp-page .kp-od-preview-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    background: rgba(8, 18, 36, 0.58);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 22px;
+}
+
+.kp-page .kp-od-preview-modal {
+    width: min(1200px, 100%);
+    max-height: calc(100vh - 44px);
+    border: 1px solid #d6e1ef;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.24);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+}
+
+.kp-page .kp-od-dialog-modal {
+    width: min(520px, 100%);
+    max-height: none;
+    grid-template-rows: auto auto;
+}
+
+.kp-page .kp-od-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px;
+    border-bottom: 1px solid #dde7f3;
+}
+
+.kp-page .kp-od-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.kp-page .kp-od-preview-body {
+    background: #f7faff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 360px;
+}
+
+.kp-page .kp-od-dialog-body {
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+}
+
+@keyframes kpOdInsertGlow {
+    0% {
+        background: rgba(59, 130, 246, 0.25);
+        box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.35);
+    }
+    100% {
+        background: transparent;
+        box-shadow: none;
+    }
+}
+
+.kp-page .kp-od-preview-body img,
+.kp-page .kp-od-preview-body iframe,
+.kp-page .kp-od-preview-body video {
+    width: 100%;
+    height: min(74vh, 820px);
+    border: 0;
+    background: #fff;
+    object-fit: contain;
 }
 
 .kp-page .kp-drive-toolbar {

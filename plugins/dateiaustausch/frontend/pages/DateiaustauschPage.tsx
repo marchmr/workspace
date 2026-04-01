@@ -130,6 +130,14 @@ function FileTypeIcon({ fileName }: { fileName: string }) {
     return <span className="kp-fm-type">FILE</span>;
 }
 
+function getPreviewType(fileName: string): 'image' | 'pdf' | 'video' | 'other' {
+    const ext = getExtension(fileName);
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) return 'image';
+    if (ext === 'pdf') return 'pdf';
+    if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'video';
+    return 'other';
+}
+
 export default function DateiaustauschPage() {
     const [rows, setRows] = useState<ItemRow[]>([]);
     const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -141,6 +149,8 @@ export default function DateiaustauschPage() {
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewIndex, setPreviewIndex] = useState(0);
 
     async function loadRows() {
         setLoading(true);
@@ -267,10 +277,13 @@ export default function DateiaustauschPage() {
         () => visibleEntries.find((entry) => entry.key === selectedKey) || null,
         [visibleEntries, selectedKey],
     );
+    const previewFiles = useMemo(() => visibleFiles.filter((file) => !!file.currentVersionId), [visibleFiles]);
+    const previewFile = previewFiles[previewIndex] || null;
 
     function openActionMenu(event: MouseEvent, key: string) {
         event.preventDefault();
         event.stopPropagation();
+        setSelectedKey(key);
         setMenuState({ key, x: event.clientX, y: event.clientY });
     }
 
@@ -280,6 +293,12 @@ export default function DateiaustauschPage() {
             return;
         }
         if (!entry.file.currentVersionId) return;
+        const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+        if (idx >= 0) {
+            setPreviewIndex(idx);
+            setPreviewOpen(true);
+            return;
+        }
         window.open(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, '_blank', 'noopener,noreferrer');
     }
 
@@ -287,6 +306,21 @@ export default function DateiaustauschPage() {
         const selected = customers.find((value) => value.customerId === selectedCustomerId);
         return selected?.label || 'Kein Kunde';
     }, [customers, selectedCustomerId]);
+
+    useEffect(() => {
+        if (!previewOpen) return;
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key === 'Escape') setPreviewOpen(false);
+            if (event.key === 'ArrowRight') {
+                setPreviewIndex((current) => (previewFiles.length ? (current + 1) % previewFiles.length : 0));
+            }
+            if (event.key === 'ArrowLeft') {
+                setPreviewIndex((current) => (previewFiles.length ? (current - 1 + previewFiles.length) % previewFiles.length : 0));
+            }
+        }
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [previewOpen, previewFiles.length]);
 
     return (
         <div className="page-shell kp-page">
@@ -386,6 +420,21 @@ export default function DateiaustauschPage() {
                                     >
                                         Kacheln
                                     </button>
+                                    <button
+                                        className="btn btn-secondary"
+                                        type="button"
+                                        disabled={selectedEntry?.kind !== 'file' || !selectedEntry.file.currentVersionId}
+                                        onClick={() => {
+                                            if (!selectedEntry || selectedEntry.kind !== 'file') return;
+                                            const idx = previewFiles.findIndex((value) => value.id === selectedEntry.file.id);
+                                            if (idx >= 0) {
+                                                setPreviewIndex(idx);
+                                                setPreviewOpen(true);
+                                            }
+                                        }}
+                                    >
+                                        Vorschau
+                                    </button>
                                     {selectedEntry ? <span className="kp-od-selection">1 ausgewaehlt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
                                 </div>
                             </div>
@@ -411,6 +460,7 @@ export default function DateiaustauschPage() {
                                                             className={isSelected ? 'is-selected' : ''}
                                                             onClick={() => setSelectedKey(entry.key)}
                                                             onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                            onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                         >
                                                             <td>
                                                                 <span className="kp-od-name">
@@ -435,8 +485,13 @@ export default function DateiaustauschPage() {
                                                         onClick={() => setSelectedKey(entry.key)}
                                                         onDoubleClick={() => {
                                                             if (!entry.file.currentVersionId) return;
-                                                            window.open(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, '_blank', 'noopener,noreferrer');
+                                                            const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+                                                            if (idx >= 0) {
+                                                                setPreviewIndex(idx);
+                                                                setPreviewOpen(true);
+                                                            }
                                                         }}
+                                                        onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                     >
                                                         <td>
                                                             <span className="kp-od-name">
@@ -476,6 +531,7 @@ export default function DateiaustauschPage() {
                                                     className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
                                                     onClick={() => setSelectedKey(entry.key)}
                                                     onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                    onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                 >
                                                     <span className="kp-od-folder-icon" aria-hidden="true" />
                                                     <strong>{entry.name}</strong>
@@ -489,6 +545,14 @@ export default function DateiaustauschPage() {
                                                 type="button"
                                                 className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
                                                 onClick={() => setSelectedKey(entry.key)}
+                                                onDoubleClick={() => {
+                                                    const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+                                                    if (idx >= 0) {
+                                                        setPreviewIndex(idx);
+                                                        setPreviewOpen(true);
+                                                    }
+                                                }}
+                                                onContextMenu={(event) => openActionMenu(event, entry.key)}
                                             >
                                                 <FileTypeIcon fileName={entry.file.displayName} />
                                                 <strong>{entry.file.displayName}</strong>
@@ -519,14 +583,77 @@ export default function DateiaustauschPage() {
                                 const fileId = Number(menuState.key.replace('file:', ''));
                                 const file = rows.find((value) => value.id === fileId);
                                 return file && file.currentVersionId ? (
-                                    <a href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
-                                        Oeffnen
-                                    </a>
+                                    <>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const idx = previewFiles.findIndex((value) => value.id === file.id);
+                                                if (idx >= 0) {
+                                                    setPreviewIndex(idx);
+                                                    setPreviewOpen(true);
+                                                }
+                                                setMenuState(null);
+                                            }}
+                                        >
+                                            Vorschau
+                                        </button>
+                                        <a href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
+                                            Oeffnen
+                                        </a>
+                                    </>
                                 ) : (
                                     <span className="is-disabled">Oeffnen</span>
                                 );
                             })()
                         )}
+                    </div>
+                )}
+
+                {previewOpen && previewFile && (
+                    <div className="kp-od-preview-backdrop" onClick={() => setPreviewOpen(false)}>
+                        <div className="kp-od-preview-modal" onClick={(event) => event.stopPropagation()}>
+                            <div className="kp-od-preview-head">
+                                <strong>{previewFile.displayName}</strong>
+                                <div className="kp-od-preview-actions">
+                                    <button
+                                        className="btn btn-secondary"
+                                        type="button"
+                                        onClick={() => setPreviewIndex((current) => (current - 1 + previewFiles.length) % previewFiles.length)}
+                                        disabled={previewFiles.length <= 1}
+                                    >
+                                        Zurueck
+                                    </button>
+                                    <button
+                                        className="btn btn-secondary"
+                                        type="button"
+                                        onClick={() => setPreviewIndex((current) => (current + 1) % previewFiles.length)}
+                                        disabled={previewFiles.length <= 1}
+                                    >
+                                        Weiter
+                                    </button>
+                                    <a className="btn btn-primary" href={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/download`} target="_blank" rel="noreferrer">
+                                        Herunterladen
+                                    </a>
+                                    <button className="btn btn-secondary" type="button" onClick={() => setPreviewOpen(false)}>
+                                        Schliessen
+                                    </button>
+                                </div>
+                            </div>
+                            <div className="kp-od-preview-body">
+                                {getPreviewType(previewFile.displayName) === 'image' && (
+                                    <img src={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/preview`} alt={previewFile.displayName} />
+                                )}
+                                {getPreviewType(previewFile.displayName) === 'pdf' && (
+                                    <iframe title={previewFile.displayName} src={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/preview`} />
+                                )}
+                                {getPreviewType(previewFile.displayName) === 'video' && (
+                                    <video controls playsInline src={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/preview`} />
+                                )}
+                                {getPreviewType(previewFile.displayName) === 'other' && (
+                                    <iframe title={previewFile.displayName} src={`/api/plugins/dateiaustausch/items/${previewFile.id}/versions/${previewFile.currentVersionId}/preview`} />
+                                )}
+                            </div>
+                        </div>
                     </div>
                 )}
 

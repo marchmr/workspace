@@ -30,6 +30,13 @@ type ActionMenuState = {
     y: number;
 };
 
+type DeleteCandidate = {
+    kind: 'folder' | 'file';
+    label: string;
+    fullPath?: string;
+    itemId?: number;
+};
+
 function normalizePath(input: string): string {
     return String(input || '')
         .replace(/\\/g, '/')
@@ -74,6 +81,19 @@ function buildDownloadUrl(item: PortalFileItem, sessionToken: string): string {
     return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`;
 }
 
+function buildPreviewUrl(item: PortalFileItem, sessionToken: string): string {
+    if (!item.currentVersionId) return '#';
+    return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/preview?sessionToken=${encodeURIComponent(sessionToken)}`;
+}
+
+function getPreviewType(fileName: string): 'image' | 'pdf' | 'video' | 'other' {
+    const ext = getExtension(fileName);
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) return 'image';
+    if (ext === 'pdf') return 'pdf';
+    if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'video';
+    return 'other';
+}
+
 function buildFolderTree(paths: string[]): TreeItem[] {
     return paths
         .map((value) => normalizePath(value))
@@ -108,9 +128,16 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
     const [createOpen, setCreateOpen] = useState(false);
+    const [creatingFolder, setCreatingFolder] = useState(false);
+    const [newFolderName, setNewFolderName] = useState('');
+    const [newlyInsertedFolderPath, setNewlyInsertedFolderPath] = useState<string | null>(null);
+    const [deleteCandidate, setDeleteCandidate] = useState<DeleteCandidate | null>(null);
     const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [dragOver, setDragOver] = useState(false);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewIndex, setPreviewIndex] = useState(0);
     const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
+    const newFolderInputRef = useRef<HTMLInputElement | null>(null);
 
     async function loadData() {
         setLoading(true);
@@ -161,6 +188,21 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         window.addEventListener('click', close);
         return () => window.removeEventListener('click', close);
     }, []);
+
+    useEffect(() => {
+        if (!creatingFolder) return;
+        const id = window.setTimeout(() => {
+            newFolderInputRef.current?.focus();
+            newFolderInputRef.current?.select();
+        }, 0);
+        return () => window.clearTimeout(id);
+    }, [creatingFolder]);
+
+    useEffect(() => {
+        if (!newlyInsertedFolderPath) return;
+        const id = window.setTimeout(() => setNewlyInsertedFolderPath(null), 2200);
+        return () => window.clearTimeout(id);
+    }, [newlyInsertedFolderPath]);
 
     const allFolders = useMemo(() => {
         const set = new Set<string>(folders);
@@ -220,6 +262,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         () => visibleEntries.find((entry) => entry.key === selectedKey) || null,
         [selectedKey, visibleEntries],
     );
+    const previewFiles = useMemo(() => visibleFiles.filter((file) => !!file.currentVersionId), [visibleFiles]);
+    const previewFile = previewFiles[previewIndex] || null;
 
     async function createFolder(pathValue: string) {
         const folderPath = normalizePath(pathValue);
@@ -287,26 +331,46 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             return;
         }
         if (!entry.file.currentVersionId) return;
+        const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+        if (idx >= 0) {
+            setPreviewIndex(idx);
+            setPreviewOpen(true);
+            return;
+        }
         window.open(buildDownloadUrl(entry.file, sessionToken), '_blank', 'noopener,noreferrer');
     }
 
-    async function runDeleteSelected() {
-        if (!selectedEntry) return;
-        const label = selectedEntry.kind === 'folder'
-            ? `Ordner "${selectedEntry.name}"`
-            : `Datei "${selectedEntry.file.displayName}"`;
-        if (!window.confirm(`${label} wirklich loeschen?`)) return;
+    function requestDelete(entry: BrowserEntry | null) {
+        if (!entry) return;
+        if (entry.kind === 'folder') {
+            setDeleteCandidate({
+                kind: 'folder',
+                label: entry.name,
+                fullPath: entry.fullPath,
+            });
+            return;
+        }
+        setDeleteCandidate({
+            kind: 'file',
+            label: entry.file.displayName,
+            itemId: entry.file.id,
+        });
+    }
+
+    async function runDeleteCandidate() {
+        if (!deleteCandidate) return;
 
         try {
             setLoading(true);
             setError(null);
-            if (selectedEntry.kind === 'folder') {
-                await deleteFolder(selectedEntry.fullPath);
-                if (currentPath === selectedEntry.fullPath) setCurrentPath(getParentPath(currentPath));
+            if (deleteCandidate.kind === 'folder' && deleteCandidate.fullPath) {
+                await deleteFolder(deleteCandidate.fullPath);
+                if (currentPath === deleteCandidate.fullPath) setCurrentPath(getParentPath(currentPath));
             } else {
-                await deleteFile(selectedEntry.file.id);
+                await deleteFile(Number(deleteCandidate.itemId));
             }
             setSelectedKey(null);
+            setDeleteCandidate(null);
             await loadData();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Loeschen fehlgeschlagen.');
@@ -315,9 +379,31 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
+    async function submitCreateFolder() {
+        const normalizedName = normalizePath(newFolderName).split('/').filter(Boolean).join(' ');
+        if (!normalizedName) return;
+        const target = currentPath ? `${currentPath}/${normalizedName}` : normalizedName;
+        try {
+            setLoading(true);
+            setError(null);
+            await createFolder(target);
+            await loadData();
+            setCreatingFolder(false);
+            setCreateOpen(false);
+            setNewFolderName('');
+            setNewlyInsertedFolderPath(target);
+            setSelectedKey(`folder:${target}`);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Ordner konnte nicht angelegt werden.');
+        } finally {
+            setLoading(false);
+        }
+    }
+
     function openActionMenu(event: MouseEvent, key: string) {
         event.preventDefault();
         event.stopPropagation();
+        setSelectedKey(key);
         setMenuState({ key, x: event.clientX, y: event.clientY });
     }
 
@@ -328,6 +414,21 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             uploadFiles(event.dataTransfer.files).catch(() => undefined);
         }
     }
+
+    useEffect(() => {
+        if (!previewOpen) return;
+        function onKeyDown(event: KeyboardEvent) {
+            if (event.key === 'Escape') setPreviewOpen(false);
+            if (event.key === 'ArrowRight') {
+                setPreviewIndex((current) => (previewFiles.length ? (current + 1) % previewFiles.length : 0));
+            }
+            if (event.key === 'ArrowLeft') {
+                setPreviewIndex((current) => (previewFiles.length ? (current - 1 + previewFiles.length) % previewFiles.length : 0));
+            }
+        }
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [previewOpen, previewFiles.length]);
 
     return (
         <section className="kp-uploader-shell kp-od-shell">
@@ -356,17 +457,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 <div className="kp-od-create-menu" onClick={(event) => event.stopPropagation()}>
                                     <button
                                         type="button"
-                                        onClick={async () => {
-                                            const name = window.prompt('Name des neuen Ordners');
-                                            if (!name?.trim()) return;
-                                            try {
-                                                setLoading(true);
-                                                await createFolder(currentPath ? `${currentPath}/${name.trim()}` : name.trim());
-                                                await loadData();
-                                            } finally {
-                                                setLoading(false);
-                                                setCreateOpen(false);
-                                            }
+                                        onClick={() => {
+                                            setCreatingFolder(true);
+                                            setCreateOpen(false);
                                         }}
                                     >
                                         Ordner erstellen
@@ -477,10 +570,21 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 </button>
                                 {selectedEntry ? (
                                     <>
+                                        <button
+                                            className="btn btn-secondary"
+                                            type="button"
+                                            disabled={selectedEntry.kind === 'folder' || !selectedEntry.file.currentVersionId}
+                                            onClick={() => {
+                                                if (selectedEntry.kind === 'folder') return;
+                                                openEntry(selectedEntry);
+                                            }}
+                                        >
+                                            Vorschau
+                                        </button>
                                         <button className="btn btn-secondary" type="button" onClick={() => openEntry(selectedEntry)}>
                                             Oeffnen
                                         </button>
-                                        <button className="btn btn-danger" type="button" onClick={() => runDeleteSelected()}>
+                                        <button className="btn btn-danger" type="button" onClick={() => requestDelete(selectedEntry)}>
                                             Loeschen
                                         </button>
                                     </>
@@ -505,12 +609,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         {visibleEntries.map((entry) => {
                                             const isSelected = selectedKey === entry.key;
                                             if (entry.kind === 'folder') {
+                                                const isNew = newlyInsertedFolderPath === entry.fullPath;
                                                 return (
                                                     <tr
                                                         key={entry.key}
-                                                        className={isSelected ? 'is-selected' : ''}
+                                                        className={`${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
                                                         onClick={() => setSelectedKey(entry.key)}
                                                         onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                        onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                     >
                                                         <td>
                                                             <span className="kp-od-name">
@@ -536,10 +642,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                     className={isSelected ? 'is-selected' : ''}
                                                     onClick={() => setSelectedKey(entry.key)}
                                                     onDoubleClick={() => {
-                                                        if (file.currentVersionId) {
-                                                            window.open(buildDownloadUrl(file, sessionToken), '_blank', 'noopener,noreferrer');
+                                                        if (!file.currentVersionId) return;
+                                                        const idx = previewFiles.findIndex((value) => value.id === file.id);
+                                                        if (idx >= 0) {
+                                                            setPreviewIndex(idx);
+                                                            setPreviewOpen(true);
                                                         }
                                                     }}
+                                                    onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                 >
                                                     <td>
                                                         <span className="kp-od-name">
@@ -564,6 +674,48 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                 </td>
                                             </tr>
                                         )}
+                                        {creatingFolder && (
+                                            <tr className="kp-od-new-folder-row">
+                                                <td>
+                                                    <span className="kp-od-name">
+                                                        <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                        <input
+                                                            ref={newFolderInputRef}
+                                                            className="input"
+                                                            value={newFolderName}
+                                                            onChange={(event) => setNewFolderName(event.target.value)}
+                                                            placeholder="Neuen Ordner benennen"
+                                                            onKeyDown={(event) => {
+                                                                if (event.key === 'Enter') submitCreateFolder().catch(() => undefined);
+                                                                if (event.key === 'Escape') {
+                                                                    setCreatingFolder(false);
+                                                                    setNewFolderName('');
+                                                                }
+                                                            }}
+                                                        />
+                                                    </span>
+                                                </td>
+                                                <td>Ordner</td>
+                                                <td>-</td>
+                                                <td>
+                                                    <div style={{ display: 'flex', gap: 6 }}>
+                                                        <button className="btn btn-primary" type="button" onClick={() => submitCreateFolder()}>
+                                                            OK
+                                                        </button>
+                                                        <button
+                                                            className="btn btn-secondary"
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setCreatingFolder(false);
+                                                                setNewFolderName('');
+                                                            }}
+                                                        >
+                                                            Abbrechen
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                 </table>
                             </div>
@@ -572,13 +724,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 {visibleEntries.map((entry) => {
                                     const isSelected = selectedKey === entry.key;
                                     if (entry.kind === 'folder') {
+                                        const isNew = newlyInsertedFolderPath === entry.fullPath;
                                         return (
                                             <button
                                                 key={entry.key}
                                                 type="button"
-                                                className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
+                                                className={`kp-od-tile ${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
                                                 onClick={() => setSelectedKey(entry.key)}
                                                 onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                onContextMenu={(event) => openActionMenu(event, entry.key)}
                                             >
                                                 <span className="kp-od-folder-icon" aria-hidden="true" />
                                                 <strong>{entry.name}</strong>
@@ -592,6 +746,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                             type="button"
                                             className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
                                             onClick={() => setSelectedKey(entry.key)}
+                                            onDoubleClick={() => {
+                                                const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+                                                if (idx >= 0) {
+                                                    setPreviewIndex(idx);
+                                                    setPreviewOpen(true);
+                                                }
+                                            }}
+                                            onContextMenu={(event) => openActionMenu(event, entry.key)}
                                         >
                                             <FileTypeIcon fileName={entry.file.displayName} />
                                             <strong>{entry.file.displayName}</strong>
@@ -599,6 +761,40 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         </button>
                                     );
                                 })}
+                                {creatingFolder && (
+                                    <div className="kp-od-tile kp-od-tile-editor is-new">
+                                        <span className="kp-od-folder-icon" aria-hidden="true" />
+                                        <input
+                                            ref={newFolderInputRef}
+                                            className="input"
+                                            value={newFolderName}
+                                            onChange={(event) => setNewFolderName(event.target.value)}
+                                            placeholder="Neuer Ordner"
+                                            onKeyDown={(event) => {
+                                                if (event.key === 'Enter') submitCreateFolder().catch(() => undefined);
+                                                if (event.key === 'Escape') {
+                                                    setCreatingFolder(false);
+                                                    setNewFolderName('');
+                                                }
+                                            }}
+                                        />
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                            <button className="btn btn-primary" type="button" onClick={() => submitCreateFolder()}>
+                                                OK
+                                            </button>
+                                            <button
+                                                className="btn btn-secondary"
+                                                type="button"
+                                                onClick={() => {
+                                                    setCreatingFolder(false);
+                                                    setNewFolderName('');
+                                                }}
+                                            >
+                                                Abbrechen
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -632,16 +828,10 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             <button
                                 type="button"
                                 onClick={async () => {
-                                    try {
-                                        setLoading(true);
-                                        await deleteFolder(menuState.key.replace('folder:', ''));
-                                        await loadData();
-                                    } catch (err) {
-                                        setError(err instanceof Error ? err.message : 'Ordner konnte nicht geloescht werden.');
-                                    } finally {
-                                        setLoading(false);
-                                        setMenuState(null);
-                                    }
+                                    const fullPath = menuState.key.replace('folder:', '');
+                                    const name = getBaseName(fullPath);
+                                    setDeleteCandidate({ kind: 'folder', label: name, fullPath });
+                                    setMenuState(null);
                                 }}
                             >
                                 Loeschen
@@ -655,6 +845,23 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             return (
                                 <>
                                     {file && canOpen ? (
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const idx = previewFiles.findIndex((value) => value.id === file.id);
+                                                if (idx >= 0) {
+                                                    setPreviewIndex(idx);
+                                                    setPreviewOpen(true);
+                                                }
+                                                setMenuState(null);
+                                            }}
+                                        >
+                                            Vorschau
+                                        </button>
+                                    ) : (
+                                        <span className="is-disabled">Vorschau</span>
+                                    )}
+                                    {file && canOpen ? (
                                         <a href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Oeffnen</a>
                                     ) : (
                                         <span className="is-disabled">Oeffnen</span>
@@ -662,16 +869,12 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     <button
                                         type="button"
                                         onClick={async () => {
-                                            try {
-                                                setLoading(true);
-                                                await deleteFile(fileId);
-                                                await loadData();
-                                            } catch (err) {
-                                                setError(err instanceof Error ? err.message : 'Datei konnte nicht geloescht werden.');
-                                            } finally {
-                                                setLoading(false);
-                                                setMenuState(null);
-                                            }
+                                            setDeleteCandidate({
+                                                kind: 'file',
+                                                label: file?.displayName || `Datei #${fileId}`,
+                                                itemId: fileId,
+                                            });
+                                            setMenuState(null);
                                         }}
                                     >
                                         Loeschen
@@ -680,6 +883,77 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             );
                         })()
                     )}
+                </div>
+            )}
+
+            {previewOpen && previewFile && (
+                <div className="kp-od-preview-backdrop" onClick={() => setPreviewOpen(false)}>
+                    <div className="kp-od-preview-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="kp-od-preview-head">
+                            <strong>{previewFile.displayName}</strong>
+                            <div className="kp-od-preview-actions">
+                                <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    onClick={() => setPreviewIndex((current) => (current - 1 + previewFiles.length) % previewFiles.length)}
+                                    disabled={previewFiles.length <= 1}
+                                >
+                                    Zurueck
+                                </button>
+                                <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    onClick={() => setPreviewIndex((current) => (current + 1) % previewFiles.length)}
+                                    disabled={previewFiles.length <= 1}
+                                >
+                                    Weiter
+                                </button>
+                                <a className="btn btn-primary" href={buildDownloadUrl(previewFile, sessionToken)} target="_blank" rel="noreferrer">
+                                    Herunterladen
+                                </a>
+                                <button className="btn btn-secondary" type="button" onClick={() => setPreviewOpen(false)}>
+                                    Schliessen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="kp-od-preview-body">
+                            {getPreviewType(previewFile.displayName) === 'image' && (
+                                <img src={buildPreviewUrl(previewFile, sessionToken)} alt={previewFile.displayName} />
+                            )}
+                            {getPreviewType(previewFile.displayName) === 'pdf' && (
+                                <iframe title={previewFile.displayName} src={buildPreviewUrl(previewFile, sessionToken)} />
+                            )}
+                            {getPreviewType(previewFile.displayName) === 'video' && (
+                                <video controls playsInline src={buildPreviewUrl(previewFile, sessionToken)} />
+                            )}
+                            {getPreviewType(previewFile.displayName) === 'other' && (
+                                <iframe title={previewFile.displayName} src={buildPreviewUrl(previewFile, sessionToken)} />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {deleteCandidate && (
+                <div className="kp-od-preview-backdrop" onClick={() => setDeleteCandidate(null)}>
+                    <div className="kp-od-preview-modal kp-od-dialog-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="kp-od-preview-head">
+                            <strong>Element loeschen</strong>
+                        </div>
+                        <div className="kp-od-dialog-body">
+                            <p>
+                                Soll {deleteCandidate.kind === 'folder' ? 'der Ordner' : 'die Datei'} <strong>{deleteCandidate.label}</strong> wirklich geloescht werden?
+                            </p>
+                            <div className="kp-od-preview-actions">
+                                <button className="btn btn-secondary" type="button" onClick={() => setDeleteCandidate(null)}>
+                                    Abbrechen
+                                </button>
+                                <button className="btn btn-danger" type="button" onClick={() => runDeleteCandidate()}>
+                                    Loeschen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
 
