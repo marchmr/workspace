@@ -235,6 +235,68 @@ async function transcodeToMp4(inputPath: string, outputPath: string): Promise<vo
     }
 }
 
+type StoredUploadResult = {
+    fileName: string;
+    filePath: string;
+    mimeType: string;
+    sizeBytes: number;
+    transcoded: boolean;
+};
+
+async function storeUploadedVideoWithFallback(args: {
+    tenantId: number;
+    originalFileName: string;
+    originalMimeType: string;
+    uploadBuffer: Buffer;
+    logWarn: (message: string) => void;
+}): Promise<StoredUploadResult> {
+    const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(args.tenantId));
+    await fs.mkdir(uploadsRoot, { recursive: true });
+
+    const inputName = sanitizeFileName(args.originalFileName || 'video');
+    const tempInputName = `${Date.now()}-${randomUUID()}-src-${inputName}`;
+    const tempInputRelPath = path.join(String(args.tenantId), tempInputName);
+    const tempInputAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, tempInputRelPath);
+
+    const playableName = toPlayableMp4Name(args.originalFileName || 'video.mp4');
+    const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
+    const convertedRelPath = path.join(String(args.tenantId), convertedName);
+    const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
+
+    await fs.writeFile(tempInputAbsPath, args.uploadBuffer);
+
+    try {
+        await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
+        const convertedStat = await fs.stat(convertedAbsPath);
+        return {
+            fileName: sanitizeFileName(playableName),
+            filePath: convertedRelPath,
+            mimeType: 'video/mp4',
+            sizeBytes: convertedStat.size,
+            transcoded: true,
+        };
+    } catch (error: any) {
+        args.logWarn(`Video-Konvertierung fehlgeschlagen, speichere Originaldatei. ${error?.message || 'Unbekannter Fehler'}`);
+        const fallbackName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(args.originalFileName || 'video')}`;
+        const fallbackRelPath = path.join(String(args.tenantId), fallbackName);
+        const fallbackAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, fallbackRelPath);
+        await fs.rename(tempInputAbsPath, fallbackAbsPath);
+        const fallbackStat = await fs.stat(fallbackAbsPath);
+
+        await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
+
+        return {
+            fileName: sanitizeFileName(args.originalFileName || 'video'),
+            filePath: fallbackRelPath,
+            mimeType: args.originalMimeType || 'application/octet-stream',
+            sizeBytes: fallbackStat.size,
+            transcoded: false,
+        };
+    } finally {
+        await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
+    }
+}
+
 function sanitizeCode(input: unknown): string {
     return String(input || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
 }
@@ -736,33 +798,19 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             if (uploadBuffer.length > MAX_VIDEO_SIZE_BYTES) {
                 return reply.status(413).send({ error: 'Datei ist zu groß (max. 3 GB)' });
             }
-
-            const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(tenantId));
-            await fs.mkdir(uploadsRoot, { recursive: true });
-
-            const inputName = sanitizeFileName(uploadFile.filename || 'video');
-            const tempInputName = `${Date.now()}-${randomUUID()}-src-${inputName}`;
-            const tempInputRelPath = path.join(String(tenantId), tempInputName);
-            const tempInputAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, tempInputRelPath);
-
-            const playableName = toPlayableMp4Name(uploadFile.filename || 'video.mp4');
-            const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
-            const convertedRelPath = path.join(String(tenantId), convertedName);
-            const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
-
-            await fs.writeFile(tempInputAbsPath, uploadBuffer);
-            try {
-                await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
-            } finally {
-                await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
-            }
-            const convertedStat = await fs.stat(convertedAbsPath);
+            const stored = await storeUploadedVideoWithFallback({
+                tenantId,
+                originalFileName: String(uploadFile.filename || 'video'),
+                originalMimeType: safeMime || 'video/mp4',
+                uploadBuffer,
+                logWarn: (message) => fastify.log.warn(message),
+            });
 
             sourceType = 'upload';
-            fileName = sanitizeFileName(playableName);
-            filePath = convertedRelPath;
-            mimeType = 'video/mp4';
-            sizeBytes = convertedStat.size;
+            fileName = stored.fileName;
+            filePath = stored.filePath;
+            mimeType = stored.mimeType;
+            sizeBytes = stored.sizeBytes;
         } else {
             const rawUrl = String(payload.videoUrl || '').trim();
             if (!rawUrl) return reply.status(400).send({ error: 'Für URL-Video ist videoUrl erforderlich' });
@@ -853,35 +901,21 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!safeMime.startsWith('video/')) return reply.status(400).send({ error: 'Nur Video-Dateien sind erlaubt' });
         if (uploadBuffer.length <= 0) return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
         if (uploadBuffer.length > MAX_VIDEO_SIZE_BYTES) return reply.status(413).send({ error: 'Datei ist zu groß (max. 3 GB)' });
-
-        const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(tenantId));
-        await fs.mkdir(uploadsRoot, { recursive: true });
-
-        const inputName = sanitizeFileName(uploadFile.filename || 'video');
-        const tempInputName = `${Date.now()}-${randomUUID()}-src-${inputName}`;
-        const tempInputRelPath = path.join(String(tenantId), tempInputName);
-        const tempInputAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, tempInputRelPath);
-
-        const playableName = toPlayableMp4Name(uploadFile.filename || 'video.mp4');
-        const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
-        const convertedRelPath = path.join(String(tenantId), convertedName);
-        const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
-
-        await fs.writeFile(tempInputAbsPath, uploadBuffer);
-        try {
-            await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
-        } finally {
-            await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
-        }
-        const convertedStat = await fs.stat(convertedAbsPath);
+        const stored = await storeUploadedVideoWithFallback({
+            tenantId,
+            originalFileName: String(uploadFile.filename || 'video'),
+            originalMimeType: safeMime || 'video/mp4',
+            uploadBuffer,
+            logWarn: (message) => fastify.log.warn(message),
+        });
 
         await db('vp_videos').where({ id, tenant_id: tenantId }).update({
             source_type: 'upload',
             video_url: null,
-            file_name: sanitizeFileName(playableName),
-            file_path: convertedRelPath,
-            mime_type: 'video/mp4',
-            size_bytes: convertedStat.size,
+            file_name: stored.fileName,
+            file_path: stored.filePath,
+            mime_type: stored.mimeType,
+            size_bytes: stored.sizeBytes,
             updated_at: new Date(),
         });
 

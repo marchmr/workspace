@@ -129,6 +129,7 @@ Hinweis: `npm run build` war lokal nicht direkt ausführbar, weil `node_modules/
 - Für echte Erreichbarkeit der Kundenoberfläche muss die konfigurierte Subdomain (DNS + Proxy) auf diese Instanz zeigen.
 - Optional kann `VITE_PUBLIC_HOSTS` weiterhin für Host-basiertes Frontend-Routing gesetzt werden.
 - Auch ohne diese Variable schützt der Plugin-Backend-Hostcheck die Public-API gegen falsche Hosts.
+- Ab 01.04.2026 installiert `install.sh` und `update.sh` fehlende System-Abhängigkeiten (u. a. `ffmpeg`, `acl`, `certbot`) automatisch nach.
 
 ## Nachträgliche Korrekturen (01.04.2026, abends)
 

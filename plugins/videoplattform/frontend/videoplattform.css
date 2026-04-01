@@ -95,18 +95,81 @@
 }
 
 .vp-public-shell {
-    width: min(1320px, 100%);
+    width: min(1180px, 100%);
     margin: 0 auto;
     display: grid;
     gap: var(--space-md);
+    align-items: start;
+}
+
+.vp-public-shell-login {
+    min-height: calc(100vh - var(--topbar-height) - (2 * var(--space-xl)));
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .vp-access-card {
-    width: min(620px, 100%);
-    margin: 10vh auto 0;
+    width: min(680px, 100%);
+    margin: 0;
     border: 1px solid #d3deee;
-    border-radius: 20px;
-    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.1);
+    border-radius: 24px;
+    box-shadow: 0 24px 48px rgba(15, 23, 42, 0.12);
+    background:
+        linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+}
+
+.vp-access-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.vp-access-badge {
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    border-radius: 999px;
+    padding: 6px 10px;
+}
+
+.vp-access-title {
+    margin-bottom: var(--space-xs);
+    font-size: clamp(1.8rem, 2.6vw, 2.25rem);
+    line-height: 1.1;
+}
+
+.vp-access-subtitle {
+    margin-bottom: var(--space-md);
+    max-width: 44ch;
+    color: #64748b;
+}
+
+.vp-access-form {
+    gap: var(--space-sm);
+}
+
+.vp-code-input {
+    min-height: 56px;
+    border-radius: 14px;
+    font-size: 1.65rem;
+    letter-spacing: 0.14em;
+}
+
+.vp-access-submit {
+    min-height: 50px;
+    border-radius: 12px;
+    font-size: 1.02rem;
+    font-weight: 700;
+}
+
+.vp-access-error {
+    margin-top: var(--space-sm);
 }
 
 .vp-stack {
@@ -379,16 +442,16 @@
 }
 
 .vp-portal-brand {
-    height: 58px;
+    height: 64px;
     display: flex;
     align-items: center;
-    justify-content: center;
-    margin-bottom: var(--space-sm);
+    justify-content: flex-start;
+    margin-bottom: 0;
 }
 
 .vp-portal-brand img {
-    max-height: 52px;
-    max-width: 220px;
+    max-height: 58px;
+    max-width: 260px;
     object-fit: contain;
 }
 
@@ -420,5 +483,28 @@
     .vp-head-row {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .vp-public-page {
+        padding: var(--space-lg) var(--space-sm);
+    }
+
+    .vp-public-shell-login {
+        min-height: auto;
+        display: grid;
+    }
+
+    .vp-access-card {
+        width: 100%;
+    }
+
+    .vp-access-head {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .vp-code-input {
+        font-size: 1.22rem;
+        letter-spacing: 0.1em;
     }
 }

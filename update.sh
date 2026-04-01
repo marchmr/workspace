@@ -25,11 +25,18 @@ SERVICE="mike-workspace"
 BACKUP_BASE_DIR="$APP_DIR/backups/pre-update"
 DEFAULT_GIT_REPO="https://github.com/marchmr/workspace.git"
 EXPECTED_REPO_SLUG="marchmr/workspace"
-
-# Abhaengigkeiten sicherstellen
-if ! command -v zip &>/dev/null; then
-  apt-get install -y -qq zip > /dev/null 2>&1
-fi
+REQUIRED_APT_PACKAGES=(
+  zip
+  unzip
+  curl
+  git
+  ca-certificates
+  ffmpeg
+  acl
+  nginx
+  certbot
+  python3-certbot-nginx
+)
 
 echo ""
 echo -e "${BOLD}MIKE WorkSpace - Update${NC}"
@@ -41,6 +48,31 @@ if [ "$(id -u)" -ne 0 ]; then
   echo -e "  Verwende: ${CYAN}sudo bash update.sh --branch main${NC}"
   exit 1
 fi
+
+ensure_required_apt_packages() {
+  local missing_packages=()
+
+  for pkg in "${REQUIRED_APT_PACKAGES[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing_packages+=("$pkg")
+    fi
+  done
+
+  if [ "${#missing_packages[@]}" -eq 0 ]; then
+    echo -e "  ${GREEN}[OK]${NC} System-Abhaengigkeiten bereits vorhanden"
+    return 0
+  fi
+
+  echo -e "  ${YELLOW}[!!]${NC} Fehlende Pakete erkannt: ${missing_packages[*]}"
+  echo -e "  ${CYAN}> Installiere fehlende System-Abhaengigkeiten...${NC}"
+
+  apt-get update -qq > /dev/null 2>&1
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_packages[@]}" > /dev/null 2>&1
+  echo -e "  ${GREEN}[OK]${NC} System-Abhaengigkeiten installiert"
+}
+
+echo -e "\n${CYAN}> System-Abhaengigkeiten pruefen...${NC}"
+ensure_required_apt_packages
 
 # ============================================
 # Branch bestimmen

@@ -129,18 +129,21 @@ export default function VideoPlatformPortalPage() {
 
     return (
         <div className="vp-public-page">
-            <div className="vp-public-shell">
+            <div className={`vp-public-shell${access ? '' : ' vp-public-shell-login'}`}>
                 {!access ? (
                     <section className="card vp-access-card">
-                        <div className="vp-portal-brand">
-                            {portalLogoUrl ? (
-                                <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
-                            ) : (
-                                <div className="vp-portal-brand-fallback">Kundenportal</div>
-                            )}
+                        <div className="vp-access-head">
+                            <div className="vp-portal-brand">
+                                {portalLogoUrl ? (
+                                    <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
+                                ) : (
+                                    <div className="vp-portal-brand-fallback">Kundenportal</div>
+                                )}
+                            </div>
+                            <span className="vp-access-badge">Sicherer Zugang</span>
                         </div>
-                        <h1 className="page-title" style={{ marginBottom: 'var(--space-sm)' }}>Videofreigabe</h1>
-                        <p className="text-muted" style={{ marginBottom: 'var(--space-md)' }}>
+                        <h1 className="page-title vp-access-title">Videofreigabe</h1>
+                        <p className="text-muted vp-access-subtitle">
                             Bitte Freigabecode eingeben, um Ihre Videos zu öffnen.
                         </p>
 
@@ -150,22 +153,22 @@ export default function VideoPlatformPortalPage() {
                             </div>
                         )}
 
-                        <form onSubmit={onSubmit} className="vp-stack">
+                        <form onSubmit={onSubmit} className="vp-stack vp-access-form">
                             <label className="vp-label" htmlFor="vp-code-input">Freigabecode</label>
                             <input
                                 id="vp-code-input"
-                                className="input vp-input-center"
+                                className="input vp-input-center vp-code-input"
                                 value={code}
                                 onChange={(e) => setCode(e.target.value.toUpperCase())}
                                 placeholder="VID-XXXXXXXX"
                                 required
                             />
-                            <button className="btn btn-primary" type="submit" disabled={loading}>
+                            <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>
                                 {loading ? 'Prüfe Code...' : 'Videos öffnen'}
                             </button>
                         </form>
 
-                        {error && <p className="text-danger" style={{ marginTop: 'var(--space-sm)' }}>{error}</p>}
+                        {error && <p className="text-danger vp-access-error">{error}</p>}
                     </section>
                 ) : (
                     <section className="card vp-panel vp-portal-panel">

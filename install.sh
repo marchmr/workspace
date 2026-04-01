@@ -262,8 +262,8 @@ print_ok "Paketquellen aktuell"
 print_step "Basis-Pakete installieren..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   nginx mariadb-server curl zip unzip ufw gnupg2 git \
-  ca-certificates lsb-release software-properties-common > /dev/null 2>&1
-print_ok "nginx, mariadb-server, curl, unzip, ufw, git installiert"
+  ca-certificates lsb-release software-properties-common ffmpeg acl > /dev/null 2>&1
+print_ok "nginx, mariadb-server, ffmpeg, acl, curl, unzip, ufw, git installiert"
 
 # Certbot fuer SSL
 if [ "$SETUP_SSL" = true ]; then

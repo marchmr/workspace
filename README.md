@@ -72,6 +72,7 @@ sudo bash install.sh
 ```
 
 Der Installer führt interaktiv durch alle Schritte: Pakete, Node.js, MariaDB, Nginx, SSL (Let's Encrypt ohne E-Mail), systemd-Service.
+Fehlende System-Abhängigkeiten wie `ffmpeg` und `acl` werden automatisch mit installiert.
 
 ## Update
 
@@ -97,6 +98,7 @@ sudo bash /opt/mike-workspace/update.sh --branch experimental
 ```
 
 Vor jedem Update wird automatisch ein Backup erstellt.
+Zusätzlich prüft `update.sh` fehlende System-Abhängigkeiten (`ffmpeg`, `acl`, `certbot`, `nginx` usw.) und installiert sie automatisch nach.
 
 ### Pre-Update-Backups
 
