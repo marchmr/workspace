@@ -1,11 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import { createReadStream, createWriteStream } from 'fs';
 import { once } from 'events';
-import os from 'os';
 import type { FastifyInstance } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -23,7 +20,6 @@ const STORAGE_ROOT = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID);
 const MAX_FOLDER_ZIP_ITEMS = 3000;
 const MAX_FOLDER_ZIP_TOTAL_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
 const MAX_SCAN_QUEUE_PENDING = 200;
-const execFileAsync = promisify(execFile);
 
 type WorkflowStatus = 'pending' | 'clean' | 'rejected' | 'reviewed';
 
@@ -300,102 +296,55 @@ async function streamFolderZip(reply: any, args: {
     const zipName = `${sanitizeFileName(args.fileName)}.zip`;
     const encodedName = encodeFileNameForHeader(zipName);
     const safeName = zipName.replace(/"/g, '');
+    const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}` : '';
+    const emptyFolderRoot = rootPrefix || 'Dateien';
+    const { default: archiver } = await import('archiver');
 
-    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dtx-zip-'));
-    const zipPath = path.join(tempRoot, zipName);
-    const stageRoot = path.join(tempRoot, 'stage');
-    let cleanedUp = false;
-    const cleanupTempRoot = () => {
-        if (cleanedUp) return;
-        cleanedUp = true;
-        fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
-    };
+    reply.header('Content-Type', 'application/zip');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+    reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
 
-    try {
-        await fs.mkdir(stageRoot, { recursive: true, mode: 0o700 });
-        const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}` : '';
-        let stagedFileCount = 0;
-
-        // Leere Ordner sollen ebenfalls herunterladbar sein.
-        // Daher wird immer ein Root-Ordner vorbereitet, damit zip kein "nothing to do" liefert.
-        const emptyFolderRoot = rootPrefix || 'Dateien';
-        await fs.mkdir(path.join(stageRoot, emptyFolderRoot), { recursive: true, mode: 0o700 });
-
-        for (const entry of args.entries) {
-            const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
-            try {
-                const st = await fs.stat(absPath);
-                if (!st.isFile()) continue;
-            } catch {
-                continue;
-            }
-
-            const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
-            const targetRelative = rootPrefix ? path.posix.join(rootPrefix, relativeName) : relativeName;
-            const targetPath = path.join(stageRoot, targetRelative);
-            await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
-            await fs.copyFile(absPath, targetPath);
-            await fs.chmod(targetPath, 0o600).catch(() => undefined);
-            stagedFileCount += 1;
-        }
-
-        try {
-            await execFileAsync('zip', ['-qr', zipPath, '.'], { cwd: stageRoot, timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
-        } catch {
-            cleanupTempRoot();
-            reply.status(503).send({ error: 'ZIP-Erstellung momentan nicht verfügbar (zip fehlt).' });
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('warning', (warning: any) => {
+        // Missing files can happen in race conditions (deleted while zipping); keep stream alive.
+        reply.log.warn({ warning }, 'dateiaustausch zip warning');
+    });
+    archive.on('error', (error: any) => {
+        reply.log.error({ error }, 'dateiaustausch zip error');
+        if (!reply.sent) {
+            reply.status(500).send({ error: 'ZIP-Download fehlgeschlagen.' });
             return;
         }
+        reply.raw.destroy(error);
+    });
 
-        let zipStats: any;
+    reply.send(archive);
+
+    let appendedFiles = 0;
+    for (const entry of args.entries) {
+        const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
         try {
-            zipStats = await fs.stat(zipPath);
-            if (!zipStats.isFile() || Number(zipStats.size || 0) < 22) {
-                cleanupTempRoot();
-                reply.status(500).send({ error: 'ZIP-Erstellung fehlgeschlagen (leeres Archiv).' });
-                return;
-            }
-            if (stagedFileCount === 0) {
-                reply.header('X-Dateiaustausch-Empty-Folder', '1');
-            }
+            const st = await fs.stat(absPath);
+            if (!st.isFile()) continue;
         } catch {
-            cleanupTempRoot();
-            reply.status(500).send({ error: 'ZIP-Datei konnte nicht erzeugt werden.' });
-            return;
+            continue;
         }
 
-        try {
-            await execFileAsync('unzip', ['-tqq', zipPath], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
-        } catch {
-            cleanupTempRoot();
-            reply.status(500).send({ error: 'ZIP-Datei ist ungültig.' });
-            return;
-        }
-
-        reply.header('Content-Type', 'application/zip');
-        reply.header('X-Content-Type-Options', 'nosniff');
-        reply.header('Cache-Control', 'no-store, max-age=0');
-        reply.header('Pragma', 'no-cache');
-        reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
-        reply.header('Content-Length', String(Number(zipStats.size || 0)));
-        const zipStream = createReadStream(zipPath);
-        zipStream.on('error', () => {
-            cleanupTempRoot();
-            if (!reply.sent) {
-                reply.status(500).send({ error: 'ZIP-Download fehlgeschlagen.' });
-                return;
-            }
-            reply.raw.destroy();
-        });
-        zipStream.on('close', cleanupTempRoot);
-        reply.send(zipStream);
-    } catch (error) {
-        cleanupTempRoot();
-        throw error;
-    } finally {
-        // Fallback cleanup in case stream callbacks are never reached.
-        setTimeout(cleanupTempRoot, 10 * 60 * 1000).unref?.();
+        const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
+        const targetRelative = rootPrefix ? path.posix.join(rootPrefix, relativeName) : relativeName;
+        archive.file(absPath, { name: targetRelative });
+        appendedFiles += 1;
     }
+
+    // Make sure empty folders are downloadable as valid ZIP.
+    if (appendedFiles === 0) {
+        archive.append('', { name: `${emptyFolderRoot}/` });
+        reply.header('X-Dateiaustausch-Empty-Folder', '1');
+    }
+
+    await archive.finalize();
 }
 
 function resolvePublicSessionToken(request: any, fileFields?: Record<string, any>): string {
