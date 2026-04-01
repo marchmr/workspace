@@ -134,7 +134,6 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const [newFolderName, setNewFolderName] = useState('');
     const [newlyInsertedFolderPath, setNewlyInsertedFolderPath] = useState<string | null>(null);
     const [deleteCandidate, setDeleteCandidate] = useState<DeleteCandidate | null>(null);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [dragOver, setDragOver] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
@@ -340,6 +339,16 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             return;
         }
         window.open(buildDownloadUrl(entry.file, sessionToken), '_blank', 'noopener,noreferrer');
+    }
+
+    function ActionIcon({ path, viewBox = '0 0 24 24' }: { path: string; viewBox?: string }) {
+        return (
+            <span className="kp-btn-icon" aria-hidden="true">
+                <svg viewBox={viewBox} focusable="false">
+                    <path d={path} />
+                </svg>
+            </span>
+        );
     }
 
     function requestDelete(entry: BrowserEntry | null) {
@@ -575,12 +584,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                         <div className="kp-od-commandbar">
                             <div className="kp-od-command-left">
                                 <button className="btn btn-secondary" type="button" onClick={() => loadData()} disabled={loading}>
+                                    <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
                                     Aktualisieren
                                 </button>
                                 <button className="btn btn-secondary" type="button" onClick={() => hiddenUploadInputRef.current?.click()}>
+                                    <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
                                     Upload
                                 </button>
                                 <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
+                                    <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
                                     ↓ Download
                                 </button>
                                 <button
@@ -589,24 +601,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     onClick={() => setCurrentPath(getParentPath(currentPath))}
                                     disabled={!currentPath}
                                 >
+                                    <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
                                     Nach oben
                                 </button>
                             </div>
                             <div className="kp-od-command-right">
-                                <button
-                                    className={`btn ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
-                                    type="button"
-                                    onClick={() => setViewMode('list')}
-                                >
-                                    Liste
-                                </button>
-                                <button
-                                    className={`btn ${viewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
-                                    type="button"
-                                    onClick={() => setViewMode('grid')}
-                                >
-                                    Kacheln
-                                </button>
                                 {selectedEntry ? (
                                     <>
                                         <button
@@ -618,12 +617,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                 openEntry(selectedEntry);
                                             }}
                                         >
+                                            <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
                                             Vorschau
                                         </button>
                                         <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
+                                            <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
                                             Download
                                         </button>
                                         <button className="btn btn-danger" type="button" onClick={() => requestDelete(selectedEntry)}>
+                                            <ActionIcon path="M6 7h12M9 7V5h6v2m-8 0l1 12h6l1-12" />
                                             Löschen
                                         </button>
                                     </>
@@ -633,181 +635,102 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             </div>
                         </div>
 
-                        {viewMode === 'list' ? (
-                            <div className="kp-od-table-wrap">
-                                <table className="kp-module-table kp-od-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th>Typ</th>
-                                            <th>Geändert</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {visibleEntries.map((entry) => {
-                                            const isSelected = selectedKey === entry.key;
-                                            if (entry.kind === 'folder') {
-                                                const isNew = newlyInsertedFolderPath === entry.fullPath;
-                                                return (
-                                                    <tr
-                                                        key={entry.key}
-                                                        className={`${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
-                                                        onClick={() => setSelectedKey(entry.key)}
-                                                        onDoubleClick={() => setCurrentPath(entry.fullPath)}
-                                                        onContextMenu={(event) => openActionMenu(event, entry.key)}
-                                                    >
-                                                        <td>
-                                                            <span className="kp-od-name">
-                                                                <span className="kp-od-folder-icon" aria-hidden="true" />
-                                                                <span>{entry.name}</span>
-                                                            </span>
-                                                        </td>
-                                                        <td>Ordner</td>
-                                                        <td>-</td>
-                                                    </tr>
-                                                );
-                                            }
-
-                                            const file = entry.file;
+                        <div className="kp-od-table-wrap">
+                            <table className="kp-module-table kp-od-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Typ</th>
+                                        <th>Geändert</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {visibleEntries.map((entry) => {
+                                        const isSelected = selectedKey === entry.key;
+                                        if (entry.kind === 'folder') {
+                                            const isNew = newlyInsertedFolderPath === entry.fullPath;
                                             return (
                                                 <tr
                                                     key={entry.key}
-                                                    className={isSelected ? 'is-selected' : ''}
+                                                    className={`${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
                                                     onClick={() => setSelectedKey(entry.key)}
-                                                    onDoubleClick={() => {
-                                                        if (!file.currentVersionId) return;
-                                                        const idx = previewFiles.findIndex((value) => value.id === file.id);
-                                                        if (idx >= 0) {
-                                                            setPreviewIndex(idx);
-                                                            setPreviewOpen(true);
-                                                        }
-                                                    }}
+                                                    onDoubleClick={() => setCurrentPath(entry.fullPath)}
                                                     onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                 >
                                                     <td>
                                                         <span className="kp-od-name">
-                                                            <FileTypeIcon fileName={file.displayName} />
-                                                            <span>{file.displayName}</span>
+                                                            <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                            <span>{entry.name}</span>
                                                         </span>
                                                     </td>
-                                                    <td>{getFileTypeLabel(file.displayName)}</td>
-                                                    <td>{formatDate(file.updatedAt)}</td>
+                                                    <td>Ordner</td>
+                                                    <td>-</td>
                                                 </tr>
                                             );
-                                        })}
-                                        {!loading && visibleEntries.length === 0 && (
-                                            <tr>
-                                                <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
-                                                    Dieser Ordner ist leer. Dateien hier hineinziehen oder hochladen.
-                                                </td>
-                                            </tr>
-                                        )}
-                                        {creatingFolder && (
-                                            <tr className="kp-od-new-folder-row">
-                                                <td>
-                                                    <span className="kp-od-name">
-                                                        <span className="kp-od-folder-icon" aria-hidden="true" />
-                                                        <input
-                                                            ref={newFolderInputRef}
-                                                            className="input"
-                                                            value={newFolderName}
-                                                            onChange={(event) => setNewFolderName(event.target.value)}
-                                                            placeholder="Neuen Ordner benennen"
-                                                            onKeyDown={(event) => {
-                                                                if (event.key === 'Enter') submitCreateFolder().catch(() => undefined);
-                                                                if (event.key === 'Escape') {
-                                                                    setCreatingFolder(false);
-                                                                    setNewFolderName('');
-                                                                }
-                                                            }}
-                                                        />
-                                                    </span>
-                                                </td>
-                                                <td>Ordner</td>
-                                                <td>-</td>
-                                            </tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        ) : (
-                            <div className="kp-od-grid">
-                                {visibleEntries.map((entry) => {
-                                    const isSelected = selectedKey === entry.key;
-                                    if (entry.kind === 'folder') {
-                                        const isNew = newlyInsertedFolderPath === entry.fullPath;
+                                        }
+
+                                        const file = entry.file;
                                         return (
-                                            <button
+                                            <tr
                                                 key={entry.key}
-                                                type="button"
-                                                className={`kp-od-tile ${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
+                                                className={isSelected ? 'is-selected' : ''}
                                                 onClick={() => setSelectedKey(entry.key)}
-                                                onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                onDoubleClick={() => {
+                                                    if (!file.currentVersionId) return;
+                                                    const idx = previewFiles.findIndex((value) => value.id === file.id);
+                                                    if (idx >= 0) {
+                                                        setPreviewIndex(idx);
+                                                        setPreviewOpen(true);
+                                                    }
+                                                }}
                                                 onContextMenu={(event) => openActionMenu(event, entry.key)}
                                             >
-                                                <span className="kp-od-folder-icon" aria-hidden="true" />
-                                                <strong>{entry.name}</strong>
-                                                <span className="text-muted">Ordner</span>
-                                            </button>
+                                                <td>
+                                                    <span className="kp-od-name">
+                                                        <FileTypeIcon fileName={file.displayName} />
+                                                        <span>{file.displayName}</span>
+                                                    </span>
+                                                </td>
+                                                <td>{getFileTypeLabel(file.displayName)}</td>
+                                                <td>{formatDate(file.updatedAt)}</td>
+                                            </tr>
                                         );
-                                    }
-                                    return (
-                                        <button
-                                            key={entry.key}
-                                            type="button"
-                                            className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
-                                            onClick={() => setSelectedKey(entry.key)}
-                                            onDoubleClick={() => {
-                                                const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
-                                                if (idx >= 0) {
-                                                    setPreviewIndex(idx);
-                                                    setPreviewOpen(true);
-                                                }
-                                            }}
-                                            onContextMenu={(event) => openActionMenu(event, entry.key)}
-                                        >
-                                            <FileTypeIcon fileName={entry.file.displayName} />
-                                            <strong>{entry.file.displayName}</strong>
-                                            <span className="text-muted">{formatDate(entry.file.updatedAt)}</span>
-                                        </button>
-                                    );
-                                })}
-                                {creatingFolder && (
-                                    <div className="kp-od-tile kp-od-tile-editor is-new">
-                                        <span className="kp-od-folder-icon" aria-hidden="true" />
-                                        <input
-                                            ref={newFolderInputRef}
-                                            className="input"
-                                            value={newFolderName}
-                                            onChange={(event) => setNewFolderName(event.target.value)}
-                                            placeholder="Neuer Ordner"
-                                            onKeyDown={(event) => {
-                                                if (event.key === 'Enter') submitCreateFolder().catch(() => undefined);
-                                                if (event.key === 'Escape') {
-                                                    setCreatingFolder(false);
-                                                    setNewFolderName('');
-                                                }
-                                            }}
-                                        />
-                                        <div style={{ display: 'flex', gap: 6 }}>
-                                            <button className="btn btn-primary" type="button" onClick={() => submitCreateFolder()}>
-                                                OK
-                                            </button>
-                                            <button
-                                                className="btn btn-secondary"
-                                                type="button"
-                                                onClick={() => {
-                                                    setCreatingFolder(false);
-                                                    setNewFolderName('');
-                                                }}
-                                            >
-                                                Abbrechen
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
+                                    })}
+                                    {!loading && visibleEntries.length === 0 && (
+                                        <tr>
+                                            <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
+                                                Dieser Ordner ist leer. Dateien hier hineinziehen oder hochladen.
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {creatingFolder && (
+                                        <tr className="kp-od-new-folder-row">
+                                            <td>
+                                                <span className="kp-od-name">
+                                                    <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                    <input
+                                                        ref={newFolderInputRef}
+                                                        className="input"
+                                                        value={newFolderName}
+                                                        onChange={(event) => setNewFolderName(event.target.value)}
+                                                        placeholder="Neuen Ordner benennen"
+                                                        onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') submitCreateFolder().catch(() => undefined);
+                                                            if (event.key === 'Escape') {
+                                                                setCreatingFolder(false);
+                                                                setNewFolderName('');
+                                                            }
+                                                        }}
+                                                    />
+                                                </span>
+                                            </td>
+                                            <td>Ordner</td>
+                                            <td>-</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
 
                         <input
                             ref={hiddenUploadInputRef}

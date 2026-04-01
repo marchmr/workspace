@@ -147,7 +147,6 @@ export default function DateiaustauschPage() {
     const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
     const [currentPath, setCurrentPath] = useState('');
     const [selectedKey, setSelectedKey] = useState<string | null>(null);
-    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
@@ -302,6 +301,16 @@ export default function DateiaustauschPage() {
         window.open(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, '_blank', 'noopener,noreferrer');
     }
 
+    function ActionIcon({ path, viewBox = '0 0 24 24' }: { path: string; viewBox?: string }) {
+        return (
+            <span className="kp-btn-icon" aria-hidden="true">
+                <svg viewBox={viewBox} focusable="false">
+                    <path d={path} />
+                </svg>
+            </span>
+        );
+    }
+
     function triggerDownload(url: string) {
         const link = document.createElement('a');
         link.href = url;
@@ -360,6 +369,7 @@ export default function DateiaustauschPage() {
                             </div>
 
                             <button className="btn btn-secondary kp-od-create" type="button" onClick={() => loadRows()} disabled={loading}>
+                                <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
                                 Aktualisieren
                             </button>
 
@@ -418,30 +428,15 @@ export default function DateiaustauschPage() {
                                         onClick={() => setCurrentPath(getParentPath(currentPath))}
                                         disabled={!currentPath}
                                     >
+                                        <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
                                         Nach oben
                                     </button>
                                     <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId}>
+                                        <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
                                         ↓ Download
-                                    </button>
-                                    <button className="btn btn-secondary" type="button" disabled={!selectedEntry} onClick={() => downloadEntry(selectedEntry)}>
-                                        Download
                                     </button>
                                 </div>
                                 <div className="kp-od-command-right">
-                                    <button
-                                        className={`btn ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
-                                        type="button"
-                                        onClick={() => setViewMode('list')}
-                                    >
-                                        Liste
-                                    </button>
-                                    <button
-                                        className={`btn ${viewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
-                                        type="button"
-                                        onClick={() => setViewMode('grid')}
-                                    >
-                                        Kacheln
-                                    </button>
                                     <button
                                         className="btn btn-secondary"
                                         type="button"
@@ -455,124 +450,81 @@ export default function DateiaustauschPage() {
                                             }
                                         }}
                                     >
+                                        <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
                                         Vorschau
                                     </button>
                                     {selectedEntry ? <span className="kp-od-selection">1 ausgewählt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
                                 </div>
                             </div>
 
-                            {viewMode === 'list' ? (
-                                <div className="kp-od-table-wrap">
-                                    <table className="kp-module-table kp-od-table">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Typ</th>
-                                                <th>Geändert</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {visibleEntries.map((entry) => {
-                                                const isSelected = selectedKey === entry.key;
-                                                if (entry.kind === 'folder') {
-                                                    return (
-                                                        <tr
-                                                            key={entry.key}
-                                                            className={isSelected ? 'is-selected' : ''}
-                                                            onClick={() => setSelectedKey(entry.key)}
-                                                            onDoubleClick={() => setCurrentPath(entry.fullPath)}
-                                                            onContextMenu={(event) => openActionMenu(event, entry.key)}
-                                                        >
-                                                            <td>
-                                                                <span className="kp-od-name">
-                                                                    <span className="kp-od-folder-icon" aria-hidden="true" />
-                                                                    <span>{entry.name}</span>
-                                                                </span>
-                                                            </td>
-                                                            <td>Ordner</td>
-                                                            <td>-</td>
-                                                        </tr>
-                                                    );
-                                                }
+                            <div className="kp-od-table-wrap">
+                                <table className="kp-module-table kp-od-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Typ</th>
+                                            <th>Geändert</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {visibleEntries.map((entry) => {
+                                            const isSelected = selectedKey === entry.key;
+                                            if (entry.kind === 'folder') {
                                                 return (
                                                     <tr
                                                         key={entry.key}
                                                         className={isSelected ? 'is-selected' : ''}
                                                         onClick={() => setSelectedKey(entry.key)}
-                                                        onDoubleClick={() => {
-                                                            if (!entry.file.currentVersionId) return;
-                                                            const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
-                                                            if (idx >= 0) {
-                                                                setPreviewIndex(idx);
-                                                                setPreviewOpen(true);
-                                                            }
-                                                        }}
+                                                        onDoubleClick={() => setCurrentPath(entry.fullPath)}
                                                         onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                     >
                                                         <td>
                                                             <span className="kp-od-name">
-                                                                <FileTypeIcon fileName={entry.file.displayName} />
-                                                                <span>{entry.file.displayName}</span>
+                                                                <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                                <span>{entry.name}</span>
                                                             </span>
                                                         </td>
-                                                        <td>{getFileTypeLabel(entry.file.displayName)}</td>
-                                                        <td>{formatDate(entry.file.updatedAt)}</td>
+                                                        <td>Ordner</td>
+                                                        <td>-</td>
                                                     </tr>
                                                 );
-                                            })}
-                                            {!loading && visibleEntries.length === 0 && (
-                                                <tr>
-                                                    <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
-                                                        Keine Dateien in diesem Ordner.
-                                                    </td>
-                                                </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            ) : (
-                                <div className="kp-od-grid">
-                                    {visibleEntries.map((entry) => {
-                                        const isSelected = selectedKey === entry.key;
-                                        if (entry.kind === 'folder') {
+                                            }
                                             return (
-                                                <button
+                                                <tr
                                                     key={entry.key}
-                                                    type="button"
-                                                    className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
+                                                    className={isSelected ? 'is-selected' : ''}
                                                     onClick={() => setSelectedKey(entry.key)}
-                                                    onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                    onDoubleClick={() => {
+                                                        if (!entry.file.currentVersionId) return;
+                                                        const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
+                                                        if (idx >= 0) {
+                                                            setPreviewIndex(idx);
+                                                            setPreviewOpen(true);
+                                                        }
+                                                    }}
                                                     onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                 >
-                                                    <span className="kp-od-folder-icon" aria-hidden="true" />
-                                                    <strong>{entry.name}</strong>
-                                                    <span className="text-muted">Ordner</span>
-                                                </button>
+                                                    <td>
+                                                        <span className="kp-od-name">
+                                                            <FileTypeIcon fileName={entry.file.displayName} />
+                                                            <span>{entry.file.displayName}</span>
+                                                        </span>
+                                                    </td>
+                                                    <td>{getFileTypeLabel(entry.file.displayName)}</td>
+                                                    <td>{formatDate(entry.file.updatedAt)}</td>
+                                                </tr>
                                             );
-                                        }
-                                        return (
-                                            <button
-                                                key={entry.key}
-                                                type="button"
-                                                className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
-                                                onClick={() => setSelectedKey(entry.key)}
-                                                onDoubleClick={() => {
-                                                    const idx = previewFiles.findIndex((value) => value.id === entry.file.id);
-                                                    if (idx >= 0) {
-                                                        setPreviewIndex(idx);
-                                                        setPreviewOpen(true);
-                                                    }
-                                                }}
-                                                onContextMenu={(event) => openActionMenu(event, entry.key)}
-                                            >
-                                                <FileTypeIcon fileName={entry.file.displayName} />
-                                                <strong>{entry.file.displayName}</strong>
-                                                <span className="text-muted">{formatDate(entry.file.updatedAt)}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                        })}
+                                        {!loading && visibleEntries.length === 0 && (
+                                            <tr>
+                                                <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
+                                                    Keine Dateien in diesem Ordner.
+                                                </td>
+                                            </tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
                         </main>
                     </div>
                 </div>

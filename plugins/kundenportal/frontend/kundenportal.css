@@ -716,6 +716,28 @@
     font-size: 0.85rem;
 }
 
+.kp-page .kp-btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    flex: 0 0 auto;
+}
+
+.kp-page .kp-btn-icon svg {
+    width: 14px;
+    height: 14px;
+}
+
+.kp-page .kp-btn-icon path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
 .kp-page .kp-od-table-wrap {
     border: 1px solid #d6e1ef;
     border-radius: 12px;

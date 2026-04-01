@@ -590,6 +590,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     let scanQueue: Promise<void> = Promise.resolve();
     let scanQueuePending = 0;
 
+    function resolveTenantIdOrReply(request: any, reply: any): number | null {
+        const tenantId = Number(request?.user?.tenantId || 0);
+        if (!Number.isInteger(tenantId) || tenantId <= 0) {
+            reply.status(401).send({ error: 'Nicht authentifiziert.' });
+            return null;
+        }
+        return tenantId;
+    }
+
     fastify.get('/public/files', {
         exposeHeadRoute: false,
         config: { policy: { public: true }, rateLimit: { max: 30, timeWindow: '1 minute' } },
@@ -1030,8 +1039,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return reply.send(createReadStream(absPath));
     });
 
-    fastify.get('/items', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request) => {
-        const tenantId = request.user.tenantId;
+    fastify.get('/items', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
+        const tenantId = resolveTenantIdOrReply(request, reply);
+        if (!tenantId) return;
         const query = request.query as Record<string, any>;
         const status = normalizeWorkflowStatus(query.status);
         const customerId = Number(query.customerId || 0);
@@ -1097,8 +1107,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     });
 
-    fastify.get('/folders', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request) => {
-        const tenantId = request.user.tenantId;
+    fastify.get('/folders', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
+        const tenantId = resolveTenantIdOrReply(request, reply);
+        if (!tenantId) return;
         const customerId = Number((request.query as any)?.customerId || 0);
 
         const rows = await db('dtx_folders as f')
@@ -1156,7 +1167,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.get('/items/:itemId/versions/:versionId/download', { preHandler: [requirePermission('dateiaustausch.review')] }, async (request, reply) => {
-        const tenantId = request.user.tenantId;
+        const tenantId = resolveTenantIdOrReply(request, reply);
+        if (!tenantId) return;
         const itemId = Number((request.params as any)?.itemId || 0);
         const versionId = Number((request.params as any)?.versionId || 0);
 
@@ -1184,7 +1196,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.get('/folders/download', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
-        const tenantId = request.user.tenantId;
+        const tenantId = resolveTenantIdOrReply(request, reply);
+        if (!tenantId) return;
         const customerId = Number((request.query as any)?.customerId || 0);
         const folderPath = normalizeFolderPath(String((request.query as any)?.folderPath || ''));
         if (!Number.isInteger(customerId) || customerId <= 0) {
@@ -1211,7 +1224,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.get('/items/:itemId/versions/:versionId/preview', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request, reply) => {
-        const tenantId = request.user.tenantId;
+        const tenantId = resolveTenantIdOrReply(request, reply);
+        if (!tenantId) return;
         const itemId = Number((request.params as any)?.itemId || 0);
         const versionId = Number((request.params as any)?.versionId || 0);
         if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
