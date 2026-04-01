@@ -1,7 +1,7 @@
 {
   "name": "mike-workspace-backend",
   "version": "1.20.0",
-  "description": "MIKE WorkSpace - Backend",
+  "description": "Hammer WorkSpace - Backend",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",

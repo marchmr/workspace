@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import { encrypt, decrypt } from './encryption.js';
 import { randomBytes } from 'crypto';
 
-const ISSUER = 'MIKE WorkSpace';
+const ISSUER = 'Hammer WorkSpace';
 const RECOVERY_CODE_COUNT = 10;
 const RECOVERY_CODE_LENGTH = 8;
 

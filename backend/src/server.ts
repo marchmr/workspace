@@ -135,7 +135,7 @@ async function start(): Promise<void> {
 
         // Server starten
         await fastify.listen({ port: config.server.port, host: '0.0.0.0' });
-        console.log(`[Server] MIKE WorkSpace v${config.app.version} laeuft auf Port ${config.server.port}`);
+        console.log(`[Server] Hammer WorkSpace v${config.app.version} laeuft auf Port ${config.server.port}`);
 
         // Update-Erkennung: Bei Versions-/Commit-Änderung Audit-Log schreiben
         try {

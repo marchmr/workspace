@@ -292,7 +292,7 @@ export default function EmailAccounts() {
                             </div>
                             <div className="form-group">
                                 <label className="form-label">Absender-Name</label>
-                                <input className="form-input" value={form.from_name} onChange={(e) => setForm({ ...form, from_name: e.target.value })} placeholder="MIKE System" />
+                                <input className="form-input" value={form.from_name} onChange={(e) => setForm({ ...form, from_name: e.target.value })} placeholder="Hammer System" />
                             </div>
                         </div>
 

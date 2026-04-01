@@ -1,6 +1,6 @@
 # CRM Plugin
 
-Kundenverwaltung mit kachelbasierter Kundenakte und Ticketsystem für MIKE WorkSpace.
+Kundenverwaltung mit kachelbasierter Kundenakte und Ticketsystem für Hammer WorkSpace.
 
 ## Techstack
 

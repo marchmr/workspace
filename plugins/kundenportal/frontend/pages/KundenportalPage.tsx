@@ -267,7 +267,7 @@ export default function KundenportalPage() {
                         <p className="vp-login-kicker">Kundenportal</p>
                         <h1 className="page-title vp-access-title">Kundenportal Login</h1>
                         <p className="text-muted vp-access-subtitle">
-                            Melden Sie sich mit Ihrer Ansprechpartner-E-Mail und einem 6-stelligen Code an.
+                            Melden Sie sich mit Ihrer E-Mail an. Wir senden Ihnen einen Code per Mail.
                         </p>
 
                         {expectedHost && expectedHost !== window.location.hostname && (
@@ -307,8 +307,8 @@ export default function KundenportalPage() {
                                 <span>{mobileNavOpen ? 'Schließen' : 'Menü'}</span>
                             </button>
                             <div className="kp-mobile-brand">
-                                <strong>Kundenportal</strong>
-                                <span className="text-muted">{customerHeader.displayName}</span>
+                                <strong>Willkommen</strong>
+                                <span className="text-muted">{customerHeader.displayName || 'Kundenportal'}</span>
                             </div>
                         </div>
                         <button

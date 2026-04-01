@@ -87,7 +87,7 @@ async function pdfExportPlugin(fastify: FastifyInstance): Promise<void> {
             defaultStyle: { font: 'Roboto', fontSize: 10 },
             info: {
                 title: opts.title || 'Dokument',
-                producer: 'MIKE WorkSpace',
+                producer: 'Hammer WorkSpace',
             },
         };
 
@@ -134,7 +134,7 @@ async function pdfExportPlugin(fastify: FastifyInstance): Promise<void> {
                         layout: 'lightHorizontalLines',
                     },
                 ],
-                footer: opts.footer || 'MIKE WorkSpace',
+                footer: opts.footer || 'Hammer WorkSpace',
             });
         },
     });

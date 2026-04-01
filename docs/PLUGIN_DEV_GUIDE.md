@@ -1,6 +1,6 @@
-# MIKE WorkSpace — Plugin-Entwicklungshandbuch
+# Hammer WorkSpace — Plugin-Entwicklungshandbuch
 
-> Vollstaendige Referenz fuer die Entwicklung von Plugins im MIKE WorkSpace Monorepo.
+> Vollstaendige Referenz fuer die Entwicklung von Plugins im Hammer WorkSpace Monorepo.
 > Stand: v3.2 (Monorepo-Architektur)
 
 ---
@@ -827,7 +827,7 @@ mkdir -p plugins/notizen/frontend/pages
     "name": "Notizen",
     "version": "1.0.0",
     "description": "Einfache Notizen-Verwaltung",
-    "author": "MIKE Team",
+    "author": "Hammer Team",
     "dependencies": [],
     "backend_entry": "backend/index.ts",
     "frontend_entry": "frontend/index.tsx",

@@ -110,7 +110,7 @@ async function fetchGitHubJson<T>(endpoint: string): Promise<T | null> {
         const res = await fetch(url, {
             headers: {
                 accept: 'application/vnd.github+json',
-                'user-agent': 'MIKE-WorkSpace-Updater/2.0',
+                'user-agent': 'Hammer-WorkSpace-Updater/2.0',
                 'X-GitHub-Api-Version': '2022-11-28',
             },
         });

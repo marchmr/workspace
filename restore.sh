@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# MIKE WorkSpace - Restore Script
+# Hammer WorkSpace - Restore Script
 # Stellt ein Pre-Update-Backup wieder her.
 #
 # Usage:
@@ -24,7 +24,7 @@ APP_USER="mike"
 SERVICE="mike-workspace"
 
 echo ""
-echo -e "${BOLD}MIKE WorkSpace - Restore${NC}"
+echo -e "${BOLD}Hammer WorkSpace - Restore${NC}"
 echo -e "================================================"
 
 # Root-Check

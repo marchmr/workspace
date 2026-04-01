@@ -311,7 +311,7 @@ function MfaModal({ mfaEnabled, onClose }: { mfaEnabled: boolean; onClose: () =>
   <div class="header">
     <div class="shield">🛡️</div>
     <h1>MFA Recovery Codes</h1>
-    <p>MIKE WorkSpace – Backup-Codes für Zwei-Faktor-Authentifizierung</p>
+    <p>Hammer WorkSpace – Backup-Codes für Zwei-Faktor-Authentifizierung</p>
   </div>
   <div class="meta">
     <span>Erstellt am: ${now}</span>
@@ -326,7 +326,7 @@ function MfaModal({ mfaEnabled, onClose }: { mfaEnabled: boolean; onClose: () =>
     ${codes.map((c) => `<div class="code">${c}</div>`).join('\n    ')}
   </div>
   <div class="footer">
-    <p>MIKE WorkSpace &middot; Dieses Dokument ist vertraulich.</p>
+    <p>Hammer WorkSpace &middot; Dieses Dokument ist vertraulich.</p>
     <p style="margin-top: 4px;">Nach Verwendung eines Codes wird dieser automatisch ungültig.</p>
   </div>
 </body>

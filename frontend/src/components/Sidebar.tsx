@@ -156,7 +156,7 @@ export function Sidebar() {
                         )}
                     </div>
                     <div className="sidebar-brand-text">
-                        <h1>MIKE</h1>
+                        <h1>Hammer</h1>
                         <div className="version">WorkSpace</div>
                     </div>
                 </div>

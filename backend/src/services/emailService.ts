@@ -433,8 +433,8 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         try {
             await fastify.mail.send({
                 to,
-                subject: 'MIKE Test-E-Mail',
-                text: 'Dies ist eine Test-E-Mail von MIKE WorkSpace.',
+                subject: 'Hammer Test-E-Mail',
+                text: 'Dies ist eine Test-E-Mail von Hammer WorkSpace.',
                 accountId: parseInt(id, 10),
             });
             return reply.send({ success: true, message: 'Test-E-Mail gesendet' });

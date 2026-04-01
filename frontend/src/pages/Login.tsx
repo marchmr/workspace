@@ -80,7 +80,7 @@ export function Login() {
                 <div className="login-split-hero">
                     <img
                         src="/login-hero.png?v=3"
-                        alt="MIKE WorkSpace"
+                        alt="Hammer WorkSpace"
                         className="login-hero-img"
                     />
                     <div className="login-hero-text">
@@ -201,7 +201,7 @@ export function Login() {
                     </form>
 
                     <div className="login-footer">
-                        MIKE WorkSpace
+                        Hammer WorkSpace
                     </div>
                 </div>
             </div>

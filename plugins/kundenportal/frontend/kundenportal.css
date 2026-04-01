@@ -5,8 +5,8 @@
 
 .kp-page .vp-public-shell {
     width: 100%;
-    max-width: 1680px;
-    margin: 0 auto;
+    max-width: none;
+    margin: 0;
 }
 
 .kp-page.vp-public-page {
@@ -21,6 +21,9 @@
 .kp-page .kp-portal {
     display: grid;
     gap: var(--space-md);
+    width: 100%;
+    max-width: 100%;
+    overflow-x: clip;
 }
 
 .kp-page .kp-mobile-topbar {
@@ -69,6 +72,9 @@
     grid-template-columns: 300px minmax(0, 1fr);
     gap: var(--space-md);
     align-items: start;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .kp-page .kp-sidebar {
@@ -210,6 +216,7 @@
     display: grid;
     gap: var(--space-md);
     min-width: 0;
+    width: 100%;
 }
 
 .kp-page .kp-main-header {
@@ -235,6 +242,8 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: var(--space-md);
     align-items: start;
+    width: 100%;
+    min-width: 0;
 }
 
 .kp-page .kp-video-card {
@@ -359,7 +368,7 @@
 }
 
 .kp-page .vp-login-kicker {
-    margin: 0 0 6px 0;
+    margin: 14px 0 6px 0;
     text-align: center;
     font-size: 0.8rem;
     font-weight: 700;
@@ -383,10 +392,24 @@
 .kp-page .vp-access-form {
     width: min(560px, 100%);
     margin: 0 auto;
+    gap: 12px;
+}
+
+.kp-page .vp-access-form .input {
+    min-height: 52px;
+    border-radius: 12px;
+    font-size: 1.02rem;
+    padding-top: 10px;
+    padding-bottom: 10px;
 }
 
 .kp-page .vp-access-submit {
     width: 100%;
+    justify-content: center;
+    min-height: 52px;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 700;
 }
 
 .kp-page .kp-empty-icon svg {
@@ -506,14 +529,25 @@
 @media (max-width: 900px) {
     .kp-page .vp-public-shell {
         width: 100%;
+        max-width: 100%;
+        margin: 0;
     }
 
     .kp-page .kp-mobile-topbar {
         display: flex;
     }
 
+    .kp-page .kp-portal {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
     .kp-page .kp-portal-layout {
         grid-template-columns: 1fr;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
     }
 
     .kp-page .kp-drawer-backdrop {
@@ -541,15 +575,25 @@
         left: 0;
         top: 0;
         bottom: 0;
-        width: min(86vw, 320px);
-        max-width: 320px;
+        width: min(82vw, 300px);
+        max-width: 300px;
         border-radius: 0 18px 18px 0;
         transform: translateX(-110%);
         transition: transform 0.24s ease;
         overflow-y: auto;
         z-index: 50;
         top: 0;
-        padding-bottom: calc(var(--space-lg) + env(safe-area-inset-bottom, 0px));
+        padding: 14px;
+        padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+        gap: 10px;
+    }
+
+    .kp-page .kp-sidebar-brand {
+        min-height: 56px;
+    }
+
+    .kp-page .kp-sidebar-brand img {
+        max-height: 44px;
     }
 
     .kp-page .kp-portal-layout.kp-nav-open .kp-sidebar {
@@ -558,6 +602,9 @@
 
     .kp-page .kp-main {
         padding: var(--space-md);
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
     }
 
     .kp-page .kp-main-header {
@@ -575,12 +622,35 @@
 
     .kp-page .kp-video-grid {
         grid-template-columns: 1fr;
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+    }
+
+    .kp-page .kp-video-card,
+    .kp-page .kp-video-preview {
+        width: 100%;
+        max-width: 100%;
     }
 
     .kp-page .kp-nav .is-disabled,
     .kp-page .kp-nav-section:nth-of-type(2),
     .kp-page .kp-sidebar-meta {
         display: none;
+    }
+
+    .kp-page .kp-sidebar-customer {
+        padding: 8px 0;
+        gap: 2px;
+    }
+
+    .kp-page .kp-sidebar-customer .text-muted {
+        display: none;
+    }
+
+    .kp-page .kp-sidebar-name {
+        font-size: 1.35rem;
+        line-height: 1.2;
     }
 
     .vp-inline-form {
@@ -608,7 +678,7 @@
 
 @media (max-width: 640px) {
     .kp-page.vp-public-page {
-        padding: 10px;
+        padding: 8px;
     }
 
     .kp-page .vp-access-card {
@@ -622,16 +692,28 @@
 
     .kp-page .kp-mobile-topbar {
         border-radius: 12px;
-        padding: 10px;
+        padding: 8px 10px;
     }
 
     .kp-page .kp-mobile-brand strong {
-        font-size: 1.05rem;
+        font-size: 0.98rem;
+    }
+
+    .kp-page .kp-mobile-brand .text-muted {
+        font-size: 0.8rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .kp-page .kp-main {
         border-radius: 14px;
         padding: 12px;
+    }
+
+    .kp-page .kp-menu-btn {
+        min-width: 92px;
+        padding: 8px 10px;
     }
 }
 

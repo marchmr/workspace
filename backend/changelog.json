@@ -508,7 +508,7 @@
     "version": "1.0.0",
     "date": "2026-02-20",
     "changes": [
-      "Erstveröffentlichung der MIKE WorkSpace",
+      "Erstveröffentlichung der Hammer WorkSpace",
       "Dashboard mit Systemstatus, aktiven Plugins und Benutzerinfo",
       "Benutzerverwaltung mit Rollen und Berechtigungen (RBAC)",
       "Zwei-Faktor-Authentifizierung (MFA) mit TOTP und Recovery-Codes",

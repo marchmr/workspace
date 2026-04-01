@@ -1,4 +1,4 @@
-# MIKE WorkSpace
+# Hammer WorkSpace
 
 Modulares Enterprise-Framework mit Plugin-System, Multi-Tenancy und rollenbasierter Zugriffskontrolle.
 
@@ -76,7 +76,7 @@ Fehlende System-Abhängigkeiten wie `ffmpeg` und `acl` werden automatisch mit in
 
 ## Update
 
-MIKE WorkSpace unterstuetzt drei Update-Branches. Der Branch kann im Admin-Dashboard unter "Updates & Deployment" konfiguriert werden.
+Hammer WorkSpace unterstuetzt drei Update-Branches. Der Branch kann im Admin-Dashboard unter "Updates & Deployment" konfiguriert werden.
 
 | Branch | Beschreibung | Update-Quelle |
 |---|---|---|

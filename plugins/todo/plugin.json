@@ -3,7 +3,7 @@
     "name": "Aufgaben",
     "version": "1.0.0",
     "description": "Persoenliche Aufgabenliste mit Prioritaeten und Faelligkeitsdaten",
-    "author": "MIKE Team",
+    "author": "Hammer Team",
     "dependencies": [],
     "backend_entry": "backend/index.ts",
     "frontend_entry": "frontend/index.tsx",

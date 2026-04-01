@@ -3,7 +3,7 @@
     "name": "CRM",
     "version": "1.0.0",
     "description": "Kundenverwaltung mit kachelbasierter Kundenakte und Ticketsystem",
-    "author": "MIKE Team",
+    "author": "Hammer Team",
     "dependencies": [],
     "backend_entry": "backend/index.ts",
     "frontend_entry": "frontend/index.tsx",

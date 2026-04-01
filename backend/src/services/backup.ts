@@ -60,7 +60,7 @@ function looksLikeEncryptedPayload(value: unknown): boolean {
 }
 
 // AES-256-GCM Backup-Verschluesselung
-const BACKUP_MAGIC = Buffer.from('MIKE-ENC-V1\0'); // 12 Bytes Magic Header
+const BACKUP_MAGIC = Buffer.from('Hammer-ENC-V1\0'); // 12 Bytes Magic Header
 
 function deriveBackupKey(passphrase: string): Buffer {
     // SHA-256 des Passphrase → 32 Byte Key fuer AES-256

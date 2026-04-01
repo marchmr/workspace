@@ -789,7 +789,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     // Liefert nur generische Branding-Info fuer die Login-Seite (keine Tenant-Details)
     fastify.get('/branding', { config: { policy: { public: true } } }, async (_request: FastifyRequest, reply: FastifyReply) => {
         return reply.send({
-            companyName: 'MIKE WorkSpace',
+            companyName: 'Hammer WorkSpace',
             hasLogo: false,
             logoUrl: null,
         });

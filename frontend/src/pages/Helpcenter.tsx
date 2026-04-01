@@ -9,7 +9,7 @@ export default function Helpcenter() {
                     <span className="card-title">Willkommen im Helpcenter</span>
                 </div>
                 <p style={{ color: 'var(--color-text-secondary)', lineHeight: 1.7 }}>
-                    Hier finden Sie in Kürze Anleitungen, FAQs und Dokumentation zur Nutzung von MIKE WorkSpace.
+                    Hier finden Sie in Kürze Anleitungen, FAQs und Dokumentation zur Nutzung von Hammer WorkSpace.
                 </p>
                 <p style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', marginTop: 'var(--space-md)' }}>
                     Für direkte Unterstützung wenden Sie sich bitte an Ihren Administrator.

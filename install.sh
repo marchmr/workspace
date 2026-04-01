@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# MIKE WorkSpace - Interaktiver Installer
+# Hammer WorkSpace - Interaktiver Installer
 # Fuer Debian 12
 #
 # Usage:
@@ -372,7 +372,7 @@ print_ok "DB-User '$DB_USER' eingerichtet"
 # ============================================
 # Schritt 5: Applikation installieren
 # ============================================
-print_header "Schritt 5/8: MIKE WorkSpace"
+print_header "Schritt 5/8: Hammer WorkSpace"
 
 # App-User
 print_step "System-User erstellen..."
@@ -449,7 +449,7 @@ ENCRYPTION_KEY=$(openssl rand -hex 32)
 print_step ".env-Datei erstellen..."
 cat > "$APP_DIR/backend/.env" <<EOF
 # ============================================
-# MIKE WorkSpace - Konfiguration
+# Hammer WorkSpace - Konfiguration
 # Generiert am $(date +%Y-%m-%d)
 # ============================================
 
@@ -741,7 +741,7 @@ print_header "Schritt 8/8: Systemd-Service & Firewall"
 print_step "Systemd-Service einrichten..."
 cat > /etc/systemd/system/mike-workspace.service <<EOF
 [Unit]
-Description=MIKE WorkSpace
+Description=Hammer WorkSpace
 After=network.target mariadb.service
 Requires=mariadb.service
 

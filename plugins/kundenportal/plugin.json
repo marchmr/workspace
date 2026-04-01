@@ -3,7 +3,7 @@
   "name": "Kundenportal",
   "version": "1.0.0",
   "description": "Zentrales Kundenportal mit modularen Bereichen (Videos, Dateiaustausch)",
-  "author": "MIKE Team",
+  "author": "Hammer Team",
   "dependencies": ["videoplattform"],
   "backend_entry": "backend/index.ts",
   "frontend_entry": "frontend/index.tsx",

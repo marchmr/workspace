@@ -6,7 +6,7 @@ import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypt
  * Prueft Roundtrip, falschen Key, und Rueckwaertskompatibilitaet.
  */
 
-const BACKUP_MAGIC = Buffer.from('MIKE-ENC-V1\0');
+const BACKUP_MAGIC = Buffer.from('Hammer-ENC-V1\0');
 
 function deriveBackupKey(passphrase: string): Buffer {
     return createHash('sha256').update(passphrase, 'utf8').digest();

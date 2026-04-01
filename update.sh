@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================
-# MIKE WorkSpace - Multi-Branch Update Script
+# Hammer WorkSpace - Multi-Branch Update Script
 # Erstellt vor dem Update automatisch ein Backup.
 #
 # Usage:
@@ -137,6 +137,45 @@ resolve_workspace_host_from_nginx() {
   echo ""
 }
 
+normalize_candidate_host() {
+  local raw="$1"
+  local host
+  host="$(echo "${raw:-}" | tr '[:upper:]' '[:lower:]' | sed 's#^https\?://##; s#/.*$##; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+  if [ -z "$host" ]; then
+    echo ""
+    return 0
+  fi
+  # Nur echte Hostnamen erlauben (verschlüsselte/technische Strings verwerfen)
+  if echo "$host" | grep -Eq '^[a-z0-9.-]+$' && echo "$host" | grep -q '\.'; then
+    echo "$host"
+    return 0
+  fi
+  echo ""
+}
+
+resolve_public_host_from_nginx() {
+  local conf
+  conf="$(ls -1 /etc/nginx/sites-available/mike-plugin-videoplattform-*.conf 2>/dev/null | head -n1 || true)"
+  if [ -z "$conf" ] || [ ! -f "$conf" ]; then
+    echo ""
+    return 0
+  fi
+
+  local server_name_line
+  server_name_line="$(grep -E '^[[:space:]]*server_name[[:space:]]+' "$conf" | head -n1 || true)"
+  server_name_line="${server_name_line#*server_name }"
+  server_name_line="${server_name_line%;*}"
+  for host in $server_name_line; do
+    local normalized
+    normalized="$(normalize_candidate_host "$host")"
+    if [ -n "$normalized" ]; then
+      echo "$normalized"
+      return 0
+    fi
+  done
+  echo ""
+}
+
 resolve_public_host_from_settings() {
   local env_file="$APP_DIR/backend/.env"
   if [ ! -f "$env_file" ]; then
@@ -159,17 +198,20 @@ resolve_public_host_from_settings() {
   local mysql_host="${db_host:-localhost}"
   local mysql_port="${db_port:-3306}"
 
-  local public_host
+  local public_host normalized
   public_host="$(mysql -u "$db_user" -p"$db_pass" -h "$mysql_host" -P "$mysql_port" "$db_name" -N -e \
     "SELECT value_encrypted FROM settings WHERE tenant_id IS NULL AND \`key\` IN ('kundenportal.public_subdomain','videoplattform.public_subdomain') AND value_encrypted IS NOT NULL AND value_encrypted <> '' ORDER BY FIELD(\`key\`,'kundenportal.public_subdomain','videoplattform.public_subdomain') LIMIT 1;" 2>/dev/null || true)"
-
-  echo "${public_host:-}" | tr '[:upper:]' '[:lower:]' | sed 's#^https\?://##; s#/.*$##; s/[[:space:]]//g'
+  normalized="$(normalize_candidate_host "$public_host")"
+  echo "$normalized"
 }
 
 write_frontend_host_routing_env() {
   local workspace_host public_host
   workspace_host="$(resolve_workspace_host_from_nginx)"
   public_host="$(resolve_public_host_from_settings)"
+  if [ -z "$public_host" ]; then
+    public_host="$(resolve_public_host_from_nginx)"
+  fi
 
   local env_prod="$APP_DIR/frontend/.env.production"
   local env_tmp="${env_prod}.tmp.$$"
@@ -187,7 +229,7 @@ write_frontend_host_routing_env() {
 }
 
 echo ""
-echo -e "${BOLD}MIKE WorkSpace - Update${NC}"
+echo -e "${BOLD}Hammer WorkSpace - Update${NC}"
 echo -e "================================================"
 
 # Root-Check
