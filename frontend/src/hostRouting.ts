@@ -39,9 +39,19 @@ export function getHostRoutingConfig(hostname = window.location.hostname): HostR
 
     const isExplicitWorkspace = hostMatchesAnyPattern(currentHost, workspaceHosts);
     const isExplicitPublic = hostMatchesAnyPattern(currentHost, publicHosts);
+    const hasWorkspaceAllowlist = workspaceHosts.length > 0;
 
-    const isWorkspaceHost = workspaceHosts.length === 0 ? !isExplicitPublic : isExplicitWorkspace;
-    const mode: AppHostMode = isExplicitPublic && !isWorkspaceHost ? 'public' : 'workspace';
+    // Sicherheitslogik:
+    // - Explizit public gewinnt immer.
+    // - Wenn Workspace-Hosts konfiguriert sind und aktueller Host nicht dabei ist,
+    //   behandeln wir den Host als public (statt versehentlich Workspace-Login zu zeigen).
+    // - Fallback bleibt workspace (Legacy-Verhalten).
+    let mode: AppHostMode = 'workspace';
+    if (isExplicitPublic) {
+        mode = 'public';
+    } else if (hasWorkspaceAllowlist && !isExplicitWorkspace) {
+        mode = 'public';
+    }
 
     return {
         currentHost,

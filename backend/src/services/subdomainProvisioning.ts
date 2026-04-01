@@ -84,6 +84,26 @@ function getCertPath(host: string): string {
     return path.join('/etc/letsencrypt/live', host, 'fullchain.pem');
 }
 
+async function detectSslCertForHost(host: string): Promise<{ exists: boolean; details?: string }> {
+    if (await fileExists(getCertPath(host))) {
+        return { exists: true, details: getCertPath(host) };
+    }
+
+    // Certbot kann Zertifikate unter Aliasnamen wie "<host>-0001" ablegen.
+    // Daher zusätzlich über "certbot certificates -d <host>" prüfen.
+    const certbotResult = await runCommand('certbot', ['certificates', '-d', host]);
+    if (!certbotResult.ok) {
+        return { exists: false, details: certbotResult.output || 'certbot certificates fehlgeschlagen' };
+    }
+
+    const output = certbotResult.output || '';
+    if (contains(output, host) && !contains(output, 'No certificates found')) {
+        return { exists: true, details: 'Zertifikat über certbot erkannt (ggf. Aliasname)' };
+    }
+
+    return { exists: false, details: output || 'Kein Zertifikat für Host gefunden' };
+}
+
 function collectLocalIps(): string[] {
     const result = new Set<string>();
     const interfaces = os.networkInterfaces();
@@ -599,10 +619,10 @@ export async function getSubdomainStatus(rawHost: string): Promise<SubdomainStat
     const configFile = path.join(config.subdomainProvisioning.nginxSitesAvailableDir, fileNameForHost(host));
     const enabledFile = path.join(config.subdomainProvisioning.nginxSitesEnabledDir, fileNameForHost(host));
 
-    const [configExists, enabledExists, sslCertExists, dnsStatus] = await Promise.all([
+    const [configExists, enabledExists, sslDetection, dnsStatus] = await Promise.all([
         fileExists(configFile),
         fileExists(enabledFile),
-        fileExists(getCertPath(host)),
+        detectSslCertForHost(host),
         checkDnsPointsToServer(host),
     ]);
 
@@ -617,7 +637,7 @@ export async function getSubdomainStatus(rawHost: string): Promise<SubdomainStat
         enabledFile,
         configExists,
         enabledExists,
-        sslCertExists,
+        sslCertExists: sslDetection.exists,
         domainLinked,
         domainLinkedReason,
         dns: dnsStatus,
@@ -932,8 +952,14 @@ export async function provisionSubdomain(rawHost: string, publicPath = '/'): Pro
         });
     }
 
-    const sslCertExists = await fileExists(getCertPath(host));
-    steps.push({ key: 'ssl', ok: sslCertExists, message: sslCertExists ? 'SSL-Zertifikat aktiv' : 'Certbot lief, aber Zertifikat nicht gefunden' });
+    const sslDetection = await detectSslCertForHost(host);
+    const sslCertExists = sslDetection.exists;
+    steps.push({
+        key: 'ssl',
+        ok: sslCertExists,
+        message: sslCertExists ? 'SSL-Zertifikat aktiv' : 'Certbot lief, aber Zertifikat nicht gefunden',
+        details: sslDetection.details,
+    });
     if (!sslCertExists) {
         manualCommands.push(`sudo certbot certificates -d ${host}`);
     }
