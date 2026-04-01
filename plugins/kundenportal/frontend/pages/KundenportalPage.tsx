@@ -25,6 +25,7 @@ type SessionAccessResponse = {
         lastName?: string | null;
     } | null;
     tenantLogoUrl?: string | null;
+    tenantName?: string | null;
     logoUrl?: string | null;
     videos: PortalVideo[];
 };
@@ -34,7 +35,7 @@ const STORAGE_SESSION_KEY = 'kundenportal.session';
 const STORAGE_EMAIL_KEY = 'kundenportal.email';
 
 type PortalTab = 'videos' | 'files';
-type PortalNavKey = 'videos' | 'files' | 'docs' | 'profile';
+type PortalNavKey = 'videos' | 'files' | 'docs' | 'profile' | 'logout';
 
 function formatDate(value: string): string {
     const date = new Date(value);
@@ -68,6 +69,15 @@ function NavIcon({ nav }: { nav: PortalNavKey }) {
             </svg>
         );
     }
+    if (nav === 'logout') {
+        return (
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M14 8l5 4-5 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M9 12h10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+        );
+    }
     return (
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
@@ -92,8 +102,10 @@ export default function KundenportalPage() {
     const [codeRequested, setCodeRequested] = useState(false);
     const [access, setAccess] = useState<SessionAccessResponse | null>(null);
     const [expectedHost, setExpectedHost] = useState('');
+    const [portalBrand, setPortalBrand] = useState('Kundenportal');
     const [keyword, setKeyword] = useState('');
     const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
+    const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
     const [portalLogoHeight, setPortalLogoHeight] = useState(52);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -107,6 +119,8 @@ export default function KundenportalPage() {
             .then(async (data) => {
                 if (!active) return;
                 if (typeof data.expectedHost === 'string') setExpectedHost(data.expectedHost);
+                if (typeof data.brand === 'string' && data.brand) setPortalBrand(data.brand);
+                if (typeof data.tenantLogoUrl === 'string' && data.tenantLogoUrl) setTenantLogoUrl(`${data.tenantLogoUrl}${data.tenantLogoUrl.includes('?') ? '&' : '?'}v=${Date.now()}`);
                 if (typeof data.logoUrl === 'string' && data.logoUrl) setPortalLogoUrl(`${data.logoUrl}${data.logoUrl.includes('?') ? '&' : '?'}v=${Date.now()}`);
                 const logoHeight = Number(data?.logoHeight);
                 if (Number.isFinite(logoHeight)) setPortalLogoHeight(Math.max(24, Math.min(180, Math.round(logoHeight))));
@@ -118,6 +132,10 @@ export default function KundenportalPage() {
                         setAccess(payload as SessionAccessResponse);
                         const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
                         const customLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+                        
+                        if (tenantLogo) setTenantLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                        else if (customLogo) setTenantLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+
                         if (customLogo) setPortalLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
                         else if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
                     } else {
@@ -166,10 +184,8 @@ export default function KundenportalPage() {
         const originalTitle = document.title;
         const originalHref = (document.querySelector('link[rel="icon"]') as HTMLLinkElement)?.href;
         
-        const titleSuffix = customerHeader.displayName && customerHeader.displayName !== 'Ihre Firma' 
-            ? ` - ${customerHeader.displayName}` 
-            : '';
-        document.title = `Kundenportal${titleSuffix}`;
+        const currentTenantName = access?.tenantName || portalBrand || 'Kundenportal';
+        document.title = `Kundenportal - ${currentTenantName}`;
         
         let link = document.querySelector('link[rel="icon"]') as HTMLLinkElement;
         if (!link) {
@@ -177,9 +193,8 @@ export default function KundenportalPage() {
             link.rel = 'icon';
             document.head.appendChild(link);
         }
-        if (portalLogoUrl) {
-            link.href = portalLogoUrl;
-        }
+        const faviconUrl = tenantLogoUrl || portalLogoUrl || '/favicon.ico';
+        link.href = faviconUrl;
 
         if (!mobileNavOpen) return;
         const previousOverflow = document.body.style.overflow;
@@ -189,7 +204,7 @@ export default function KundenportalPage() {
             if (originalHref) link.href = originalHref;
             document.body.style.overflow = previousOverflow;
         };
-    }, [mobileNavOpen, customerHeader.displayName, portalLogoUrl]);
+    }, [mobileNavOpen, access?.tenantName, portalBrand, portalLogoUrl, tenantLogoUrl]);
 
     async function requestCode(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -241,6 +256,10 @@ export default function KundenportalPage() {
 
             const tenantLogo = typeof payload?.tenantLogoUrl === 'string' ? payload.tenantLogoUrl : '';
             const customLogo = typeof payload?.logoUrl === 'string' ? payload.logoUrl : '';
+            
+            if (tenantLogo) setTenantLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+            else if (customLogo) setTenantLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
+
             if (customLogo) setPortalLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
             else if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
         } catch (err) {
@@ -278,15 +297,15 @@ export default function KundenportalPage() {
                         <div className="vp-access-head">
                             <div className="vp-portal-brand">
                                 {portalLogoUrl ? (
-                                    <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
+                                    <img src={portalLogoUrl} alt={`${portalBrand} Logo`} style={{ maxHeight: `${portalLogoHeight}px` }} />
                                 ) : (
-                                    <div className="vp-portal-brand-fallback">Kundenportal</div>
+                                    <div className="vp-portal-brand-fallback">{portalBrand}</div>
                                 )}
                             </div>
                         </div>
 
                         <p className="vp-login-kicker">Kundenportal</p>
-                        <h1 className="page-title vp-access-title">Kundenportal Login</h1>
+                        <h1 className="page-title vp-access-title">Login - {portalBrand}</h1>
                         <p className="text-muted vp-access-subtitle">
                             Melden Sie sich mit Ihrer E-Mail an. Wir senden Ihnen einen Code per Mail.
                         </p>
@@ -328,8 +347,8 @@ export default function KundenportalPage() {
                                 <span>{mobileNavOpen ? 'Schließen' : 'Menü'}</span>
                             </button>
                             <div className="kp-mobile-brand">
-                                <strong>Willkommen</strong>
-                                <span className="text-muted">{customerHeader.displayName || 'Kundenportal'}</span>
+                                <strong>{portalBrand}</strong>
+                                <span className="text-muted">Kundenportal</span>
                             </div>
                         </div>
                         <button
@@ -343,9 +362,9 @@ export default function KundenportalPage() {
                             <aside id="kp-mobile-drawer" className="kp-sidebar card">
                                 <div className="kp-sidebar-brand">
                                     {portalLogoUrl ? (
-                                        <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
+                                        <img src={portalLogoUrl} alt={`${portalBrand} Logo`} style={{ maxHeight: `${portalLogoHeight}px` }} />
                                     ) : (
-                                        <div className="kp-sidebar-brand-fallback">Kundenportal</div>
+                                        <div className="kp-sidebar-brand-fallback">{portalBrand}</div>
                                     )}
                                 </div>
 
@@ -385,14 +404,21 @@ export default function KundenportalPage() {
                                         Profil
                                         <span className="kp-nav-badge">Coming soon</span>
                                     </button>
+                                    <p className="kp-nav-section">Konto</p>
+                                    <button
+                                        className="btn kp-nav-btn kp-nav-btn-logout btn-secondary"
+                                        type="button"
+                                        onClick={resetAccess}
+                                    >
+                                        <span className="kp-nav-icon"><NavIcon nav="logout" /></span>
+                                        Abmelden
+                                    </button>
                                 </nav>
 
                                 <div className="kp-sidebar-meta">
                                     <p className="text-muted">Freigeschaltet bis: {formatDate(access.expiresAt)}</p>
                                     <p className="text-muted">Videos: {access.videos.length}</p>
                                 </div>
-
-                                <button className="btn btn-secondary kp-logout" onClick={resetAccess}>Abmelden</button>
                             </aside>
 
                             <main className="kp-main card">
@@ -403,7 +429,6 @@ export default function KundenportalPage() {
                                             {activeTab === 'videos' ? `${visibleVideos.length} von ${access.videos.length} Videos` : 'Sicherer Dateiaustausch mit Versionierung'}
                                         </p>
                                     </div>
-                                    <button className="btn btn-secondary kp-main-logout" onClick={resetAccess}>Abmelden</button>
                                 </header>
 
                                 {activeTab === 'videos' && (

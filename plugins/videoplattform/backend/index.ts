@@ -1639,9 +1639,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const fallbackLogoFile = await readPublicLogoFile(db);
         const logoHeight = await readPublicLogoHeight(db);
         const authMode = await readPublicAuthMode(db);
+        
+        const firstTenant = await db('tenants').orderBy('id', 'asc').first('id', 'name', 'logo_file');
+        const tenantName = firstTenant?.name || 'Hammer WorkSpace';
+        const tenantLogoUrl = firstTenant?.logo_file ? `/api/plugins/videoplattform/public/tenant-logo/${firstTenant.id}` : null;
+
         return {
             expectedHost: configuredHost,
-            brand: 'Webdesign Hammer',
+            brand: tenantName,
+            tenantName,
+            tenantLogoUrl,
             authMode,
             logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
             logoHeight,
@@ -1729,7 +1736,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const tenant = await db('tenants')
             .where({ id: codeRow.tenant_id })
-            .first('id', 'logo_file');
+            .first('id', 'logo_file', 'name');
         if (tenant?.logo_file) {
             tenantLogoUrl = `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?code=${encodeURIComponent(code)}`;
         }
@@ -1741,6 +1748,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             scope: codeRow.scope,
             customerId: codeRow.customer_id,
             customerName,
+            tenantName: tenant?.name || null,
             tenantLogoUrl,
             logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
             videos: videos.map((video) => formatVideo(video)),
@@ -1875,7 +1883,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
         const videos = await getVideosForCustomer(db, Number(row.tenant_id), Number(row.customer_id));
-        const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file');
+        const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
 
         await logActivity(db, {
@@ -1893,6 +1901,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerId: row.customer_id,
             customerName: customerProfile.displayName || null,
             customerProfile,
+            tenantName: tenant?.name || null,
             tenantLogoUrl: tenant?.logo_file
                 ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
@@ -1919,7 +1928,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
-        const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file');
+        const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
 
         return {
@@ -1928,6 +1937,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerId: session.customer_id,
             customerName: customerProfile.displayName || null,
             customerProfile,
+            tenantName: tenant?.name || null,
             tenantLogoUrl: tenant?.logo_file
                 ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,

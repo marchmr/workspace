@@ -87,6 +87,8 @@
     padding: var(--space-md);
     display: grid;
     gap: var(--space-sm);
+    align-content: start;
+    grid-auto-rows: min-content;
     position: sticky;
     top: var(--space-sm);
     min-width: 0;
@@ -199,14 +201,28 @@
     cursor: not-allowed;
 }
 
+.kp-page .kp-nav-btn-logout {
+    margin-top: 2px;
+    border-color: #f1d7dc;
+    color: #a42843;
+    background: linear-gradient(180deg, #fffafb 0%, #fff2f5 100%);
+}
+
+.kp-page .kp-nav-btn-logout:hover {
+    background: linear-gradient(180deg, #fff3f6 0%, #ffe9ef 100%);
+    border-color: #e9b6c3;
+    color: #8d1838;
+}
+
+.kp-page .kp-nav-btn-logout:focus-visible {
+    outline: 2px solid rgba(164, 40, 67, 0.35);
+    outline-offset: 1px;
+}
+
 .kp-page .kp-sidebar-meta {
     display: grid;
     gap: 2px;
     margin-top: 2px;
-}
-
-.kp-page .kp-logout {
-    margin-top: var(--space-xs);
 }
 
 .kp-page .kp-main {
@@ -228,10 +244,6 @@
     gap: var(--space-sm);
     border-bottom: 1px solid var(--color-border);
     padding-bottom: var(--space-sm);
-}
-
-.kp-page .kp-main-logout {
-    display: none;
 }
 
 .kp-page .kp-searchbar {
@@ -370,7 +382,7 @@
 }
 
 .kp-page .vp-login-kicker {
-    margin: 14px 0 6px 0;
+    margin: 24px 0 6px 0;
     text-align: center;
     font-size: 0.8rem;
     font-weight: 700;
@@ -589,10 +601,12 @@
         padding: 14px;
         padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
         gap: 10px;
+        align-content: start;
+        grid-auto-rows: min-content;
     }
 
     .kp-page .kp-sidebar-brand {
-        min-height: 56px;
+        min-height: 52px;
     }
 
     .kp-page .kp-sidebar-brand img {
@@ -619,16 +633,6 @@
         grid-template-columns: 1fr;
         align-items: start;
     }
-
-    .kp-page .kp-main-logout {
-        display: inline-flex;
-        justify-self: start;
-    }
-
-    .kp-page .kp-logout {
-        display: none;
-    }
-
     .kp-page .kp-video-grid {
         grid-template-columns: 1fr !important;
         width: 100%;
@@ -653,8 +657,18 @@
         display: none;
     }
 
+    .kp-page .kp-nav {
+        gap: 6px;
+    }
+
+    .kp-page .kp-nav .btn {
+        min-height: 44px;
+        padding: 10px 12px;
+        border-radius: 12px;
+    }
+
     .kp-page .kp-sidebar-customer {
-        padding: 8px 0;
+        padding: 7px 0;
         gap: 2px;
     }
 
@@ -663,8 +677,8 @@
     }
 
     .kp-page .kp-sidebar-name {
-        font-size: 1.35rem;
-        line-height: 1.2;
+        font-size: 1.05rem;
+        line-height: 1.25;
     }
 
     .vp-inline-form {
