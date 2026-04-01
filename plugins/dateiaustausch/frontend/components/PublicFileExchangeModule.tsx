@@ -1,4 +1,4 @@
-import type { FormEvent, ReactNode } from 'react';
+import { useState, useEffect, useMemo, FormEvent, ReactNode } from 'react';
 
 type PortalFileItemLike = {
     id: number;
@@ -18,31 +18,7 @@ type FolderTreeNode = {
 };
 
 type Props = {
-    available: boolean;
-    filesError: string | null;
-    filesLoading: boolean;
-    filesSort: 'newest' | 'name' | 'folder';
-    filesFolderFilter: string;
-    folderOptions: string[];
-    folderTreeNodes: FolderTreeNode[];
-    visibleFiles: PortalFileItemLike[];
-    selectedFilesCount: number;
-    uploadFolderPath: string;
-    newFolderName: string;
-    uploadComment: string;
-    uploadProgress: { done: number; total: number } | null;
-    dragOverUpload: boolean;
     sessionToken: string;
-    onUploadSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
-    onFileInputChange: (fileList: FileList | null) => void;
-    onDropFiles: (fileList: FileList | null) => void;
-    onFolderSelectChange: (value: string) => void;
-    onNewFolderChange: (value: string) => void;
-    onCommentChange: (value: string) => void;
-    onFolderFilterChange: (value: string) => void;
-    onSortChange: (value: 'newest' | 'name' | 'folder') => void;
-    onDeleteFile: (id: number) => void;
-    onDragOverUploadChange: (value: boolean) => void;
     formatDate: (value: string | null | undefined) => string;
 };
 
@@ -79,34 +55,189 @@ function renderFolderTree(
 }
 
 export default function PublicFileExchangeModule(props: Props) {
-    const {
-        available,
-        filesError,
-        filesLoading,
-        filesSort,
-        filesFolderFilter,
-        folderOptions,
-        folderTreeNodes,
-        visibleFiles,
-        selectedFilesCount,
-        uploadFolderPath,
-        newFolderName,
-        uploadComment,
-        uploadProgress,
-        dragOverUpload,
-        sessionToken,
-        onUploadSubmit,
-        onFileInputChange,
-        onDropFiles,
-        onFolderSelectChange,
-        onNewFolderChange,
-        onCommentChange,
-        onFolderFilterChange,
-        onSortChange,
-        onDeleteFile,
-        onDragOverUploadChange,
-        formatDate,
-    } = props;
+    const { sessionToken, formatDate } = props;
+
+    const [available, setAvailable] = useState(true);
+    const [files, setFiles] = useState<PortalFileItemLike[]>([]);
+    const [filesLoading, setFilesLoading] = useState(false);
+    const [filesError, setFilesError] = useState<string | null>(null);
+    const [uploadFolderPath, setUploadFolderPath] = useState('');
+    const [newFolderName, setNewFolderName] = useState('');
+    const [uploadComment, setUploadComment] = useState('');
+    const [dragOverUpload, setDragOverUpload] = useState(false);
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const [filesSort, setFilesSort] = useState<'newest' | 'name' | 'folder'>('newest');
+    const [filesFolderFilter, setFilesFolderFilter] = useState('');
+    const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+
+    async function loadFiles() {
+        setFilesLoading(true);
+        setFilesError(null);
+        try {
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files?sessionToken=${encodeURIComponent(sessionToken)}`);
+            const payload = await res.json().catch(() => ([]));
+            if (res.status === 404) {
+                setAvailable(false);
+                setFiles([]);
+                return;
+            }
+            if (!res.ok) throw new Error((payload as any)?.error || 'Dateien konnten nicht geladen werden.');
+            setAvailable(true);
+            setFiles(Array.isArray(payload) ? payload : []);
+        } catch (err) {
+            setFilesError(err instanceof Error ? err.message : 'Dateien konnten nicht geladen werden.');
+            setFiles([]);
+        } finally {
+            setFilesLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        loadFiles();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sessionToken]);
+
+    async function uploadFile(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!available) {
+            setFilesError('Dateiaustausch-Plugin ist aktuell deaktiviert.');
+            return;
+        }
+        if (selectedFiles.length === 0) {
+            setFilesError('Bitte wählen Sie zuerst mindestens eine Datei aus.');
+            return;
+        }
+
+        setFilesLoading(true);
+        setFilesError(null);
+        setUploadProgress({ done: 0, total: selectedFiles.length });
+        try {
+            const resolvedFolder = (newFolderName.trim() || uploadFolderPath.trim());
+            let done = 0;
+            for (const file of selectedFiles) {
+                const formData = new FormData();
+                formData.append('sessionToken', sessionToken);
+                if (resolvedFolder) formData.append('folderPath', resolvedFolder);
+                if (uploadComment.trim()) formData.append('comment', uploadComment.trim());
+                formData.append('file', file);
+
+                const res = await fetch(`/api/plugins/dateiaustausch/public/files/upload?sessionToken=${encodeURIComponent(sessionToken)}`, {
+                    method: 'POST',
+                    headers: {
+                        'x-public-session-token': sessionToken,
+                    },
+                    body: formData,
+                });
+                const payload = await res.json().catch(() => ({}));
+                if (res.status === 404) {
+                    setAvailable(false);
+                    throw new Error('Dateiaustausch-Plugin ist aktuell deaktiviert.');
+                }
+                if (!res.ok) throw new Error(payload?.error || `Upload fehlgeschlagen (${file.name}).`);
+                done += 1;
+                setUploadProgress({ done, total: selectedFiles.length });
+            }
+
+            setSelectedFiles([]);
+            setUploadComment('');
+            setNewFolderName('');
+            await loadFiles();
+        } catch (err) {
+            setFilesError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
+        } finally {
+            setUploadProgress(null);
+            setFilesLoading(false);
+        }
+    }
+
+    function onFileInputChange(fileList: FileList | null) {
+        if (!fileList) {
+            setSelectedFiles([]);
+            return;
+        }
+        setSelectedFiles(Array.from(fileList));
+    }
+
+    function onDropFiles(fileList: FileList | null) {
+        onFileInputChange(fileList);
+        setDragOverUpload(false);
+    }
+
+    async function deleteFile(itemId: number) {
+        if (!available) return;
+        if (!window.confirm('Datei wirklich löschen?')) return;
+
+        setFilesLoading(true);
+        setFilesError(null);
+        try {
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files/${itemId}?sessionToken=${encodeURIComponent(sessionToken)}`, {
+                method: 'DELETE',
+                headers: {
+                    'x-public-session-token': sessionToken,
+                },
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (res.status === 404) {
+                setAvailable(false);
+                throw new Error('Dateiaustausch-Plugin ist aktuell deaktiviert.');
+            }
+            if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht gelöscht werden.');
+            await loadFiles();
+        } catch (err) {
+            setFilesError(err instanceof Error ? err.message : 'Datei konnte nicht gelöscht werden.');
+        } finally {
+            setFilesLoading(false);
+        }
+    }
+
+    const folderOptions = useMemo(() => {
+        const values = Array.from(new Set(files.map((entry) => String(entry.folderPath || '').trim()).filter(Boolean)));
+        values.sort((a, b) => a.localeCompare(b, 'de'));
+        return values;
+    }, [files]);
+
+    const visibleFiles = useMemo(() => {
+        let list = files.slice();
+        if (filesFolderFilter.trim()) {
+            list = list.filter((entry) => String(entry.folderPath || '') === filesFolderFilter.trim());
+        }
+        if (filesSort === 'name') {
+            list.sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || ''), 'de'));
+        } else if (filesSort === 'folder') {
+            list.sort((a, b) => `${a.folderPath || ''}/${a.displayName || ''}`.localeCompare(`${b.folderPath || ''}/${b.displayName || ''}`, 'de'));
+        } else {
+            list.sort((a, b) => new Date(String(b.updatedAt || 0)).getTime() - new Date(String(a.updatedAt || 0)).getTime());
+        }
+        return list;
+    }, [files, filesFolderFilter, filesSort]);
+
+    const folderTreeNodes = useMemo<FolderTreeNode[]>(() => {
+        type Node = { name: string; path: string; children: Record<string, Node>; count: number };
+        const root: Record<string, Node> = {};
+
+        for (const entry of files) {
+            const folder = String(entry.folderPath || '').trim();
+            const segments = folder ? folder.split('/').filter(Boolean) : [];
+            if (segments.length === 0) continue;
+            let cursor = root;
+            let currentPath = '';
+            for (const segment of segments) {
+                currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+                if (!cursor[segment]) {
+                    cursor[segment] = { name: segment, path: currentPath, children: {}, count: 0 };
+                }
+                cursor[segment].count += 1;
+                cursor = cursor[segment].children;
+            }
+        }
+
+        const toArray = (nodes: Record<string, Node>): FolderTreeNode[] =>
+            Object.values(nodes)
+                .sort((a, b) => a.name.localeCompare(b.name, 'de'))
+                .map((node) => ({ ...node, childList: toArray(node.children) }));
+
+        return toArray(root);
+    }, [files]);
 
     return (
         <div className="kp-coming-soon kp-module-shell">
@@ -126,22 +257,22 @@ export default function PublicFileExchangeModule(props: Props) {
                     <button
                         type="button"
                         className={`btn ${filesFolderFilter ? 'btn-secondary' : 'btn-primary'}`}
-                        onClick={() => onFolderFilterChange('')}
+                        onClick={() => setFilesFolderFilter('')}
                     >
                         Alle Ordner
                     </button>
-                    {renderFolderTree(folderTreeNodes, 0, filesFolderFilter, onFolderFilterChange)}
+                    {renderFolderTree(folderTreeNodes, 0, filesFolderFilter, setFilesFolderFilter)}
                 </aside>
 
                 <div className="kp-cloud-main">
-                    <form onSubmit={onUploadSubmit} className="vp-stack">
+                    <form onSubmit={uploadFile} className="vp-stack">
                         <div
                             className={`kp-cloud-dropzone${dragOverUpload ? ' is-dragover' : ''}`}
                             onDragOver={(event) => {
                                 event.preventDefault();
-                                onDragOverUploadChange(true);
+                                setDragOverUpload(true);
                             }}
-                            onDragLeave={() => onDragOverUploadChange(false)}
+                            onDragLeave={() => setDragOverUpload(false)}
                             onDrop={(event) => {
                                 event.preventDefault();
                                 onDropFiles(event.dataTransfer?.files || null);
@@ -158,20 +289,20 @@ export default function PublicFileExchangeModule(props: Props) {
                                 disabled={!available}
                                 required
                             />
-                            {selectedFilesCount > 0 && (
+                            {selectedFiles.length > 0 && (
                                 <p className="text-muted kp-cloud-selected-count">
-                                    {selectedFilesCount} Datei(en) ausgewählt
+                                    {selectedFiles.length} Datei(en) ausgewählt
                                 </p>
                             )}
                         </div>
-                        <select className="input" value={uploadFolderPath} onChange={(event) => onFolderSelectChange(event.target.value)}>
+                        <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
                             <option value="">Ordner auswählen (optional)</option>
                             {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
                         </select>
                         <input
                             className="input"
                             value={newFolderName}
-                            onChange={(event) => onNewFolderChange(event.target.value)}
+                            onChange={(event) => setNewFolderName(event.target.value)}
                             disabled={!available}
                             placeholder="Oder neuen Ordner anlegen, z. B. Fotos/April"
                         />
@@ -179,7 +310,7 @@ export default function PublicFileExchangeModule(props: Props) {
                             className="input"
                             rows={3}
                             value={uploadComment}
-                            onChange={(event) => onCommentChange(event.target.value)}
+                            onChange={(event) => setUploadComment(event.target.value)}
                             disabled={!available}
                             placeholder="Kommentar zur Datei (optional)"
                         />
@@ -191,11 +322,11 @@ export default function PublicFileExchangeModule(props: Props) {
                     {filesError && <p className="text-danger" style={{ marginTop: 10 }}>{filesError}</p>}
 
                     <div className="kp-cloud-toolbar">
-                        <select className="input" value={filesFolderFilter} onChange={(event) => onFolderFilterChange(event.target.value)}>
+                        <select className="input" value={filesFolderFilter} onChange={(event) => setFilesFolderFilter(event.target.value)}>
                             <option value="">Alle Ordner</option>
                             {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
                         </select>
-                        <select className="input" value={filesSort} onChange={(event) => onSortChange(event.target.value as 'newest' | 'name' | 'folder')}>
+                        <select className="input" value={filesSort} onChange={(event) => setFilesSort(event.target.value as 'newest' | 'name' | 'folder')}>
                             <option value="newest">Sortierung: Neueste</option>
                             <option value="name">Sortierung: Dateiname</option>
                             <option value="folder">Sortierung: Ordner</option>
@@ -237,7 +368,7 @@ export default function PublicFileExchangeModule(props: Props) {
                                             ) : <span className="text-muted">Gesperrt</span>}
                                         </td>
                                         <td style={{ padding: '10px 12px' }}>
-                                            <button className="btn btn-danger" type="button" onClick={() => onDeleteFile(entry.id)} disabled={filesLoading}>
+                                            <button className="btn btn-danger" type="button" onClick={() => deleteFile(entry.id)} disabled={filesLoading}>
                                                 Löschen
                                             </button>
                                         </td>

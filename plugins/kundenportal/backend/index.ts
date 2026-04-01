@@ -37,20 +37,6 @@ type PublicSessionRecord = {
     revoked_at: string | null;
 };
 
-type VideoRecord = {
-    id: number;
-    title: string;
-    description: string | null;
-    source_type: 'upload' | 'url';
-    video_url: string | null;
-    file_name: string | null;
-    mime_type: string | null;
-    size_bytes: number | null;
-    category: string;
-    customer_id: number | null;
-    created_at: string;
-    customer_name: string | null;
-};
 
 type PortalCustomerProfile = {
     displayName: string | null;
@@ -110,31 +96,6 @@ function buildTargetUrl(pathname: string, query: Record<string, any>): string {
     return `${SOURCE_PREFIX}${pathname}${qs ? `?${qs}` : ''}`;
 }
 
-async function proxyStream(
-    fastify: FastifyInstance,
-    request: FastifyRequest,
-    reply: FastifyReply,
-    videoId: number,
-): Promise<void> {
-    const response = await fastify.inject({
-        method: 'GET',
-        url: buildTargetUrl(`/stream/${videoId}`, request.query as Record<string, any>),
-        headers: {
-            host: String(request.headers.host || ''),
-            range: String(request.headers.range || ''),
-            'x-forwarded-proto': String((request.headers as any)['x-forwarded-proto'] || 'https'),
-            'user-agent': String(request.headers['user-agent'] || ''),
-        },
-    });
-
-    reply.code(response.statusCode);
-    for (const [key, value] of Object.entries(response.headers)) {
-        if (typeof value === 'undefined') continue;
-        if (key.toLowerCase() === 'content-length' && String(value) === '0') continue;
-        reply.header(key, value as any);
-    }
-    return reply.send(response.rawPayload);
-}
 
 async function readGlobalEncryptedSetting(
     db: any,
@@ -453,36 +414,6 @@ async function getPortalCustomerProfile(db: any, tenantId: number, vpCustomerId:
     };
 }
 
-async function getVideosForCustomer(db: any, tenantId: number, customerId: number): Promise<VideoRecord[]> {
-    const hasVideos = await db.schema.hasTable('vp_videos').catch(() => false);
-    if (!hasVideos) return [];
-    return db('vp_videos as v')
-        .leftJoin('vp_customers as c', function joinCustomer() {
-            this.on('c.id', '=', 'v.customer_id').andOn('c.tenant_id', '=', 'v.tenant_id');
-        })
-        .where('v.tenant_id', tenantId)
-        .andWhere('v.customer_id', customerId)
-        .select('v.*', 'c.name as customer_name')
-        .orderBy('v.created_at', 'desc');
-}
-
-function formatVideo(video: VideoRecord) {
-    return {
-        id: Number(video.id),
-        title: video.title,
-        description: video.description || '',
-        sourceType: video.source_type,
-        videoUrl: video.video_url,
-        fileName: video.file_name,
-        mimeType: video.mime_type,
-        sizeBytes: video.size_bytes,
-        category: video.category,
-        customerId: video.customer_id,
-        customerName: video.customer_name || null,
-        createdAt: video.created_at,
-        streamUrl: `${KUNDENPORTAL_PREFIX}/stream/${Number(video.id)}`,
-    };
-}
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
@@ -677,7 +608,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         });
 
         const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
-        const videos = await getVideosForCustomer(db, Number(row.tenant_id), Number(row.customer_id));
         const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
 
@@ -692,7 +622,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
-            videos: videos.map((video: VideoRecord) => formatVideo(video)),
         };
     });
 
@@ -713,7 +642,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
         const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
-        const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
         const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
 
@@ -728,7 +656,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
-            videos: videos.map((video: VideoRecord) => formatVideo(video)),
         };
     });
 
@@ -746,15 +673,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return { success: true };
     });
 
-    fastify.get('/public/stream/:videoId', {
-        exposeHeadRoute: false,
-        config: { policy: { public: true } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const videoId = Number((request.params as any)?.videoId || 0);
-        if (!Number.isInteger(videoId) || videoId <= 0) return reply.status(400).send({ error: 'Ungültige Video-ID' });
-        await proxyStream(fastify, request, reply, videoId);
-    });
 
     fastify.get('/public/logo', {
         exposeHeadRoute: false,

@@ -61,6 +61,14 @@ export interface PluginExtensionTile {
     defaultSize?: 'small' | 'medium' | 'large';
 }
 
+export interface PluginPortalTab {
+    id: string;
+    label: string;
+    icon: string; 
+    component: LazyExoticComponent<ComponentType<any>>;
+    order?: number;
+}
+
 export interface PluginSettingsPanel {
     component: LazyExoticComponent<ComponentType<any>>;
     permission?: string;
@@ -98,6 +106,7 @@ export interface PluginRegistryEntry {
     settingsPanel?: PluginSettingsPanel;
     searchProvider?: PluginSearchProvider;
     quickActions?: PluginQuickAction[];
+    portalTabs?: PluginPortalTab[];
 }
 
 export const pluginRegistry: PluginRegistryEntry[] = [
@@ -111,6 +120,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_crm_0 as any).settingsPanel && typeof (plugin_crm_0 as any).settingsPanel === 'object' ? (plugin_crm_0 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_crm_0 as any).searchProvider && typeof (plugin_crm_0 as any).searchProvider === 'object' ? (plugin_crm_0 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_crm_0 as any).quickActions) ? (plugin_crm_0 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_crm_0 as any).portalTabs) ? (plugin_crm_0 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'dateiaustausch',
@@ -122,6 +132,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_dateiaustausch_1 as any).settingsPanel && typeof (plugin_dateiaustausch_1 as any).settingsPanel === 'object' ? (plugin_dateiaustausch_1 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_dateiaustausch_1 as any).searchProvider && typeof (plugin_dateiaustausch_1 as any).searchProvider === 'object' ? (plugin_dateiaustausch_1 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_dateiaustausch_1 as any).quickActions) ? (plugin_dateiaustausch_1 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_dateiaustausch_1 as any).portalTabs) ? (plugin_dateiaustausch_1 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'kundenportal',
@@ -133,6 +144,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_kundenportal_2 as any).settingsPanel && typeof (plugin_kundenportal_2 as any).settingsPanel === 'object' ? (plugin_kundenportal_2 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_kundenportal_2 as any).searchProvider && typeof (plugin_kundenportal_2 as any).searchProvider === 'object' ? (plugin_kundenportal_2 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_kundenportal_2 as any).quickActions) ? (plugin_kundenportal_2 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_kundenportal_2 as any).portalTabs) ? (plugin_kundenportal_2 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'quicklinks',
@@ -144,6 +156,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_quicklinks_3 as any).settingsPanel && typeof (plugin_quicklinks_3 as any).settingsPanel === 'object' ? (plugin_quicklinks_3 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_quicklinks_3 as any).searchProvider && typeof (plugin_quicklinks_3 as any).searchProvider === 'object' ? (plugin_quicklinks_3 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_quicklinks_3 as any).quickActions) ? (plugin_quicklinks_3 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_quicklinks_3 as any).portalTabs) ? (plugin_quicklinks_3 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'todo',
@@ -155,6 +168,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_todo_4 as any).settingsPanel && typeof (plugin_todo_4 as any).settingsPanel === 'object' ? (plugin_todo_4 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_todo_4 as any).searchProvider && typeof (plugin_todo_4 as any).searchProvider === 'object' ? (plugin_todo_4 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_todo_4 as any).quickActions) ? (plugin_todo_4 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_todo_4 as any).portalTabs) ? (plugin_todo_4 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'videoplattform',
@@ -166,5 +180,6 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         settingsPanel: ((plugin_videoplattform_5 as any).settingsPanel && typeof (plugin_videoplattform_5 as any).settingsPanel === 'object' ? (plugin_videoplattform_5 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
         searchProvider: ((plugin_videoplattform_5 as any).searchProvider && typeof (plugin_videoplattform_5 as any).searchProvider === 'object' ? (plugin_videoplattform_5 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
         quickActions: (Array.isArray((plugin_videoplattform_5 as any).quickActions) ? (plugin_videoplattform_5 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_videoplattform_5 as any).portalTabs) ? (plugin_videoplattform_5 as any).portalTabs : []) as PluginPortalTab[],
     }
 ];

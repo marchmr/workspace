@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+
 type PortalVideoLike = {
     id: number;
     title: string;
@@ -9,9 +11,6 @@ type PortalVideoLike = {
 };
 
 type Props = {
-    videos: PortalVideoLike[];
-    keyword: string;
-    onKeywordChange: (value: string) => void;
     sessionToken: string;
     formatDate: (value: string | null | undefined) => string;
 };
@@ -26,7 +25,42 @@ function VideoEmptyIcon() {
 }
 
 export default function PublicVideosModule(props: Props) {
-    const { videos, keyword, onKeywordChange, sessionToken, formatDate } = props;
+    const { sessionToken, formatDate } = props;
+    const [keyword, setKeyword] = useState('');
+    const [videos, setVideos] = useState<PortalVideoLike[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let mounted = true;
+        setLoading(true);
+        fetch(`/api/plugins/videoplattform/public/portal/videos?sessionToken=${encodeURIComponent(sessionToken)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (!mounted) return;
+                setLoading(false);
+                if (data.videos) {
+                    setVideos(data.videos);
+                } else if (data.error) {
+                    setError(data.error);
+                }
+            })
+            .catch(err => {
+                if (!mounted) return;
+                setLoading(false);
+                setError(err.message);
+            });
+        return () => { mounted = false; };
+    }, [sessionToken]);
+
+    const filtered = videos.filter(v => 
+        v.title.toLowerCase().includes(keyword.toLowerCase()) || 
+        (v.description && v.description.toLowerCase().includes(keyword.toLowerCase())) ||
+        (v.category && v.category.toLowerCase().includes(keyword.toLowerCase()))
+    );
+
+    if (loading) return <div className="kp-empty-state">Laden...</div>;
+    if (error) return <div className="kp-empty-state" style={{color: 'var(--danger-color)'}}>Fehler: {error}</div>;
 
     return (
         <>
@@ -34,13 +68,13 @@ export default function PublicVideosModule(props: Props) {
                 <input
                     className="input"
                     value={keyword}
-                    onChange={(event) => onKeywordChange(event.target.value)}
+                    onChange={(event) => setKeyword(event.target.value)}
                     placeholder="Suchen nach Titel, Beschreibung oder Kategorie"
                 />
             </div>
 
             <div className="kp-video-grid">
-                {videos.length === 0 && (
+                {filtered.length === 0 && (
                     <div className="kp-empty-state">
                         <div className="kp-empty-icon">
                             <VideoEmptyIcon />
@@ -52,13 +86,13 @@ export default function PublicVideosModule(props: Props) {
                                 : 'Sobald neue Videos freigegeben sind, erscheinen sie hier automatisch.'}
                         </p>
                         {keyword.trim() ? (
-                            <button className="btn btn-secondary" type="button" onClick={() => onKeywordChange('')}>
+                            <button className="btn btn-secondary" type="button" onClick={() => setKeyword('')}>
                                 Suche zurücksetzen
                             </button>
                         ) : null}
                     </div>
                 )}
-                {videos.map((video) => {
+                {filtered.map((video) => {
                     const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(sessionToken)}`;
                     return (
                         <article key={video.id} className="kp-video-card">
@@ -81,3 +115,4 @@ export default function PublicVideosModule(props: Props) {
         </>
     );
 }
+

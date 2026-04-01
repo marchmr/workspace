@@ -1662,6 +1662,33 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         };
     });
 
+    fastify.get('/public/portal/videos', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        if (!sessionToken) return reply.status(401).send({ error: 'Session-Token ist erforderlich.' });
+
+        const rawHash = createHash('sha256').update(sessionToken).digest('hex');
+        const sessionTokenHash = createHash('sha256').update(rawHash).digest('hex');
+
+        const session = await db('vp_public_sessions')
+            .where({ token_hash: sessionTokenHash })
+            .andWhere('expires_at', '>', new Date())
+            .first();
+
+        if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
+
+        const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
+        return {
+            videos: videos.map((video) => formatVideo(video)),
+        };
+    });
+
     fastify.post('/public/access/by-code', {
         config: { policy: { public: true } },
         policy: { public: true },

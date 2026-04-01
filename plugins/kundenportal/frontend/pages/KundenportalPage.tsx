@@ -1,19 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
-import PublicVideosModule from '../../../videoplattform/frontend/components/PublicVideosModule';
-import PublicFileExchangeModule from '../../../dateiaustausch/frontend/components/PublicFileExchangeModule';
-import '../../../videoplattform/frontend/videoplattform.css';
+import { FormEvent, useEffect, useMemo, useState, Suspense } from 'react';
+import { pluginRegistry } from '../../../../frontend/src/pluginRegistry';
 import '../kundenportal.css';
-
-type PortalVideo = {
-    id: number;
-    title: string;
-    description: string;
-    category: string;
-    sourceType: 'upload' | 'url';
-    streamUrl: string;
-    customerName: string | null;
-    createdAt: string;
-};
 
 type SessionAccessResponse = {
     sessionToken: string;
@@ -29,34 +16,11 @@ type SessionAccessResponse = {
     tenantLogoUrl?: string | null;
     tenantName?: string | null;
     logoUrl?: string | null;
-    videos: PortalVideo[];
-};
-
-type PortalFileItem = {
-    id: number;
-    folderPath: string;
-    displayName: string;
-    workflowStatus: 'pending' | 'clean' | 'rejected' | 'reviewed';
-    currentVersionId: number | null;
-    currentVersionNo: number | null;
-    currentScanStatus: string | null;
-    currentVersionCreatedAt: string | null;
-    updatedAt: string | null;
-};
-
-type FolderTreeNode = {
-    name: string;
-    path: string;
-    count: number;
-    childList: FolderTreeNode[];
 };
 
 const API_BASE = '/api/plugins/kundenportal/public';
 const STORAGE_SESSION_KEY = 'kundenportal.session';
 const STORAGE_EMAIL_KEY = 'kundenportal.email';
-
-type PortalTab = 'videos' | 'files';
-type PortalNavKey = 'videos' | 'files' | 'docs' | 'profile' | 'logout';
 
 function formatDate(value: string | null | undefined): string {
     if (!value) return '-';
@@ -67,43 +31,23 @@ function formatDate(value: string | null | undefined): string {
     }).format(date);
 }
 
-function NavIcon({ nav }: { nav: PortalNavKey }) {
-    if (nav === 'files') {
+function DynamicNavIcon({ iconHtml }: { iconHtml: string }) {
+    if (!iconHtml) {
         return (
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M4 7a2 2 0 0 1 2-2h5l2 2h5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
             </svg>
         );
     }
-    if (nav === 'docs') {
-        return (
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                <path d="M14 3v5h5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-        );
-    }
-    if (nav === 'profile') {
-        return (
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                <path d="M4 21c1.2-3.3 4.1-5 8-5s6.8 1.7 8 5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-        );
-    }
-    if (nav === 'logout') {
-        return (
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-                <path d="M14 8l5 4-5 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M9 12h10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-        );
-    }
+    return <span dangerouslySetInnerHTML={{ __html: iconHtml }} />;
+}
+
+function LogoutIcon() {
     return (
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            <path d="M10 9.5v5l4-2.5-4-2.5z" fill="currentColor" />
+            <path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M14 8l5 4-5 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M9 12h10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>
     );
 }
@@ -117,7 +61,9 @@ function HamburgerIcon() {
 }
 
 export default function KundenportalPage() {
-    const [activeTab, setActiveTab] = useState<PortalTab>('videos');
+    const portalTabs = useMemo(() => pluginRegistry.flatMap((p: any) => p.portalTabs || []), []);
+    
+    const [activeTab, setActiveTab] = useState<string>(portalTabs[0]?.id || '');
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [email, setEmail] = useState(localStorage.getItem(STORAGE_EMAIL_KEY) || '');
     const [code, setCode] = useState('');
@@ -125,24 +71,17 @@ export default function KundenportalPage() {
     const [access, setAccess] = useState<SessionAccessResponse | null>(null);
     const [expectedHost, setExpectedHost] = useState('');
     const [portalBrand, setPortalBrand] = useState('Kundenportal');
-    const [keyword, setKeyword] = useState('');
     const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
     const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
     const [portalLogoHeight, setPortalLogoHeight] = useState(52);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [files, setFiles] = useState<PortalFileItem[]>([]);
-    const [filesLoading, setFilesLoading] = useState(false);
-    const [filesError, setFilesError] = useState<string | null>(null);
-    const [uploadFolderPath, setUploadFolderPath] = useState('');
-    const [newFolderName, setNewFolderName] = useState('');
-    const [uploadComment, setUploadComment] = useState('');
-    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-    const [filesSort, setFilesSort] = useState<'newest' | 'name' | 'folder'>('newest');
-    const [filesFolderFilter, setFilesFolderFilter] = useState('');
-    const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
-    const [dragOverUpload, setDragOverUpload] = useState(false);
-    const [fileExchangeAvailable, setFileExchangeAvailable] = useState<boolean | null>(null);
+
+    useEffect(() => {
+        if (!activeTab && portalTabs.length > 0) {
+            setActiveTab(portalTabs[0].id);
+        }
+    }, [activeTab, portalTabs]);
 
     useEffect(() => {
         let active = true;
@@ -184,38 +123,6 @@ export default function KundenportalPage() {
         };
     }, []);
 
-    useEffect(() => {
-        let mounted = true;
-        fetch(`${API_BASE}/modules`)
-            .then((res) => res.json())
-            .then((payload) => {
-                if (!mounted) return;
-                if (typeof payload?.dateiaustauschEnabled === 'boolean') {
-                    setFileExchangeAvailable(payload.dateiaustauschEnabled);
-                }
-            })
-            .catch(() => undefined);
-        return () => {
-            mounted = false;
-        };
-    }, []);
-
-    useEffect(() => {
-        if (fileExchangeAvailable === false && activeTab === 'files') {
-            setActiveTab('videos');
-        }
-    }, [fileExchangeAvailable, activeTab]);
-
-    const visibleVideos = useMemo(() => {
-        if (!access) return [];
-        const normalized = keyword.trim().toLowerCase();
-        if (!normalized) return access.videos;
-        return access.videos.filter((video) => {
-            const haystack = `${video.title} ${video.description} ${video.category} ${video.customerName || ''}`.toLowerCase();
-            return haystack.includes(normalized);
-        });
-    }, [access, keyword]);
-
     const customerHeader = useMemo(() => {
         if (!access) return { displayName: 'Ihre Firma', companyName: null as string | null, contactName: null as string | null };
 
@@ -235,88 +142,6 @@ export default function KundenportalPage() {
         };
     }, [access]);
 
-    async function loadFiles(sessionToken: string) {
-        setFilesLoading(true);
-        setFilesError(null);
-        try {
-            const res = await fetch(`/api/plugins/dateiaustausch/public/files?sessionToken=${encodeURIComponent(sessionToken)}`);
-            const payload = await res.json().catch(() => ([]));
-            if (res.status === 404) {
-                setFileExchangeAvailable(false);
-                setFiles([]);
-                return;
-            }
-            if (!res.ok) throw new Error((payload as any)?.error || 'Dateien konnten nicht geladen werden.');
-            setFileExchangeAvailable(true);
-            setFiles(Array.isArray(payload) ? (payload as PortalFileItem[]) : []);
-        } catch (err) {
-            setFilesError(err instanceof Error ? err.message : 'Dateien konnten nicht geladen werden.');
-            setFiles([]);
-        } finally {
-            setFilesLoading(false);
-        }
-    }
-
-    useEffect(() => {
-        if (!access?.sessionToken) {
-            setFiles([]);
-            return;
-        }
-        if (activeTab !== 'files') return;
-        if (fileExchangeAvailable === false) return;
-        loadFiles(access.sessionToken).catch(() => undefined);
-    }, [activeTab, access?.sessionToken, fileExchangeAvailable]);
-
-    const folderOptions = useMemo(() => {
-        const values = Array.from(new Set(files.map((entry) => String(entry.folderPath || '').trim()).filter(Boolean)));
-        values.sort((a, b) => a.localeCompare(b, 'de'));
-        return values;
-    }, [files]);
-
-    const visibleFiles = useMemo(() => {
-        let list = files.slice();
-        if (filesFolderFilter.trim()) {
-            list = list.filter((entry) => String(entry.folderPath || '') === filesFolderFilter.trim());
-        }
-        if (filesSort === 'name') {
-            list.sort((a, b) => String(a.displayName || '').localeCompare(String(b.displayName || ''), 'de'));
-        } else if (filesSort === 'folder') {
-            list.sort((a, b) => `${a.folderPath || ''}/${a.displayName || ''}`.localeCompare(`${b.folderPath || ''}/${b.displayName || ''}`, 'de'));
-        } else {
-            list.sort((a, b) => new Date(String(b.updatedAt || 0)).getTime() - new Date(String(a.updatedAt || 0)).getTime());
-        }
-        return list;
-    }, [files, filesFolderFilter, filesSort]);
-
-    const folderTreeNodes = useMemo<FolderTreeNode[]>(() => {
-        type Node = { name: string; path: string; children: Record<string, Node>; count: number };
-        const root: Record<string, Node> = {};
-
-        for (const entry of files) {
-            const folder = String(entry.folderPath || '').trim();
-            const segments = folder ? folder.split('/').filter(Boolean) : [];
-            if (segments.length === 0) continue;
-            let cursor = root;
-            let currentPath = '';
-            for (const segment of segments) {
-                currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-                if (!cursor[segment]) {
-                    cursor[segment] = { name: segment, path: currentPath, children: {}, count: 0 };
-                }
-                cursor[segment].count += 1;
-                cursor = cursor[segment].children;
-            }
-        }
-
-        const toArray = (nodes: Record<string, Node>): FolderTreeNode[] =>
-            Object.values(nodes)
-                .sort((a, b) => a.name.localeCompare(b.name, 'de'))
-                .map((node) => ({ ...node, childList: toArray(node.children) }));
-
-        return toArray(root);
-    }, [files]);
-
-    // Dynamic title and favicon
     useEffect(() => {
         const originalTitle = document.title;
         const originalHref = (document.querySelector('link[rel="icon"]') as HTMLLinkElement)?.href;
@@ -407,104 +232,6 @@ export default function KundenportalPage() {
         }
     }
 
-    async function uploadFile(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (!access?.sessionToken) return;
-        if (fileExchangeAvailable === false) {
-            setFilesError('Dateiaustausch-Plugin ist aktuell deaktiviert.');
-            return;
-        }
-        if (selectedFiles.length === 0) {
-            setFilesError('Bitte wählen Sie zuerst mindestens eine Datei aus.');
-            return;
-        }
-
-        setFilesLoading(true);
-        setFilesError(null);
-        setUploadProgress({ done: 0, total: selectedFiles.length });
-        try {
-            const resolvedFolder = (newFolderName.trim() || uploadFolderPath.trim());
-            let done = 0;
-            for (const file of selectedFiles) {
-                const formData = new FormData();
-                formData.append('sessionToken', access.sessionToken);
-                if (resolvedFolder) formData.append('folderPath', resolvedFolder);
-                if (uploadComment.trim()) formData.append('comment', uploadComment.trim());
-                formData.append('file', file);
-
-                const res = await fetch(`/api/plugins/dateiaustausch/public/files/upload?sessionToken=${encodeURIComponent(access.sessionToken)}`, {
-                    method: 'POST',
-                    headers: {
-                        'x-public-session-token': access.sessionToken,
-                    },
-                    body: formData,
-                });
-                const payload = await res.json().catch(() => ({}));
-                if (res.status === 404) {
-                    setFileExchangeAvailable(false);
-                    throw new Error('Dateiaustausch-Plugin ist aktuell deaktiviert.');
-                }
-                if (!res.ok) throw new Error(payload?.error || `Upload fehlgeschlagen (${file.name}).`);
-                done += 1;
-                setUploadProgress({ done, total: selectedFiles.length });
-            }
-
-            setSelectedFiles([]);
-            setUploadComment('');
-            setNewFolderName('');
-            await loadFiles(access.sessionToken);
-        } catch (err) {
-            setFilesError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
-        } finally {
-            setUploadProgress(null);
-            setFilesLoading(false);
-        }
-    }
-
-    function onFileInputChange(fileList: FileList | null) {
-        if (!fileList) {
-            setSelectedFiles([]);
-            return;
-        }
-        setSelectedFiles(Array.from(fileList));
-    }
-
-    function onDropFiles(fileList: FileList | null) {
-        onFileInputChange(fileList);
-        setDragOverUpload(false);
-    }
-
-    async function deleteFile(itemId: number) {
-        if (!access?.sessionToken) return;
-        if (fileExchangeAvailable === false) {
-            setFilesError('Dateiaustausch-Plugin ist aktuell deaktiviert.');
-            return;
-        }
-        if (!window.confirm('Datei wirklich löschen?')) return;
-
-        setFilesLoading(true);
-        setFilesError(null);
-        try {
-            const res = await fetch(`/api/plugins/dateiaustausch/public/files/${itemId}?sessionToken=${encodeURIComponent(access.sessionToken)}`, {
-                method: 'DELETE',
-                headers: {
-                    'x-public-session-token': access.sessionToken,
-                },
-            });
-            const payload = await res.json().catch(() => ({}));
-            if (res.status === 404) {
-                setFileExchangeAvailable(false);
-                throw new Error('Dateiaustausch-Plugin ist aktuell deaktiviert.');
-            }
-            if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht gelöscht werden.');
-            await loadFiles(access.sessionToken);
-        } catch (err) {
-            setFilesError(err instanceof Error ? err.message : 'Datei konnte nicht gelöscht werden.');
-        } finally {
-            setFilesLoading(false);
-        }
-    }
-
     async function resetAccess() {
         const token = localStorage.getItem(STORAGE_SESSION_KEY) || '';
         localStorage.removeItem(STORAGE_SESSION_KEY);
@@ -516,16 +243,15 @@ export default function KundenportalPage() {
             }).catch(() => undefined);
         }
         setAccess(null);
-        setKeyword('');
         setCode('');
         setCodeRequested(false);
         setError(null);
-        setFiles([]);
-        setFilesError(null);
-        setSelectedFiles([]);
-        setActiveTab('videos');
+        setActiveTab(portalTabs[0]?.id || '');
         setMobileNavOpen(false);
     }
+
+    const activeTabConfig = portalTabs.find(t => t.id === activeTab);
+    const ActiveComponent = activeTabConfig?.component;
 
     return (
         <div className="vp-public-page kp-page">
@@ -613,103 +339,51 @@ export default function KundenportalPage() {
                                 </div>
 
                                 <nav className="kp-nav">
-                                    <p className="kp-nav-section">Aktiv</p>
-                                    <button
-                                        className={`btn kp-nav-btn ${activeTab === 'videos' ? 'btn-primary is-active' : 'btn-secondary'}`}
-                                        type="button"
-                                        onClick={() => { setActiveTab('videos'); setMobileNavOpen(false); }}
-                                    >
-                                        <span className="kp-nav-icon"><NavIcon nav="videos" /></span>
-                                        Videos
-                                    </button>
-                                    {fileExchangeAvailable !== false ? (
+                                    {portalTabs.length > 0 && (
+                                        <p className="kp-nav-section">Module</p>
+                                    )}
+                                    {portalTabs.map((tab) => (
                                         <button
-                                            className={`btn kp-nav-btn ${activeTab === 'files' ? 'btn-primary is-active' : 'btn-secondary'}`}
+                                            key={tab.id}
+                                            className={`btn kp-nav-btn ${activeTab === tab.id ? 'btn-primary is-active' : 'btn-secondary'}`}
                                             type="button"
-                                            onClick={() => { setActiveTab('files'); setMobileNavOpen(false); }}
+                                            onClick={() => { setActiveTab(tab.id); setMobileNavOpen(false); }}
                                         >
-                                            <span className="kp-nav-icon"><NavIcon nav="files" /></span>
-                                            Dateiaustausch
+                                            <span className="kp-nav-icon"><DynamicNavIcon iconHtml={tab.icon || ''} /></span>
+                                            {tab.label}
                                         </button>
-                                    ) : null}
+                                    ))}
 
-                                    <p className="kp-nav-section" style={{ marginTop: '4px' }}>Demnächst</p>
-                                    <button className="btn kp-nav-btn is-disabled" type="button" disabled>
-                                        <span className="kp-nav-icon"><NavIcon nav="docs" /></span>
-                                        Dokumente
-                                        <span className="kp-nav-badge">Coming soon</span>
-                                    </button>
-                                    <button className="btn kp-nav-btn is-disabled" type="button" disabled>
-                                        <span className="kp-nav-icon"><NavIcon nav="profile" /></span>
-                                        Profil
-                                        <span className="kp-nav-badge">Coming soon</span>
-                                    </button>
-                                    <p className="kp-nav-section">Konto</p>
+                                    <p className="kp-nav-section" style={{ marginTop: 'auto' }}>Konto</p>
                                     <button
                                         className="btn kp-nav-btn kp-nav-btn-logout btn-secondary"
                                         type="button"
                                         onClick={resetAccess}
                                     >
-                                        <span className="kp-nav-icon"><NavIcon nav="logout" /></span>
+                                        <span className="kp-nav-icon"><LogoutIcon /></span>
                                         Abmelden
                                     </button>
                                 </nav>
-
                                 <div className="kp-sidebar-meta">
-                                    <p className="text-muted">Freigeschaltet bis: {formatDate(access.expiresAt)}</p>
-                                    <p className="text-muted">Videos: {access.videos.length}</p>
+                                    <p className="text-muted" style={{ margin: 0 }}>Freigeschaltet bis: {formatDate(access.expiresAt)}</p>
                                 </div>
                             </aside>
 
                             <main className="kp-main card">
                                 <header className="kp-main-header">
                                     <div>
-                                        <h1 className="page-title">{activeTab === 'videos' ? 'Videos' : 'Dateiaustausch'}</h1>
-                                        <p className="text-muted">
-                                            {activeTab === 'videos' ? `${visibleVideos.length} von ${access.videos.length} Videos` : 'Sicherer Dateiaustausch mit Versionierung'}
-                                        </p>
+                                        <h1 className="page-title">{activeTabConfig?.label || 'Kundenportal'}</h1>
                                     </div>
                                 </header>
 
-                                {activeTab === 'videos' && (
-                                    <PublicVideosModule
-                                        videos={visibleVideos}
-                                        keyword={keyword}
-                                        onKeywordChange={setKeyword}
-                                        sessionToken={access.sessionToken}
-                                        formatDate={formatDate}
-                                    />
-                                )}
-
-                                {activeTab === 'files' && (
-                                    <PublicFileExchangeModule
-                                        available={fileExchangeAvailable !== false}
-                                        filesError={filesError}
-                                        filesLoading={filesLoading}
-                                        filesSort={filesSort}
-                                        filesFolderFilter={filesFolderFilter}
-                                        folderOptions={folderOptions}
-                                        folderTreeNodes={folderTreeNodes}
-                                        visibleFiles={visibleFiles}
-                                        selectedFilesCount={selectedFiles.length}
-                                        uploadFolderPath={uploadFolderPath}
-                                        newFolderName={newFolderName}
-                                        uploadComment={uploadComment}
-                                        uploadProgress={uploadProgress}
-                                        dragOverUpload={dragOverUpload}
-                                        sessionToken={access.sessionToken}
-                                        onUploadSubmit={uploadFile}
-                                        onFileInputChange={onFileInputChange}
-                                        onDropFiles={onDropFiles}
-                                        onFolderSelectChange={setUploadFolderPath}
-                                        onNewFolderChange={setNewFolderName}
-                                        onCommentChange={setUploadComment}
-                                        onFolderFilterChange={setFilesFolderFilter}
-                                        onSortChange={setFilesSort}
-                                        onDeleteFile={deleteFile}
-                                        onDragOverUploadChange={setDragOverUpload}
-                                        formatDate={formatDate}
-                                    />
+                                {ActiveComponent ? (
+                                    <Suspense fallback={<div style={{ padding: 20 }}>Lade Modul...</div>}>
+                                        <ActiveComponent sessionToken={access.sessionToken} formatDate={formatDate} />
+                                    </Suspense>
+                                ) : (
+                                    <div style={{ padding: 20 }} className="text-muted">
+                                        Willkommen im Kundenportal. Wählen Sie einen Bereich aus dem Menü.
+                                    </div>
                                 )}
                             </main>
                         </div>
