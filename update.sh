@@ -175,11 +175,8 @@ ensure_upload_mount_hardening() {
     rsync -a "$APP_DIR/uploads/" "$UPLOADS_DATA_DIR/" 2>/dev/null || true
   fi
 
-  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+bind" /etc/fstab; then
-    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none bind 0 0" >> /etc/fstab
-  fi
-  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+remount,bind,noexec,nodev,nosuid" /etc/fstab; then
-    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none remount,bind,noexec,nodev,nosuid 0 0" >> /etc/fstab
+  if ! mountpoint -q "$APP_DIR/uploads"; then
+    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
   fi
 
   if ! mountpoint -q "$APP_DIR/uploads"; then
