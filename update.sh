@@ -227,7 +227,6 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 LockPersonality=true
-MemoryDenyWriteExecute=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 SystemCallArchitectures=native
