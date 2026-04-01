@@ -17,6 +17,12 @@ type SessionAccessResponse = {
     expiresAt: string;
     customerId: number;
     customerName: string | null;
+    customerProfile?: {
+        displayName?: string | null;
+        companyName?: string | null;
+        firstName?: string | null;
+        lastName?: string | null;
+    } | null;
     tenantLogoUrl?: string | null;
     logoUrl?: string | null;
     videos: PortalVideo[];
@@ -92,6 +98,29 @@ export default function VideoPlatformPortalPage() {
             return haystack.includes(normalized);
         });
     }, [access, keyword]);
+
+    const customerHeader = useMemo(() => {
+        if (!access) {
+            return {
+                displayName: 'Ihre Firma',
+                companyName: null as string | null,
+                contactName: null as string | null,
+            };
+        }
+
+        const profile = access.customerProfile || {};
+        const companyName = String(profile.companyName || '').trim() || null;
+        const firstName = String(profile.firstName || '').trim();
+        const lastName = String(profile.lastName || '').trim();
+        const contactName = `${firstName} ${lastName}`.trim() || null;
+        const displayName = String(profile.displayName || access.customerName || companyName || contactName || 'Ihre Firma').trim();
+
+        return {
+            displayName,
+            companyName,
+            contactName,
+        };
+    }, [access]);
 
     async function requestCode(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -248,7 +277,15 @@ export default function VideoPlatformPortalPage() {
                         <div className="vp-head-row">
                             <div>
                                 <h1 className="page-title">Ihre Videos</h1>
-                                <p className="text-muted">{access.customerName || 'Ihre Firma'}</p>
+                                <div className="vp-customer-header">
+                                    <p className="vp-customer-display">{customerHeader.displayName}</p>
+                                    {customerHeader.companyName && (
+                                        <p className="text-muted">Firma: {customerHeader.companyName}</p>
+                                    )}
+                                    {customerHeader.contactName && (
+                                        <p className="text-muted">Ansprechpartner: {customerHeader.contactName}</p>
+                                    )}
+                                </div>
                             </div>
                             <button className="btn btn-secondary" onClick={resetAccess}>Abmelden</button>
                         </div>
@@ -262,15 +299,15 @@ export default function VideoPlatformPortalPage() {
                             />
                         </div>
 
-                        <div className="vp-video-grid" style={{ marginTop: 'var(--space-md)' }}>
+                        <div className="vp-video-grid vp-portal-video-grid" style={{ marginTop: 'var(--space-md)' }}>
                             {visibleVideos.length === 0 && <div className="vp-empty">Keine Videos gefunden.</div>}
                             {visibleVideos.map((video) => {
                                 const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(access.sessionToken)}`;
                                 return (
-                                    <article key={video.id} className="vp-video-card">
-                                        <div className="vp-video-preview">
+                                    <article key={video.id} className="vp-video-card vp-portal-video-card">
+                                        <div className="vp-video-preview vp-portal-video-preview">
                                             {video.sourceType === 'upload' ? (
-                                                <video controls playsInline controlsList="nodownload" src={streamUrl} />
+                                                <video className="vp-portal-player" controls playsInline controlsList="nodownload" src={streamUrl} />
                                             ) : (
                                                 <a className="btn btn-primary" href={streamUrl} target="_blank" rel="noreferrer">
                                                     Externes Video öffnen

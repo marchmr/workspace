@@ -80,6 +80,13 @@ type ResolvedCustomerSource = {
     hasLinkColumn: boolean;
 };
 
+type PortalCustomerProfile = {
+    displayName: string | null;
+    companyName: string | null;
+    firstName: string | null;
+    lastName: string | null;
+};
+
 async function ensureVideoplattformSchema(db: any): Promise<void> {
     const hasCustomers = await db.schema.hasTable('vp_customers');
     if (!hasCustomers) {
@@ -666,6 +673,63 @@ function buildUniqueCustomerName(baseName: string, crmId: number): string {
     const normalizedBase = String(baseName || '').trim() || `CRM-Kunde #${crmId}`;
     const fallback = `${normalizedBase} (#${crmId})`;
     return fallback.slice(0, 255);
+}
+
+function normalizeText(value: unknown): string | null {
+    const text = String(value || '').trim();
+    return text ? text : null;
+}
+
+async function getPortalCustomerProfile(db: any, tenantId: number, vpCustomerId: number): Promise<PortalCustomerProfile> {
+    const customer = await db('vp_customers')
+        .where({ tenant_id: tenantId, id: vpCustomerId })
+        .first('name', 'crm_customer_id');
+
+    if (!customer) {
+        return {
+            displayName: null,
+            companyName: null,
+            firstName: null,
+            lastName: null,
+        };
+    }
+
+    const fallbackName = normalizeText(customer.name);
+    const crmCustomerId = Number(customer.crm_customer_id || 0);
+    if (!crmCustomerId) {
+        return {
+            displayName: fallbackName,
+            companyName: null,
+            firstName: null,
+            lastName: null,
+        };
+    }
+
+    const hasCrmCustomers = await db.schema.hasTable('crm_customers').catch(() => false);
+    if (!hasCrmCustomers) {
+        return {
+            displayName: fallbackName,
+            companyName: null,
+            firstName: null,
+            lastName: null,
+        };
+    }
+
+    const crmCustomer = await db('crm_customers')
+        .where({ tenant_id: tenantId, id: crmCustomerId })
+        .first('company_name', 'first_name', 'last_name');
+
+    const companyName = normalizeText(crmCustomer?.company_name);
+    const firstName = normalizeText(crmCustomer?.first_name);
+    const lastName = normalizeText(crmCustomer?.last_name);
+    const fullName = normalizeText([firstName, lastName].filter(Boolean).join(' '));
+
+    return {
+        displayName: companyName || fullName || fallbackName,
+        companyName,
+        firstName,
+        lastName,
+    };
 }
 
 async function resolveCustomerSource(db: any): Promise<ResolvedCustomerSource> {
@@ -1791,7 +1855,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             created_at: new Date(),
         });
 
-        const customer = await db('vp_customers').where({ id: row.customer_id, tenant_id: row.tenant_id }).first('name');
+        const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
         const videos = await getVideosForCustomer(db, Number(row.tenant_id), Number(row.customer_id));
         const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file');
         const fallbackLogoFile = await readPublicLogoFile(db);
@@ -1809,7 +1873,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             sessionToken,
             expiresAt: sessionExpiresAt.toISOString(),
             customerId: row.customer_id,
-            customerName: customer?.name || null,
+            customerName: customerProfile.displayName || null,
+            customerProfile,
             tenantLogoUrl: tenant?.logo_file
                 ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
@@ -1834,7 +1899,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const customer = await db('vp_customers').where({ id: session.customer_id, tenant_id: session.tenant_id }).first('name');
+        const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
         const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file');
         const fallbackLogoFile = await readPublicLogoFile(db);
@@ -1843,7 +1908,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             sessionToken,
             expiresAt: session.expires_at,
             customerId: session.customer_id,
-            customerName: customer?.name || null,
+            customerName: customerProfile.displayName || null,
+            customerProfile,
             tenantLogoUrl: tenant?.logo_file
                 ? `/api/plugins/videoplattform/public/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
                 : null,
