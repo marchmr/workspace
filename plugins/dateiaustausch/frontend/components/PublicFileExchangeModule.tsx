@@ -545,44 +545,17 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
-    function triggerBrowserDownload(url: string): void {
-        const link = document.createElement('a');
-        link.href = url;
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-    }
-
     async function downloadEntry(entry: BrowserEntry | null) {
         if (!entry) {
             const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
-            if (downloadInFlightRef.current) return;
-            downloadInFlightRef.current = true;
-            setDownloadPending(true);
-            try {
-                triggerBrowserDownload(url);
-            } finally {
-                window.setTimeout(() => {
-                    downloadInFlightRef.current = false;
-                    setDownloadPending(false);
-                }, 1200);
-            }
+            const folderName = getBaseName(currentPath) || 'Dateien';
+            await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (entry.kind === 'folder') {
             const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(entry.fullPath)}`;
-            if (downloadInFlightRef.current) return;
-            downloadInFlightRef.current = true;
-            setDownloadPending(true);
-            try {
-                triggerBrowserDownload(url);
-            } finally {
-                window.setTimeout(() => {
-                    downloadInFlightRef.current = false;
-                    setDownloadPending(false);
-                }, 1200);
-            }
+            const folderName = getBaseName(entry.fullPath) || 'Ordner';
+            await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (!entry.file.currentVersionId) return;
@@ -1006,22 +979,16 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             >
                                 <ActionIcon path={ICONS.paste} /> Einfügen
                             </button>
-                            <button
-                                className="kp-fm-menu-item tile-grid-context-menu-item"
-                                type="button"
-                                disabled={downloadPending}
-                                onClick={() => {
-                                    const folderPath = menuState.key.replace('folder:', '');
-                                    const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
-                                    if (downloadInFlightRef.current) return;
-                                    downloadInFlightRef.current = true;
-                                    setDownloadPending(true);
-                                    triggerBrowserDownload(url);
-                                    window.setTimeout(() => {
-                                        downloadInFlightRef.current = false;
-                                        setDownloadPending(false);
-                                    }, 1200);
-                                    setMenuState(null);
+                                <button
+                                    className="kp-fm-menu-item tile-grid-context-menu-item"
+                                    type="button"
+                                    disabled={downloadPending}
+                                    onClick={async () => {
+                                        const folderPath = menuState.key.replace('folder:', '');
+                                        const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
+                                        const folderName = getBaseName(folderPath) || 'Ordner';
+                                        await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
+                                        setMenuState(null);
                                 }}
                             >
                                 <ActionIcon path={ICONS.download} /> Download

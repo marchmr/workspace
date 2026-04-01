@@ -355,31 +355,18 @@ export default function DateiaustauschPage() {
         }
     }
 
-    function triggerBrowserDownload(url: string): void {
-        const link = document.createElement('a');
-        link.href = url;
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-    }
-
     async function downloadEntry(entry: BrowserEntry | null) {
         if (!selectedCustomerId) return;
         if (!entry) {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
-            if (downloadPending) return;
-            setDownloadPending(true);
-            triggerBrowserDownload(url);
-            window.setTimeout(() => setDownloadPending(false), 1200);
+            const folderName = getBaseName(currentPath) || `kunde-${selectedCustomerId}`;
+            await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (entry.kind === 'folder') {
             const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(entry.fullPath)}`;
-            if (downloadPending) return;
-            setDownloadPending(true);
-            triggerBrowserDownload(url);
-            window.setTimeout(() => setDownloadPending(false), 1200);
+            const folderName = getBaseName(entry.fullPath) || 'Ordner';
+            await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (!entry.file.currentVersionId) return;
@@ -597,14 +584,12 @@ export default function DateiaustauschPage() {
                                 <button
                                     className="kp-fm-menu-item tile-grid-context-menu-item"
                                     type="button"
-                                    onClick={() => {
+                                    onClick={async () => {
                                         if (!selectedCustomerId) return;
                                         const folderPath = menuState.key.replace('folder:', '');
                                         const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(folderPath)}`;
-                                        if (downloadPending) return;
-                                        setDownloadPending(true);
-                                        triggerBrowserDownload(url);
-                                        window.setTimeout(() => setDownloadPending(false), 1200);
+                                        const folderName = getBaseName(folderPath) || 'Ordner';
+                                        await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
                                         setMenuState(null);
                                     }}
                                 >
