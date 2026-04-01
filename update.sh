@@ -221,6 +221,7 @@ configure_app_runtime_hardening() {
 
   cat > "$dropin_file" <<EOF
 [Service]
+MemoryDenyWriteExecute=false
 PrivateTmp=true
 ProtectHome=true
 ProtectKernelTunables=true
@@ -232,6 +233,28 @@ RestrictRealtime=true
 SystemCallArchitectures=native
 ReadWritePaths=$APP_DIR/uploads
 ReadWritePaths=$APP_DIR/backups
+EOF
+}
+
+ensure_node_jit_compatibility() {
+  local service_file="/etc/systemd/system/${SERVICE}.service"
+  local dropin_dir="/etc/systemd/system/${SERVICE}.service.d"
+  local jit_file="${dropin_dir}/zz-node-jit-compat.conf"
+
+  if [ -f "$service_file" ]; then
+    sed -i '/^[[:space:]]*MemoryDenyWriteExecute[[:space:]]*=.*/d' "$service_file" 2>/dev/null || true
+  fi
+
+  if [ -d "$dropin_dir" ]; then
+    find "$dropin_dir" -maxdepth 1 -type f -name '*.conf' -print0 2>/dev/null | while IFS= read -r -d '' f; do
+      sed -i '/^[[:space:]]*MemoryDenyWriteExecute[[:space:]]*=.*/d' "$f" 2>/dev/null || true
+    done
+  fi
+
+  mkdir -p "$dropin_dir"
+  cat > "$jit_file" <<EOF
+[Service]
+MemoryDenyWriteExecute=false
 EOF
 }
 
@@ -720,6 +743,7 @@ ensure_upload_mount_hardening
 configure_subdomain_provisioning_prereqs
 configure_app_runtime_hardening
 configure_clamav_isolation
+ensure_node_jit_compatibility
 echo -e "  ${GREEN}[OK]${NC} Systemvoraussetzungen fuer automatische Subdomain-Einrichtung aktualisiert"
 systemctl daemon-reload
 ensure_clamav_services
