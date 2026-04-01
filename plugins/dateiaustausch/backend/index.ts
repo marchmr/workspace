@@ -338,13 +338,43 @@ async function streamFolderZip(reply: any, args: {
             return;
         }
 
+        let zipStats: any;
+        try {
+            zipStats = await fs.stat(zipPath);
+            if (!zipStats.isFile() || Number(zipStats.size || 0) < 22) {
+                reply.status(500).send({ error: 'ZIP-Erstellung fehlgeschlagen (leeres Archiv).' });
+                return;
+            }
+        } catch {
+            reply.status(500).send({ error: 'ZIP-Datei konnte nicht erzeugt werden.' });
+            return;
+        }
+
+        try {
+            await execFileAsync('unzip', ['-tqq', zipPath], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+        } catch {
+            reply.status(500).send({ error: 'ZIP-Datei ist ungültig.' });
+            return;
+        }
+
         reply.header('Content-Type', 'application/zip');
         reply.header('X-Content-Type-Options', 'nosniff');
         reply.header('Cache-Control', 'no-store, max-age=0');
         reply.header('Pragma', 'no-cache');
         reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
-        reply.send(createReadStream(zipPath));
+        const zipStream = createReadStream(zipPath);
+        zipStream.on('error', () => {
+            if (!reply.sent) {
+                reply.status(500).send({ error: 'ZIP-Download fehlgeschlagen.' });
+                return;
+            }
+            reply.raw.destroy();
+        });
+        reply.send(zipStream);
     } finally {
+        reply.raw.on('finish', () => {
+            fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+        });
         reply.raw.on('close', () => {
             fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
         });
@@ -1238,14 +1268,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
             let copiedCount = 0;
             for (const itemId of fileIds) {
-                await duplicateCurrentItemVersion(db, {
-                    tenantId,
-                    customerId,
-                    sourceItemId: itemId,
-                    targetFolderPath,
-                    actor,
-                });
-                copiedCount += 1;
+                try {
+                    await duplicateCurrentItemVersion(db, {
+                        tenantId,
+                        customerId,
+                        sourceItemId: itemId,
+                        targetFolderPath,
+                        actor,
+                    });
+                    copiedCount += 1;
+                } catch {
+                    // Einzelne ungueltige/unsaubere Dateien sollen den restlichen Copy-Vorgang nicht blockieren.
+                }
             }
 
             const uniqueFolderPaths = Array.from(new Set(folderPaths)).sort((a, b) => a.length - b.length);
@@ -1268,12 +1302,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                     await ensureFolderExists(db, tenantId, customerId, destPath);
                 }
 
-                const sourceItems = await db('dtx_items')
+                const sourceItems = await db('dtx_items as i')
+                    .join('dtx_versions as v', 'v.id', 'i.current_version_id')
                     .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
                     .orWhere((qb: any) => qb
                         .where({ tenant_id: tenantId, customer_id: customerId })
                         .where('folder_path', 'like', `${sourcePrefix}%`))
-                    .select('id', 'folder_path');
+                    .andWhere('i.workflow_status', 'clean')
+                    .andWhere('v.scan_status', 'clean')
+                    .andWhere('v.storage_zone', 'clean')
+                    .select('i.id', 'i.folder_path');
 
                 for (const sourceItem of sourceItems) {
                     const sourceItemPath = normalizeFolderPath(String((sourceItem as any).folder_path || ''));
