@@ -970,8 +970,9 @@ async function ensureVpCustomerForCrm(db: any, tenantId: number, crmCustomerId: 
 
 async function verifyPublicSessionByToken(db: any, token: string): Promise<PublicSessionRecord | null> {
     const hash = hashValue(token);
+    const legacyDoubleHash = hashValue(hash);
     const row = await db('vp_public_sessions')
-        .where({ token_hash: hash })
+        .whereIn('token_hash', [hash, legacyDoubleHash])
         .whereNull('revoked_at')
         .andWhere('expires_at', '>=', db.fn.now())
         .first();
@@ -1555,16 +1556,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
 
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        const sessionToken = String((request.query as any)?.sessionToken || request.headers['x-public-session-token'] || '').trim();
         if (!sessionToken) return reply.status(401).send({ error: 'Session-Token ist erforderlich.' });
-
-        const rawHash = createHash('sha256').update(sessionToken).digest('hex');
-        const sessionTokenHash = createHash('sha256').update(rawHash).digest('hex');
-
-        const session = await db('vp_public_sessions')
-            .where({ token_hash: sessionTokenHash })
-            .andWhere('expires_at', '>', new Date())
-            .first();
+        const session = await verifyPublicSessionByToken(db, sessionToken);
 
         if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
 
@@ -1590,7 +1584,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!ok) return;
 
         const videoId = Number((request.params as any)?.videoId);
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        const sessionToken = String((request.query as any)?.sessionToken || request.headers['x-public-session-token'] || '').trim();
         if (!Number.isInteger(videoId) || videoId <= 0) return reply.status(400).send({ error: 'Ungültige Video-ID' });
         if (!sessionToken) return reply.status(401).send({ error: 'Session-Token ist erforderlich' });
 

@@ -1,4 +1,4 @@
-import { FormEvent, MouseEvent, useEffect, useMemo, useState } from 'react';
+import { DragEvent, MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type PortalFileItem = {
     id: number;
@@ -14,10 +14,15 @@ type Props = {
     formatDate: (value: string | null | undefined) => string;
 };
 
-type ViewMode = 'list' | 'grid';
 type BrowserEntry =
-    | { kind: 'folder'; name: string; fullPath: string }
-    | { kind: 'file'; file: PortalFileItem };
+    | { kind: 'folder'; key: string; name: string; fullPath: string }
+    | { kind: 'file'; key: string; file: PortalFileItem };
+
+type TreeItem = {
+    path: string;
+    name: string;
+    depth: number;
+};
 
 type ActionMenuState = {
     key: string;
@@ -51,23 +56,15 @@ function getExtension(fileName: string): string {
     return clean.slice(idx + 1);
 }
 
-function isImageExt(ext: string): boolean {
-    return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext);
-}
-
-function isPdfExt(ext: string): boolean {
-    return ext === 'pdf';
-}
-
 function getFileTypeLabel(fileName: string): string {
     const ext = getExtension(fileName);
     if (!ext) return 'Datei';
-    if (['doc', 'docx'].includes(ext)) return 'Dokument';
+    if (['doc', 'docx', 'txt'].includes(ext)) return 'Dokument';
     if (['xls', 'xlsx'].includes(ext)) return 'Tabelle';
-    if (['ppt', 'pptx'].includes(ext)) return 'Präsentation';
-    if (['mp4', 'mov', 'webm'].includes(ext)) return 'Video';
-    if (isImageExt(ext)) return 'Bild';
-    if (isPdfExt(ext)) return 'PDF';
+    if (['ppt', 'pptx'].includes(ext)) return 'Praesentation';
+    if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'Video';
+    if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) return 'Bild';
+    if (ext === 'pdf') return 'PDF';
     if (ext === 'zip') return 'Archiv';
     return ext.toUpperCase();
 }
@@ -77,14 +74,26 @@ function buildDownloadUrl(item: PortalFileItem, sessionToken: string): string {
     return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`;
 }
 
+function buildFolderTree(paths: string[]): TreeItem[] {
+    return paths
+        .map((value) => normalizePath(value))
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b, 'de'))
+        .map((pathValue) => ({
+            path: pathValue,
+            name: getBaseName(pathValue),
+            depth: pathValue.split('/').length - 1,
+        }));
+}
+
 function FileTypeIcon({ fileName }: { fileName: string }) {
-    const ext = getExtension(fileName);
-    if (isImageExt(ext)) return <span className="kp-fm-type is-image">IMG</span>;
-    if (isPdfExt(ext)) return <span className="kp-fm-type is-pdf">PDF</span>;
-    if (['mp4', 'mov', 'webm'].includes(ext)) return <span className="kp-fm-type is-video">VID</span>;
-    if (['doc', 'docx', 'txt'].includes(ext)) return <span className="kp-fm-type is-doc">DOC</span>;
-    if (['xls', 'xlsx'].includes(ext)) return <span className="kp-fm-type is-sheet">XLS</span>;
-    if (ext === 'zip') return <span className="kp-fm-type is-zip">ZIP</span>;
+    const type = getFileTypeLabel(fileName);
+    if (type === 'Bild') return <span className="kp-fm-type is-image">IMG</span>;
+    if (type === 'PDF') return <span className="kp-fm-type is-pdf">PDF</span>;
+    if (type === 'Video') return <span className="kp-fm-type is-video">VID</span>;
+    if (type === 'Dokument') return <span className="kp-fm-type is-doc">DOC</span>;
+    if (type === 'Tabelle') return <span className="kp-fm-type is-sheet">XLS</span>;
+    if (type === 'Archiv') return <span className="kp-fm-type is-zip">ZIP</span>;
     return <span className="kp-fm-type">FILE</span>;
 }
 
@@ -95,12 +104,13 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const [files, setFiles] = useState<PortalFileItem[]>([]);
     const [folders, setFolders] = useState<string[]>([]);
     const [currentPath, setCurrentPath] = useState('');
-    const [viewMode, setViewMode] = useState<ViewMode>('list');
     const [search, setSearch] = useState('');
-    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-    const [newFolderName, setNewFolderName] = useState('');
-    const [dragOver, setDragOver] = useState(false);
+    const [selectedKey, setSelectedKey] = useState<string | null>(null);
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+    const [dragOver, setDragOver] = useState(false);
+    const hiddenUploadInputRef = useRef<HTMLInputElement | null>(null);
 
     async function loadData() {
         setLoading(true);
@@ -124,7 +134,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
 
             setAvailable(true);
             setFiles(Array.isArray(filesPayload) ? filesPayload : []);
-            setFolders(Array.isArray(foldersPayload) ? foldersPayload.map((v) => normalizePath(String(v))).filter(Boolean) : []);
+            setFolders(
+                Array.isArray(foldersPayload)
+                    ? foldersPayload.map((v) => normalizePath(String(v))).filter(Boolean)
+                    : [],
+            );
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Dateiaustausch konnte nicht geladen werden.');
             setFiles([]);
@@ -142,6 +156,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     useEffect(() => {
         function close() {
             setMenuState(null);
+            setCreateOpen(false);
         }
         window.addEventListener('click', close);
         return () => window.removeEventListener('click', close);
@@ -153,8 +168,10 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             const folderPath = normalizePath(file.folderPath);
             if (folderPath) set.add(folderPath);
         }
-        return Array.from(set).sort((a, b) => a.localeCompare(b, 'de'));
+        return Array.from(set);
     }, [folders, files]);
+
+    const treeFolders = useMemo(() => buildFolderTree(allFolders), [allFolders]);
 
     const childFolders = useMemo(() => {
         const prefix = currentPath ? `${currentPath}/` : '';
@@ -179,7 +196,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
 
     const breadcrumbs = useMemo(() => {
         const parts = normalizePath(currentPath).split('/').filter(Boolean);
-        const result: Array<{ label: string; path: string }> = [{ label: 'Root', path: '' }];
+        const result: Array<{ label: string; path: string }> = [{ label: 'Eigene Dateien', path: '' }];
         let current = '';
         for (const part of parts) {
             current = current ? `${current}/${part}` : part;
@@ -191,12 +208,18 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const visibleEntries = useMemo<BrowserEntry[]>(() => {
         const folderEntries: BrowserEntry[] = childFolders.map((folderName) => ({
             kind: 'folder',
+            key: `folder:${currentPath ? `${currentPath}/` : ''}${folderName}`,
             name: folderName,
             fullPath: currentPath ? `${currentPath}/${folderName}` : folderName,
         }));
-        const fileEntries: BrowserEntry[] = visibleFiles.map((file) => ({ kind: 'file', file }));
+        const fileEntries: BrowserEntry[] = visibleFiles.map((file) => ({ kind: 'file', key: `file:${file.id}`, file }));
         return [...folderEntries, ...fileEntries];
     }, [childFolders, currentPath, visibleFiles]);
+
+    const selectedEntry = useMemo(
+        () => visibleEntries.find((entry) => entry.key === selectedKey) || null,
+        [selectedKey, visibleEntries],
+    );
 
     async function createFolder(pathValue: string) {
         const folderPath = normalizePath(pathValue);
@@ -210,54 +233,12 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht angelegt werden.');
     }
 
-    async function handleCreateFolder(event: FormEvent) {
-        event.preventDefault();
-        if (!newFolderName.trim()) return;
+    async function uploadFiles(fileList: FileList | null) {
+        if (!fileList || fileList.length === 0) return;
         try {
             setLoading(true);
             setError(null);
-            const target = currentPath ? `${currentPath}/${newFolderName.trim()}` : newFolderName.trim();
-            await createFolder(target);
-            setNewFolderName('');
-            await loadData();
-            setCurrentPath(normalizePath(target));
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Ordner konnte nicht angelegt werden.');
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function handleDeleteCurrentFolder() {
-        if (!currentPath) return;
-        if (!window.confirm(`Ordner "${getBaseName(currentPath)}" wirklich löschen?`)) return;
-        try {
-            setLoading(true);
-            setError(null);
-            const res = await fetch(`/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`, {
-                method: 'DELETE',
-                headers: { 'x-public-session-token': sessionToken },
-            });
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht gelöscht werden.');
-            const parent = getParentPath(currentPath);
-            await loadData();
-            setCurrentPath(parent);
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Ordner konnte nicht gelöscht werden.');
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function handleUpload(event: FormEvent) {
-        event.preventDefault();
-        if (selectedFiles.length === 0) return;
-
-        try {
-            setLoading(true);
-            setError(null);
-            for (const file of selectedFiles) {
+            for (const file of Array.from(fileList)) {
                 const formData = new FormData();
                 formData.append('sessionToken', sessionToken);
                 if (currentPath) formData.append('folderPath', currentPath);
@@ -271,7 +252,6 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                 const payload = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(payload?.error || `Upload fehlgeschlagen (${file.name}).`);
             }
-            setSelectedFiles([]);
             await loadData();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
@@ -280,20 +260,56 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
-    async function handleDeleteFile(itemId: number) {
-        if (!window.confirm('Datei wirklich löschen?')) return;
+    async function deleteFolder(folderPath: string) {
+        const res = await fetch(
+            `/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`,
+            {
+                method: 'DELETE',
+                headers: { 'x-public-session-token': sessionToken },
+            },
+        );
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht geloescht werden.');
+    }
+
+    async function deleteFile(itemId: number) {
+        const res = await fetch(`/api/plugins/dateiaustausch/public/files/${itemId}?sessionToken=${encodeURIComponent(sessionToken)}`, {
+            method: 'DELETE',
+            headers: { 'x-public-session-token': sessionToken },
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht geloescht werden.');
+    }
+
+    function openEntry(entry: BrowserEntry) {
+        if (entry.kind === 'folder') {
+            setCurrentPath(entry.fullPath);
+            return;
+        }
+        if (!entry.file.currentVersionId) return;
+        window.open(buildDownloadUrl(entry.file, sessionToken), '_blank', 'noopener,noreferrer');
+    }
+
+    async function runDeleteSelected() {
+        if (!selectedEntry) return;
+        const label = selectedEntry.kind === 'folder'
+            ? `Ordner "${selectedEntry.name}"`
+            : `Datei "${selectedEntry.file.displayName}"`;
+        if (!window.confirm(`${label} wirklich loeschen?`)) return;
+
         try {
             setLoading(true);
             setError(null);
-            const res = await fetch(`/api/plugins/dateiaustausch/public/files/${itemId}?sessionToken=${encodeURIComponent(sessionToken)}`, {
-                method: 'DELETE',
-                headers: { 'x-public-session-token': sessionToken },
-            });
-            const payload = await res.json().catch(() => ({}));
-            if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht gelöscht werden.');
+            if (selectedEntry.kind === 'folder') {
+                await deleteFolder(selectedEntry.fullPath);
+                if (currentPath === selectedEntry.fullPath) setCurrentPath(getParentPath(currentPath));
+            } else {
+                await deleteFile(selectedEntry.file.id);
+            }
+            setSelectedKey(null);
             await loadData();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Datei konnte nicht gelöscht werden.');
+            setError(err instanceof Error ? err.message : 'Loeschen fehlgeschlagen.');
         } finally {
             setLoading(false);
         }
@@ -305,274 +321,361 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         setMenuState({ key, x: event.clientX, y: event.clientY });
     }
 
-    return (
-        <section className="kp-uploader-shell">
-            <header className="kp-uploader-head">
-                <div>
-                    <h3 className="kp-module-title">Dateicloud</h3>
-                    <p className="kp-module-subtitle">Interaktive Ordnerstruktur wie ein moderner Cloud-Explorer.</p>
-                </div>
-                <button className="btn btn-secondary" type="button" onClick={() => loadData()} disabled={loading}>
-                    Aktualisieren
-                </button>
-            </header>
+    function handleDrop(event: DragEvent<HTMLElement>) {
+        event.preventDefault();
+        setDragOver(false);
+        if (event.dataTransfer?.files?.length) {
+            uploadFiles(event.dataTransfer.files).catch(() => undefined);
+        }
+    }
 
+    return (
+        <section className="kp-uploader-shell kp-od-shell">
             {!available ? (
                 <p className="text-muted">Das Plugin <strong>Dateiaustausch</strong> ist aktuell deaktiviert.</p>
             ) : (
-                <div className="kp-cloud-layout">
-                    <aside className="kp-cloud-sidebar">
-                        <button className={`btn ${currentPath ? 'btn-secondary' : 'btn-primary'}`} type="button" onClick={() => setCurrentPath('')}>
-                            Root
-                        </button>
-                        {allFolders.map((folder) => (
-                            <button
-                                key={folder}
-                                className={`btn ${folder === currentPath ? 'btn-primary' : 'btn-secondary'}`}
-                                type="button"
-                                onClick={() => setCurrentPath(folder)}
-                            >
-                                {getBaseName(folder)}
-                            </button>
-                        ))}
-                    </aside>
-
-                    <div className="kp-cloud-main">
-                        <div className="kp-drive-toolbar">
-                            <div className="kp-drive-search">
-                                <input
-                                    className="input"
-                                    value={search}
-                                    onChange={(event) => setSearch(event.target.value)}
-                                    placeholder="Dateien suchen"
-                                />
-                            </div>
-                            <div className="kp-drive-actions">
-                                <button className="btn btn-secondary" type="button" onClick={() => setCurrentPath(getParentPath(currentPath))} disabled={!currentPath}>
-                                    Nach oben
-                                </button>
-                                <button className={`btn ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`} type="button" onClick={() => setViewMode('list')}>Liste</button>
-                                <button className={`btn ${viewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`} type="button" onClick={() => setViewMode('grid')}>Kacheln</button>
-                                <button className="btn btn-danger" type="button" onClick={handleDeleteCurrentFolder} disabled={!currentPath}>
-                                    Ordner löschen
-                                </button>
-                            </div>
+                <div className="kp-od-layout">
+                    <aside className="kp-od-left">
+                        <div className="kp-od-brand">
+                            <div className="kp-od-brand-dot" />
+                            <strong>Dateicloud</strong>
                         </div>
 
-                        <div className="kp-drive-meta">
-                            <span>
+                        <div className="kp-od-create-wrap">
+                            <button
+                                className="btn btn-primary kp-od-create"
+                                type="button"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setCreateOpen((prev) => !prev);
+                                }}
+                            >
+                                + Erstellen oder hochladen
+                            </button>
+                            {createOpen && (
+                                <div className="kp-od-create-menu" onClick={(event) => event.stopPropagation()}>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const name = window.prompt('Name des neuen Ordners');
+                                            if (!name?.trim()) return;
+                                            try {
+                                                setLoading(true);
+                                                await createFolder(currentPath ? `${currentPath}/${name.trim()}` : name.trim());
+                                                await loadData();
+                                            } finally {
+                                                setLoading(false);
+                                                setCreateOpen(false);
+                                            }
+                                        }}
+                                    >
+                                        Ordner erstellen
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            hiddenUploadInputRef.current?.click();
+                                            setCreateOpen(false);
+                                        }}
+                                    >
+                                        Dateien hochladen
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="kp-od-folder-tree">
+                            <button
+                                className={`kp-od-tree-item ${currentPath === '' ? 'is-active' : ''}`}
+                                type="button"
+                                onClick={() => {
+                                    setCurrentPath('');
+                                    setSelectedKey(null);
+                                }}
+                            >
+                                Eigene Dateien
+                            </button>
+                            {treeFolders.map((folder) => (
+                                <button
+                                    key={folder.path}
+                                    className={`kp-od-tree-item ${currentPath === folder.path ? 'is-active' : ''}`}
+                                    type="button"
+                                    style={{ paddingLeft: `${14 + folder.depth * 14}px` }}
+                                    onClick={() => {
+                                        setCurrentPath(folder.path);
+                                        setSelectedKey(null);
+                                    }}
+                                >
+                                    {folder.name}
+                                </button>
+                            ))}
+                        </div>
+                    </aside>
+
+                    <main
+                        className={`kp-od-main ${dragOver ? 'is-dragover' : ''}`}
+                        onDragEnter={(event) => {
+                            event.preventDefault();
+                            setDragOver(true);
+                        }}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={handleDrop}
+                    >
+                        <div className="kp-od-top">
+                            <div className="kp-od-breadcrumbs">
                                 {breadcrumbs.map((entry, index) => (
                                     <span key={entry.path}>
-                                        {index > 0 ? ' / ' : ''}
+                                        {index > 0 ? ' > ' : ''}
                                         <button className="btn-link" type="button" onClick={() => setCurrentPath(entry.path)}>
                                             {entry.label}
                                         </button>
                                     </span>
                                 ))}
-                            </span>
-                            <span>{visibleEntries.length} Elemente</span>
+                            </div>
+                            <div className="kp-od-search-wrap">
+                                <input
+                                    className="input"
+                                    value={search}
+                                    onChange={(event) => setSearch(event.target.value)}
+                                    placeholder="Suche in diesem Ordner"
+                                />
+                            </div>
                         </div>
 
-                        <form onSubmit={handleCreateFolder} className="kp-cloud-toolbar">
-                            <input
-                                className="input"
-                                value={newFolderName}
-                                onChange={(event) => setNewFolderName(event.target.value)}
-                                placeholder="Neuen Ordner anlegen"
-                            />
-                            <button className="btn btn-secondary" type="submit" disabled={!newFolderName.trim() || loading}>
-                                Ordner erstellen
-                            </button>
-                        </form>
-
-                        <form onSubmit={handleUpload} className="kp-drive-upload-panel">
-                            <div
-                                className={`kp-cloud-dropzone${dragOver ? ' is-dragover' : ''}`}
-                                onDragOver={(event) => {
-                                    event.preventDefault();
-                                    setDragOver(true);
-                                }}
-                                onDragLeave={() => setDragOver(false)}
-                                onDrop={(event) => {
-                                    event.preventDefault();
-                                    setDragOver(false);
-                                    setSelectedFiles(Array.from(event.dataTransfer.files || []));
-                                }}
-                            >
-                                <p className="kp-cloud-dropzone-title">Dateien in "{currentPath || 'Root'}" hochladen</p>
-                                <p className="kp-cloud-dropzone-subtitle text-muted">
-                                    Drag & Drop oder Dateiauswahl
-                                </p>
-                                <label className="btn btn-primary kp-uploader-file-btn">
-                                    Dateien auswählen
-                                    <input
-                                        className="kp-uploader-file-input"
-                                        type="file"
-                                        multiple
-                                        onChange={(event) => setSelectedFiles(Array.from(event.target.files || []))}
-                                        accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
-                                        disabled={loading}
-                                    />
-                                </label>
-                                <p className="kp-cloud-selected-count text-muted">
-                                    {selectedFiles.length > 0 ? `${selectedFiles.length} Datei(en) ausgewählt` : 'Keine Datei ausgewählt'}
-                                </p>
+                        <div className="kp-od-commandbar">
+                            <div className="kp-od-command-left">
+                                <button className="btn btn-secondary" type="button" onClick={() => loadData()} disabled={loading}>
+                                    Aktualisieren
+                                </button>
+                                <button className="btn btn-secondary" type="button" onClick={() => hiddenUploadInputRef.current?.click()}>
+                                    Upload
+                                </button>
+                                <button
+                                    className="btn btn-secondary"
+                                    type="button"
+                                    onClick={() => setCurrentPath(getParentPath(currentPath))}
+                                    disabled={!currentPath}
+                                >
+                                    Nach oben
+                                </button>
                             </div>
-                            <button className="btn btn-primary" type="submit" disabled={loading || selectedFiles.length === 0}>
-                                {loading ? 'Upload läuft...' : 'Upload starten'}
-                            </button>
-                        </form>
-
-                        {viewMode === 'grid' ? (
-                            <div className="kp-uploader-preview-grid">
-                                {visibleEntries.map((entry) => {
-                                    if (entry.kind === 'folder') {
-                                        return (
-                                            <article key={`folder-${entry.fullPath}`} className="kp-uploader-preview-card is-folder" onDoubleClick={() => setCurrentPath(entry.fullPath)}>
-                                                <div className="kp-uploader-preview-media">
-                                                    <div className="kp-uploader-preview-filetype">ORDNER</div>
-                                                </div>
-                                                <div className="kp-uploader-preview-body">
-                                                    <strong title={entry.name}>{entry.name}</strong>
-                                                    <span className="text-muted">Ordner</span>
-                                                    <div style={{ display: 'flex', gap: 8 }}>
-                                                        <button className="btn-link" type="button" onClick={() => setCurrentPath(entry.fullPath)}>Öffnen</button>
-                                                        <button className="btn-link" type="button" onClick={(event) => openActionMenu(event, `folder-${entry.fullPath}`)}>•••</button>
-                                                    </div>
-                                                </div>
-                                            </article>
-                                        );
-                                    }
-                                    const file = entry.file;
-                                    const ext = getExtension(file.displayName);
-                                    const canDownload = file.currentVersionId && (file.workflowStatus === 'clean' || file.workflowStatus === 'reviewed');
-                                    const downloadUrl = buildDownloadUrl(file, sessionToken);
-                                    const canPreview = !!canDownload && (isImageExt(ext) || isPdfExt(ext));
-                                    return (
-                                        <article key={file.id} className="kp-uploader-preview-card">
-                                            <div className="kp-uploader-preview-media">
-                                                {canPreview && isImageExt(ext) ? (
-                                                    <img src={downloadUrl} alt={file.displayName} loading="lazy" />
-                                                ) : canPreview && isPdfExt(ext) ? (
-                                                    <iframe src={downloadUrl} title={file.displayName} loading="lazy" />
-                                                ) : (
-                                                    <FileTypeIcon fileName={file.displayName} />
-                                                )}
-                                            </div>
-                                            <div className="kp-uploader-preview-body">
-                                                <strong title={file.displayName}>{file.displayName}</strong>
-                                                <span className="text-muted">{getFileTypeLabel(file.displayName)} • {formatDate(file.updatedAt)}</span>
-                                                <div style={{ display: 'flex', gap: 8 }}>
-                                                    {canDownload ? (
-                                                        <a href={downloadUrl} target="_blank" rel="noreferrer">Öffnen</a>
-                                                    ) : <span className="text-muted">Verarbeitung</span>}
-                                                    <button className="btn-link text-danger" type="button" onClick={() => handleDeleteFile(file.id)}>Löschen</button>
-                                                    <button className="btn-link" type="button" onClick={(event) => openActionMenu(event, `file-${file.id}`)}>•••</button>
-                                                </div>
-                                            </div>
-                                        </article>
-                                    );
-                                })}
+                            <div className="kp-od-command-right">
+                                <button
+                                    className={`btn ${viewMode === 'list' ? 'btn-primary' : 'btn-secondary'}`}
+                                    type="button"
+                                    onClick={() => setViewMode('list')}
+                                >
+                                    Liste
+                                </button>
+                                <button
+                                    className={`btn ${viewMode === 'grid' ? 'btn-primary' : 'btn-secondary'}`}
+                                    type="button"
+                                    onClick={() => setViewMode('grid')}
+                                >
+                                    Kacheln
+                                </button>
+                                {selectedEntry ? (
+                                    <>
+                                        <button className="btn btn-secondary" type="button" onClick={() => openEntry(selectedEntry)}>
+                                            Oeffnen
+                                        </button>
+                                        <button className="btn btn-danger" type="button" onClick={() => runDeleteSelected()}>
+                                            Loeschen
+                                        </button>
+                                    </>
+                                ) : (
+                                    <span className="kp-od-selection">Keine Auswahl</span>
+                                )}
                             </div>
-                        ) : (
-                            <div className="kp-uploader-table-wrap">
-                                <table className="kp-module-table kp-drive-table">
+                        </div>
+
+                        {viewMode === 'list' ? (
+                            <div className="kp-od-table-wrap">
+                                <table className="kp-module-table kp-od-table">
                                     <thead>
-                                        <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
-                                            <th style={{ padding: '10px 12px' }}>Name</th>
-                                            <th style={{ padding: '10px 12px' }}>Typ</th>
-                                            <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
-                                            <th style={{ padding: '10px 12px' }}>Aktion</th>
+                                        <tr>
+                                            <th>Name</th>
+                                            <th>Typ</th>
+                                            <th>Geaendert</th>
+                                            <th style={{ width: 82 }}>Aktion</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {visibleEntries.map((entry) => {
+                                            const isSelected = selectedKey === entry.key;
                                             if (entry.kind === 'folder') {
                                                 return (
-                                                    <tr key={`folder-row-${entry.fullPath}`} style={{ borderTop: '1px solid var(--line)' }} className="kp-fm-folder-row">
-                                                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>
-                                                            <button className="btn-link kp-fm-open" type="button" onClick={() => setCurrentPath(entry.fullPath)}>
-                                                                {entry.name}
-                                                            </button>
+                                                    <tr
+                                                        key={entry.key}
+                                                        className={isSelected ? 'is-selected' : ''}
+                                                        onClick={() => setSelectedKey(entry.key)}
+                                                        onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                                    >
+                                                        <td>
+                                                            <span className="kp-od-name">
+                                                                <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                                <span>{entry.name}</span>
+                                                            </span>
                                                         </td>
-                                                        <td style={{ padding: '10px 12px' }}>Ordner</td>
-                                                        <td style={{ padding: '10px 12px' }}>-</td>
-                                                        <td style={{ padding: '10px 12px', display: 'flex', gap: 8 }}>
-                                                            <button className="btn btn-secondary" type="button" onClick={() => setCurrentPath(entry.fullPath)}>Öffnen</button>
-                                                            <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, `folder-${entry.fullPath}`)}>•••</button>
+                                                        <td>Ordner</td>
+                                                        <td>-</td>
+                                                        <td>
+                                                            <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
+                                                                •••
+                                                            </button>
                                                         </td>
                                                     </tr>
                                                 );
                                             }
+
                                             const file = entry.file;
-                                            const canDownload = file.currentVersionId && (file.workflowStatus === 'clean' || file.workflowStatus === 'reviewed');
-                                            const downloadUrl = buildDownloadUrl(file, sessionToken);
                                             return (
-                                                <tr key={file.id} style={{ borderTop: '1px solid var(--line)' }}>
-                                                    <td style={{ padding: '10px 12px', fontWeight: 600 }}>
-                                                        <span className="kp-drive-file">
+                                                <tr
+                                                    key={entry.key}
+                                                    className={isSelected ? 'is-selected' : ''}
+                                                    onClick={() => setSelectedKey(entry.key)}
+                                                    onDoubleClick={() => {
+                                                        if (file.currentVersionId) {
+                                                            window.open(buildDownloadUrl(file, sessionToken), '_blank', 'noopener,noreferrer');
+                                                        }
+                                                    }}
+                                                >
+                                                    <td>
+                                                        <span className="kp-od-name">
                                                             <FileTypeIcon fileName={file.displayName} />
                                                             <span>{file.displayName}</span>
                                                         </span>
                                                     </td>
-                                                    <td style={{ padding: '10px 12px' }}>{getFileTypeLabel(file.displayName)}</td>
-                                                    <td style={{ padding: '10px 12px' }}>{formatDate(file.updatedAt)}</td>
-                                                    <td style={{ padding: '10px 12px', display: 'flex', gap: 8 }}>
-                                                        {canDownload ? (
-                                                            <a href={downloadUrl} target="_blank" rel="noreferrer">Öffnen</a>
-                                                        ) : <span className="text-muted">Verarbeitung</span>}
-                                                        <button className="btn btn-danger" type="button" onClick={() => handleDeleteFile(file.id)} disabled={loading}>
-                                                            Löschen
+                                                    <td>{getFileTypeLabel(file.displayName)}</td>
+                                                    <td>{formatDate(file.updatedAt)}</td>
+                                                    <td>
+                                                        <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
+                                                            •••
                                                         </button>
-                                                        <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, `file-${file.id}`)}>•••</button>
                                                     </td>
                                                 </tr>
                                             );
                                         })}
                                         {!loading && visibleEntries.length === 0 && (
                                             <tr>
-                                                <td colSpan={4} style={{ padding: '12px' }} className="text-muted">Dieser Ordner ist leer.</td>
+                                                <td colSpan={4} className="text-muted" style={{ padding: 20 }}>
+                                                    Dieser Ordner ist leer. Dateien hier hineinziehen oder hochladen.
+                                                </td>
                                             </tr>
                                         )}
                                     </tbody>
                                 </table>
                             </div>
+                        ) : (
+                            <div className="kp-od-grid">
+                                {visibleEntries.map((entry) => {
+                                    const isSelected = selectedKey === entry.key;
+                                    if (entry.kind === 'folder') {
+                                        return (
+                                            <button
+                                                key={entry.key}
+                                                type="button"
+                                                className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
+                                                onClick={() => setSelectedKey(entry.key)}
+                                                onDoubleClick={() => setCurrentPath(entry.fullPath)}
+                                            >
+                                                <span className="kp-od-folder-icon" aria-hidden="true" />
+                                                <strong>{entry.name}</strong>
+                                                <span className="text-muted">Ordner</span>
+                                            </button>
+                                        );
+                                    }
+                                    return (
+                                        <button
+                                            key={entry.key}
+                                            type="button"
+                                            className={`kp-od-tile ${isSelected ? 'is-selected' : ''}`}
+                                            onClick={() => setSelectedKey(entry.key)}
+                                        >
+                                            <FileTypeIcon fileName={entry.file.displayName} />
+                                            <strong>{entry.file.displayName}</strong>
+                                            <span className="text-muted">{formatDate(entry.file.updatedAt)}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         )}
-                    </div>
+
+                        <input
+                            ref={hiddenUploadInputRef}
+                            type="file"
+                            multiple
+                            style={{ display: 'none' }}
+                            onChange={async (event) => {
+                                await uploadFiles(event.target.files);
+                                if (hiddenUploadInputRef.current) hiddenUploadInputRef.current.value = '';
+                            }}
+                        />
+                    </main>
                 </div>
             )}
 
             {menuState && (
                 <div className="kp-fm-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
-                    {menuState.key.startsWith('folder-') ? (
+                    {menuState.key.startsWith('folder:') ? (
                         <>
-                            <button type="button" onClick={() => { setCurrentPath(menuState.key.replace('folder-', '')); setMenuState(null); }}>Öffnen</button>
-                            <button type="button" onClick={async () => {
-                                const folderPath = menuState.key.replace('folder-', '');
-                                const res = await fetch(`/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`, {
-                                    method: 'DELETE',
-                                    headers: { 'x-public-session-token': sessionToken },
-                                });
-                                const payload = await res.json().catch(() => ({}));
-                                if (!res.ok) setError(payload?.error || 'Ordner konnte nicht gelöscht werden.');
-                                await loadData();
-                                setMenuState(null);
-                            }}>Löschen</button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setCurrentPath(menuState.key.replace('folder:', ''));
+                                    setMenuState(null);
+                                }}
+                            >
+                                Oeffnen
+                            </button>
+                            <button
+                                type="button"
+                                onClick={async () => {
+                                    try {
+                                        setLoading(true);
+                                        await deleteFolder(menuState.key.replace('folder:', ''));
+                                        await loadData();
+                                    } catch (err) {
+                                        setError(err instanceof Error ? err.message : 'Ordner konnte nicht geloescht werden.');
+                                    } finally {
+                                        setLoading(false);
+                                        setMenuState(null);
+                                    }
+                                }}
+                            >
+                                Loeschen
+                            </button>
                         </>
                     ) : (
                         (() => {
-                            const fileId = Number(menuState.key.replace('file-', ''));
+                            const fileId = Number(menuState.key.replace('file:', ''));
                             const file = files.find((entry) => entry.id === fileId);
-                            const canDownload = !!(file?.currentVersionId && (file.workflowStatus === 'clean' || file.workflowStatus === 'reviewed'));
+                            const canOpen = !!file?.currentVersionId;
                             return (
                                 <>
-                                    {file && canDownload ? (
-                                        <a href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Öffnen</a>
-                                    ) : <span className="is-disabled">Öffnen</span>}
-                                    <button type="button" onClick={async () => {
-                                        await handleDeleteFile(fileId);
-                                        setMenuState(null);
-                                    }}>Löschen</button>
+                                    {file && canOpen ? (
+                                        <a href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Oeffnen</a>
+                                    ) : (
+                                        <span className="is-disabled">Oeffnen</span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            try {
+                                                setLoading(true);
+                                                await deleteFile(fileId);
+                                                await loadData();
+                                            } catch (err) {
+                                                setError(err instanceof Error ? err.message : 'Datei konnte nicht geloescht werden.');
+                                            } finally {
+                                                setLoading(false);
+                                                setMenuState(null);
+                                            }
+                                        }}
+                                    >
+                                        Loeschen
+                                    </button>
                                 </>
                             );
                         })()

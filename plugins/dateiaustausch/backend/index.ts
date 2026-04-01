@@ -120,8 +120,9 @@ function getFieldValue(fields: Record<string, any> | undefined, key: string): st
 
 async function verifyPublicSessionByToken(db: any, token: string): Promise<SessionRow | null> {
     const tokenHash = hashValue(token);
+    const legacyDoubleHash = hashValue(tokenHash);
     const row = await db('vp_public_sessions')
-        .where({ token_hash: tokenHash })
+        .whereIn('token_hash', [tokenHash, legacyDoubleHash])
         .whereNull('revoked_at')
         .andWhere('expires_at', '>=', db.fn.now())
         .first();
@@ -803,6 +804,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 hasCrmCustomersTable
                     ? db.raw("COALESCE(NULLIF(cc.company_name, ''), c.name) as customer_name")
                     : db.raw('c.name as customer_name'),
+                hasCrmCustomersTable ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
+                hasCrmCustomersTable ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
+                hasCrmCustomersTable ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
+                hasCrmCustomersTable ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
                 'v.version_no as current_version_no',
                 'v.scan_status as current_scan_status',
                 'v.scan_signature as current_scan_signature',
@@ -815,6 +820,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             id: Number(row.id),
             customerId: Number(row.customer_id),
             customerName: row.customer_name || null,
+            customerNumber: row.customer_number || null,
+            customerCompanyName: row.customer_company_name || null,
+            customerFirstName: row.customer_first_name || null,
+            customerLastName: row.customer_last_name || null,
             folderPath: row.folder_path || '',
             displayName: row.display_name || '',
             workflowStatus: row.workflow_status,
@@ -824,6 +833,54 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             currentScanStatus: row.current_scan_status || null,
             currentScanSignature: row.current_scan_signature || null,
             currentVersionCreatedAt: toIso(row.current_version_created_at),
+        }));
+    });
+
+    fastify.get('/folders', { preHandler: [requirePermission('dateiaustausch.view')] }, async (request) => {
+        const tenantId = request.user.tenantId;
+        const customerId = Number((request.query as any)?.customerId || 0);
+
+        const rows = await db('dtx_folders as f')
+            .leftJoin('vp_customers as c', function joinCustomer() {
+                this.on('c.id', '=', 'f.customer_id').andOn('c.tenant_id', '=', 'f.tenant_id');
+            })
+            .modify((qb: any) => {
+                if (hasCrmCustomersTable) {
+                    qb.leftJoin('crm_customers as cc', function joinCrmCustomer() {
+                        this.on('cc.id', '=', 'c.crm_customer_id').andOn('cc.tenant_id', '=', 'c.tenant_id');
+                    });
+                }
+            })
+            .where('f.tenant_id', tenantId)
+            .modify((qb: any) => {
+                if (Number.isInteger(customerId) && customerId > 0) qb.andWhere('f.customer_id', customerId);
+            })
+            .select(
+                'f.id',
+                'f.customer_id',
+                'f.folder_path',
+                'f.updated_at',
+                hasCrmCustomersTable
+                    ? db.raw("COALESCE(NULLIF(cc.company_name, ''), c.name) as customer_name")
+                    : db.raw('c.name as customer_name'),
+                hasCrmCustomersTable ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
+                hasCrmCustomersTable ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
+                hasCrmCustomersTable ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
+                hasCrmCustomersTable ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
+            )
+            .orderBy('f.customer_id', 'asc')
+            .orderBy('f.folder_path', 'asc');
+
+        return rows.map((row: any) => ({
+            id: Number(row.id),
+            customerId: Number(row.customer_id),
+            customerName: row.customer_name || null,
+            customerNumber: row.customer_number || null,
+            customerCompanyName: row.customer_company_name || null,
+            customerFirstName: row.customer_first_name || null,
+            customerLastName: row.customer_last_name || null,
+            folderPath: String(row.folder_path || ''),
+            updatedAt: toIso(row.updated_at),
         }));
     });
 

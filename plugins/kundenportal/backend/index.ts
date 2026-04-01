@@ -382,8 +382,9 @@ async function ensureVpCustomerForCrm(
 
 async function verifyPublicSessionByToken(db: any, token: string): Promise<PublicSessionRecord | null> {
     const tokenHash = hashValue(token);
+    const legacyDoubleHash = hashValue(tokenHash);
     const row = await db('vp_public_sessions')
-        .where({ token_hash: tokenHash })
+        .whereIn('token_hash', [tokenHash, legacyDoubleHash])
         .whereNull('revoked_at')
         .andWhere('expires_at', '>=', db.fn.now())
         .first();
