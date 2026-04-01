@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { getDatabase } from '../../../backend/src/core/database.js';
 
 const SOURCE_PREFIX = '/api/plugins/videoplattform/public';
 const TARGET_PREFIX = '/api/plugins/kundenportal/public';
@@ -101,6 +102,21 @@ async function proxyStream(
 }
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
+    fastify.get('/public/modules', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        const db = getDatabase();
+        const fileExchangePlugin = await db('plugins')
+            .where({ plugin_id: 'dateiaustausch' })
+            .first();
+
+        return reply.send({
+            dateiaustauschEnabled: Boolean(fileExchangePlugin?.is_active),
+        });
+    });
+
     fastify.get('/public/config', {
         exposeHeadRoute: false,
         config: { policy: { public: true } },

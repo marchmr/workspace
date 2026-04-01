@@ -14,6 +14,17 @@ type ItemRow = {
     currentScanSignature: string | null;
 };
 
+function statusLabel(value: ItemRow['workflowStatus'] | string): string {
+    if (value === 'pending') return 'In Prüfung';
+    if (value === 'clean') return 'Freigegeben';
+    if (value === 'reviewed') return 'Geprüft';
+    if (value === 'rejected') return 'Gesperrt';
+    if (value === 'infected') return 'Malware erkannt';
+    if (value === 'error') return 'Scan-Fehler';
+    if (value === 'skipped') return 'Scan übersprungen';
+    return value;
+}
+
 type ItemDetails = {
     id: number;
     customerId: number;
@@ -139,15 +150,15 @@ export default function DateiaustauschPage() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                         <h1 className="page-title" style={{ marginBottom: 6 }}>Dateiaustausch</h1>
-                        <p className="text-muted" style={{ margin: 0 }}>Quarantäne, Malware-Scan, Versionierung und Moderation.</p>
+                        <p className="text-muted" style={{ margin: 0 }}>Sicherer Dateiaustausch mit Malware-Schutz, Versionierung und Kommentaren.</p>
                     </div>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <select className="input" style={{ width: 180 }} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
                             <option value="">Alle Stati</option>
-                            <option value="pending">Pending</option>
-                            <option value="clean">Clean</option>
-                            <option value="reviewed">Reviewed</option>
-                            <option value="rejected">Rejected</option>
+                            <option value="pending">In Prüfung</option>
+                            <option value="clean">Freigegeben</option>
+                            <option value="reviewed">Geprüft</option>
+                            <option value="rejected">Gesperrt</option>
                         </select>
                         <button className="btn btn-secondary" type="button" onClick={() => loadRows()}>Aktualisieren</button>
                     </div>
@@ -173,7 +184,7 @@ export default function DateiaustauschPage() {
                                             <div className="text-muted" style={{ fontSize: 12 }}>{row.folderPath || 'Root'} • V{row.currentVersionNo || 0}</div>
                                         </td>
                                         <td style={{ padding: '10px 12px' }}>{row.customerName || `#${row.customerId}`}</td>
-                                        <td style={{ padding: '10px 12px' }}>{row.workflowStatus}</td>
+                                        <td style={{ padding: '10px 12px' }}>{statusLabel(row.workflowStatus)}</td>
                                     </tr>
                                 ))}
                                 {!loading && rows.length === 0 && (
@@ -193,17 +204,17 @@ export default function DateiaustauschPage() {
                                 <p className="text-muted">Aktualisiert: {formatDate(selectedRow.updatedAt)}</p>
 
                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'pending')}>Pending</button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'clean')}>Clean</button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'reviewed')}>Reviewed</button>
-                                    <button className="btn btn-danger" type="button" onClick={() => updateStatus(details.id, 'rejected')}>Reject</button>
+                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'pending')}>In Prüfung</button>
+                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'clean')}>Freigeben</button>
+                                    <button className="btn btn-secondary" type="button" onClick={() => updateStatus(details.id, 'reviewed')}>Geprüft</button>
+                                    <button className="btn btn-danger" type="button" onClick={() => updateStatus(details.id, 'rejected')}>Sperren</button>
                                 </div>
 
                                 <h4 style={{ marginBottom: 8 }}>Versionen</h4>
                                 <ul style={{ marginTop: 0, paddingLeft: 16 }}>
                                     {details.versions.map((version) => (
                                         <li key={version.id}>
-                                            V{version.versionNo} • {version.scanStatus} • {formatDate(version.createdAt)} • <a href={`/api/plugins/dateiaustausch/items/${details.id}/versions/${version.id}/download`} target="_blank" rel="noreferrer">Download</a>
+                                            V{version.versionNo} • {statusLabel(version.scanStatus)} • {formatDate(version.createdAt)} • <a href={`/api/plugins/dateiaustausch/items/${details.id}/versions/${version.id}/download`} target="_blank" rel="noreferrer">Download</a>
                                         </li>
                                     ))}
                                 </ul>

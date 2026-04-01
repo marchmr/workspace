@@ -93,8 +93,8 @@ async function verifyPublicSessionByToken(db: any, token: string): Promise<Sessi
 
 async function getTenantUserIds(db: any, tenantId: number): Promise<number[]> {
     const rows = await db('users as u')
-        .join('user_tenant_assignments as uta', 'uta.user_id', 'u.id')
-        .where('uta.tenant_id', tenantId)
+        .join('user_tenants as ut', 'ut.user_id', 'u.id')
+        .where('ut.tenant_id', tenantId)
         .andWhere('u.is_active', true)
         .select('u.id')
         .groupBy('u.id');
@@ -127,6 +127,16 @@ function normalizeWorkflowStatus(input: unknown): WorkflowStatus | null {
         return value;
     }
     return null;
+}
+
+function resolvePublicSessionToken(request: any, fileFields?: Record<string, any>): string {
+    return String(
+        getFieldValue(fileFields, 'sessionToken')
+        || (request.query as any)?.sessionToken
+        || (request.body as any)?.sessionToken
+        || (request.headers as any)['x-public-session-token']
+        || '',
+    ).trim();
 }
 
 function parseScanMeta(value: unknown): any | null {
@@ -220,7 +230,7 @@ async function saveUploadVersion(db: any, args: {
     buffer: Buffer;
     folderPath: string;
     actor: UploadActor;
-}): Promise<{ itemId: number; versionId: number; versionNo: number; workflowStatus: WorkflowStatus; scanStatus: string }> {
+}): Promise<{ itemId: number; versionId: number; versionNo: number; workflowStatus: WorkflowStatus; scanStatus: string; storageKey: string; storedFileName: string }> {
     const validated = await validateUploadedFile(
         args.fileName,
         args.mimeType,
@@ -231,14 +241,6 @@ async function saveUploadVersion(db: any, args: {
             strictSignature: config.fileSecurity.strictSignatureCheck,
         },
     );
-
-    const scanResult = await scanBufferForMalware(args.buffer, validated.sanitizedFileName);
-    if (scanResult.status === 'infected') {
-        throw new Error(`Malware erkannt: ${scanResult.signature || 'unbekannt'}`);
-    }
-    if (scanResult.status === 'error' && config.fileSecurity.clamav.failClosed) {
-        throw new Error(scanResult.detail || 'Malware-Scan fehlgeschlagen (fail-closed aktiv).');
-    }
 
     const storageKey = buildStorageKey(args.tenantId, 'quarantine', validated.sanitizedFileName);
     await saveToStorage(storageKey, args.buffer);
@@ -269,10 +271,10 @@ async function saveUploadVersion(db: any, args: {
         detected_mime_type: validated.detectedMimeType,
         size_bytes: validated.sizeBytes,
         sha256_hash: validated.sha256,
-        scan_status: scanResult.status,
-        scan_engine: scanResult.engine,
-        scan_signature: scanResult.signature,
-        scan_meta: JSON.stringify({ detail: scanResult.detail }),
+        scan_status: 'pending',
+        scan_engine: null,
+        scan_signature: null,
+        scan_meta: null,
         uploaded_by_type: args.actor.type,
         uploaded_by_user_id: args.actor.userId,
         uploaded_by_email: args.actor.email,
@@ -281,7 +283,7 @@ async function saveUploadVersion(db: any, args: {
         created_at: new Date(),
     });
 
-    const workflowStatus: WorkflowStatus = scanResult.status === 'clean' ? 'pending' : 'pending';
+    const workflowStatus: WorkflowStatus = 'pending';
 
     await db('dtx_items')
         .where({ id: args.itemId, tenant_id: args.tenantId })
@@ -299,21 +301,92 @@ async function saveUploadVersion(db: any, args: {
         versionId: Number(versionId),
         versionNo,
         workflowStatus,
-        scanStatus: scanResult.status,
+        scanStatus: 'pending',
+        storageKey,
+        storedFileName: validated.sanitizedFileName,
     };
+}
+
+async function processVersionMalwareScan(
+    fastify: FastifyInstance,
+    db: any,
+    args: { tenantId: number; itemId: number; versionId: number; storageKey: string; fileName: string },
+): Promise<void> {
+    try {
+        const absPath = buildSafeStoragePath(STORAGE_ROOT, args.storageKey);
+        const buffer = await fs.readFile(absPath);
+        const scanResult = await scanBufferForMalware(buffer, args.fileName);
+
+        let nextScanStatus: 'clean' | 'infected' | 'error' | 'skipped' = scanResult.status;
+        if (scanResult.status === 'error' && config.fileSecurity.clamav.failClosed) {
+            nextScanStatus = 'error';
+        }
+
+        await db('dtx_versions')
+            .where({ id: args.versionId, tenant_id: args.tenantId, item_id: args.itemId })
+            .update({
+                scan_status: nextScanStatus,
+                scan_engine: scanResult.engine || null,
+                scan_signature: scanResult.signature || null,
+                scan_meta: JSON.stringify({ detail: scanResult.detail || null }),
+            });
+
+        if (nextScanStatus === 'infected' || (nextScanStatus === 'error' && config.fileSecurity.clamav.failClosed)) {
+            await db('dtx_versions')
+                .where({ id: args.versionId, tenant_id: args.tenantId, item_id: args.itemId })
+                .update({ storage_zone: 'rejected' });
+
+            await db('dtx_items')
+                .where({ id: args.itemId, tenant_id: args.tenantId })
+                .update({ workflow_status: 'rejected', last_activity_at: new Date(), updated_at: new Date() });
+        } else if (nextScanStatus === 'clean' || nextScanStatus === 'skipped') {
+            await db('dtx_versions')
+                .where({ id: args.versionId, tenant_id: args.tenantId, item_id: args.itemId })
+                .update({ storage_zone: 'clean' });
+
+            await db('dtx_items')
+                .where({ id: args.itemId, tenant_id: args.tenantId })
+                .update({ workflow_status: 'clean', last_activity_at: new Date(), updated_at: new Date() });
+        }
+
+        await fastify.audit.log({
+            action: 'dateiaustausch.scan.completed',
+            category: 'plugin',
+            pluginId: PLUGIN_ID,
+            entityType: 'dtx_version',
+            entityId: String(args.versionId),
+            newState: {
+                itemId: args.itemId,
+                scanStatus: nextScanStatus,
+                scanEngine: scanResult.engine || null,
+                scanSignature: scanResult.signature || null,
+            },
+        });
+    } catch (error: any) {
+        await db('dtx_versions')
+            .where({ id: args.versionId, tenant_id: args.tenantId, item_id: args.itemId })
+            .update({
+                scan_status: 'error',
+                scan_meta: JSON.stringify({ detail: String(error?.message || 'scan job failed') }),
+            })
+            .catch(() => undefined);
+
+        fastify.log.error({ error, versionId: args.versionId }, 'dateiaustausch malware scan job failed');
+    }
 }
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
     await fs.mkdir(STORAGE_ROOT, { recursive: true, mode: 0o700 });
     await fs.chmod(STORAGE_ROOT, 0o700).catch(() => undefined);
+    const hasCrmCustomersTable = await db.schema.hasTable('crm_customers').catch(() => false);
 
     fastify.get('/public/files', {
         exposeHeadRoute: false,
         config: { policy: { public: true }, rateLimit: { max: 30, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
         if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
 
         const session = await verifyPublicSessionByToken(db, sessionToken);
@@ -362,12 +435,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const filePart = await (request as any).file();
         if (!filePart) return reply.status(400).send({ error: 'Datei ist erforderlich.' });
 
-        const sessionToken = String(
-            getFieldValue(filePart.fields, 'sessionToken')
-            || (request.query as any)?.sessionToken
-            || (request.headers as any)['x-public-session-token']
-            || '',
-        ).trim();
+        const sessionToken = resolvePublicSessionToken(request, filePart.fields);
         const folderPath = normalizeFolderPath(String(getFieldValue(filePart.fields, 'folderPath') || ''));
         const comment = String(getFieldValue(filePart.fields, 'comment') || '').trim();
         const rawItemId = Number(getFieldValue(filePart.fields, 'itemId') || 0);
@@ -416,6 +484,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 folderPath,
                 actor,
             });
+            void processVersionMalwareScan(fastify, db, {
+                tenantId: Number(session.tenant_id),
+                itemId,
+                versionId: result.versionId,
+                storageKey: result.storageKey,
+                fileName: result.storedFileName,
+            });
 
             if (comment) {
                 await createComment(db, {
@@ -427,17 +502,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 });
             }
 
-            const users = await getTenantUserIds(db, Number(session.tenant_id));
-            if (users.length > 0) {
-                await fastify.notify.sendToMany(users, {
-                    title: 'Neuer Datei-Upload im Kundenportal',
+            try {
+                const users = await getTenantUserIds(db, Number(session.tenant_id));
+                if (users.length > 0) {
+                    await fastify.notify.sendToMany(users, {
+                        title: 'Neuer Datei-Upload im Kundenportal',
                     message: `${actor.email || 'Kunde'} hat ${sanitizeFileName(String(filePart.filename || 'Datei'))} hochgeladen.`,
-                    type: 'info',
-                    pluginId: PLUGIN_ID,
-                    tenantId: Number(session.tenant_id),
-                    link: '/dateiaustausch',
-                    category: 'plugin.dateiaustausch',
-                });
+                        type: 'info',
+                        pluginId: PLUGIN_ID,
+                        tenantId: Number(session.tenant_id),
+                        link: '/dateiaustausch',
+                        category: 'plugin.dateiaustausch',
+                    });
+                }
+            } catch (notifyError) {
+                // Upload darf nie durch Notification-Fehler scheitern.
+                fastify.log.error({ notifyError }, 'dateiaustausch notify failed');
             }
 
             await fastify.audit.log({
@@ -476,7 +556,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         policy: { public: true },
     }, async (request, reply) => {
         const itemId = Number((request.params as any)?.itemId || 0);
-        const sessionToken = String((request.body as any)?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
         const message = String((request.body as any)?.message || '').trim();
 
         if (!Number.isInteger(itemId) || itemId <= 0) return reply.status(400).send({ error: 'Ungültige Datei-ID.' });
@@ -510,6 +590,51 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         await db('dtx_items')
             .where({ id: itemId, tenant_id: Number(session.tenant_id) })
             .update({ last_activity_at: new Date(), updated_at: new Date() });
+
+        return { success: true };
+    });
+
+    fastify.delete('/public/files/:itemId', {
+        config: { policy: { public: true }, rateLimit: { max: 10, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const itemId = Number((request.params as any)?.itemId || 0);
+        const sessionToken = resolvePublicSessionToken(request);
+
+        if (!Number.isInteger(itemId) || itemId <= 0) return reply.status(400).send({ error: 'Ungültige Datei-ID.' });
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+
+        const item = await db('dtx_items')
+            .where({ id: itemId, tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
+            .first();
+        if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
+
+        const versions = await db('dtx_versions')
+            .where({ item_id: itemId, tenant_id: Number(session.tenant_id) })
+            .select('id', 'storage_key');
+
+        await db.transaction(async (trx: any) => {
+            await trx('dtx_comments').where({ item_id: itemId, tenant_id: Number(session.tenant_id) }).delete();
+            await trx('dtx_versions').where({ item_id: itemId, tenant_id: Number(session.tenant_id) }).delete();
+            await trx('dtx_items').where({ id: itemId, tenant_id: Number(session.tenant_id) }).delete();
+        });
+
+        for (const version of versions) {
+            const absPath = buildSafeStoragePath(STORAGE_ROOT, String((version as any).storage_key || ''));
+            await fs.rm(absPath, { force: true }).catch(() => undefined);
+        }
+
+        await fastify.audit.log({
+            action: 'dateiaustausch.public_file.deleted',
+            category: 'plugin',
+            pluginId: PLUGIN_ID,
+            entityType: 'dtx_item',
+            entityId: String(itemId),
+            previousState: { customerId: Number(session.customer_id) },
+        }, request);
 
         return { success: true };
     });
@@ -568,6 +693,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             .leftJoin('vp_customers as c', function joinCustomer() {
                 this.on('c.id', '=', 'i.customer_id').andOn('c.tenant_id', '=', 'i.tenant_id');
             })
+            .modify((qb: any) => {
+                if (hasCrmCustomersTable) {
+                    qb.leftJoin('crm_customers as cc', function joinCrmCustomer() {
+                        this.on('cc.id', '=', 'c.crm_customer_id').andOn('cc.tenant_id', '=', 'c.tenant_id');
+                    });
+                }
+            })
             .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
             .where('i.tenant_id', tenantId)
             .modify((qb: any) => {
@@ -582,7 +714,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 'i.workflow_status',
                 'i.updated_at',
                 'i.current_version_id',
-                'c.name as customer_name',
+                hasCrmCustomersTable
+                    ? db.raw("COALESCE(NULLIF(cc.company_name, ''), c.name) as customer_name")
+                    : db.raw('c.name as customer_name'),
                 'v.version_no as current_version_no',
                 'v.scan_status as current_scan_status',
                 'v.scan_signature as current_scan_signature',
@@ -627,6 +761,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const item = await db('dtx_items').where({ id: itemId, tenant_id: tenantId }).first();
         if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
+
+        if ((status === 'clean' || status === 'reviewed') && item.current_version_id) {
+            const currentVersion = await db('dtx_versions')
+                .where({ id: item.current_version_id, tenant_id: tenantId, item_id: itemId })
+                .first('scan_status');
+            if (String(currentVersion?.scan_status || '') !== 'clean') {
+                return reply.status(409).send({ error: 'Freigabe erst nach erfolgreichem Malware-Scan möglich.' });
+            }
+        }
 
         await db('dtx_items')
             .where({ id: itemId, tenant_id: tenantId })

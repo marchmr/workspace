@@ -99,7 +99,7 @@ async function broadcastNotification(
     let query = db('users').select('id').where('is_active', true);
     if (tenantId) {
         query = query.whereIn('id',
-            db('user_tenant_assignments').select('user_id').where('tenant_id', tenantId)
+            db('user_tenants').select('user_id').where('tenant_id', tenantId)
         );
     }
     const users = await query;
