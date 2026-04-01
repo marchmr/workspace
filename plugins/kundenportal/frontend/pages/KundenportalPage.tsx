@@ -30,6 +30,18 @@ type SessionAccessResponse = {
     videos: PortalVideo[];
 };
 
+type PortalFileItem = {
+    id: number;
+    folderPath: string;
+    displayName: string;
+    workflowStatus: 'pending' | 'clean' | 'rejected' | 'reviewed';
+    currentVersionId: number | null;
+    currentVersionNo: number | null;
+    currentScanStatus: string | null;
+    currentVersionCreatedAt: string | null;
+    updatedAt: string | null;
+};
+
 const API_BASE = '/api/plugins/kundenportal/public';
 const STORAGE_SESSION_KEY = 'kundenportal.session';
 const STORAGE_EMAIL_KEY = 'kundenportal.email';
@@ -37,7 +49,8 @@ const STORAGE_EMAIL_KEY = 'kundenportal.email';
 type PortalTab = 'videos' | 'files';
 type PortalNavKey = 'videos' | 'files' | 'docs' | 'profile' | 'logout';
 
-function formatDate(value: string): string {
+function formatDate(value: string | null | undefined): string {
+    if (!value) return '-';
     const date = new Date(value);
     if (!Number.isFinite(date.getTime())) return value;
     return new Intl.DateTimeFormat('de-DE', {
@@ -109,6 +122,12 @@ export default function KundenportalPage() {
     const [portalLogoHeight, setPortalLogoHeight] = useState(52);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [files, setFiles] = useState<PortalFileItem[]>([]);
+    const [filesLoading, setFilesLoading] = useState(false);
+    const [filesError, setFilesError] = useState<string | null>(null);
+    const [uploadFolderPath, setUploadFolderPath] = useState('');
+    const [uploadComment, setUploadComment] = useState('');
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     useEffect(() => {
         let active = true;
@@ -178,6 +197,31 @@ export default function KundenportalPage() {
             contactName,
         };
     }, [access]);
+
+    async function loadFiles(sessionToken: string) {
+        setFilesLoading(true);
+        setFilesError(null);
+        try {
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files?sessionToken=${encodeURIComponent(sessionToken)}`);
+            const payload = await res.json().catch(() => ([]));
+            if (!res.ok) throw new Error((payload as any)?.error || 'Dateien konnten nicht geladen werden.');
+            setFiles(Array.isArray(payload) ? (payload as PortalFileItem[]) : []);
+        } catch (err) {
+            setFilesError(err instanceof Error ? err.message : 'Dateien konnten nicht geladen werden.');
+            setFiles([]);
+        } finally {
+            setFilesLoading(false);
+        }
+    }
+
+    useEffect(() => {
+        if (!access?.sessionToken) {
+            setFiles([]);
+            return;
+        }
+        if (activeTab !== 'files') return;
+        loadFiles(access.sessionToken).catch(() => undefined);
+    }, [activeTab, access?.sessionToken]);
 
     // Dynamic title and favicon
     useEffect(() => {
@@ -270,6 +314,40 @@ export default function KundenportalPage() {
         }
     }
 
+    async function uploadFile(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!access?.sessionToken) return;
+        if (!selectedFile) {
+            setFilesError('Bitte wählen Sie zuerst eine Datei aus.');
+            return;
+        }
+
+        setFilesLoading(true);
+        setFilesError(null);
+        try {
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+            formData.append('sessionToken', access.sessionToken);
+            if (uploadFolderPath.trim()) formData.append('folderPath', uploadFolderPath.trim());
+            if (uploadComment.trim()) formData.append('comment', uploadComment.trim());
+
+            const res = await fetch('/api/plugins/dateiaustausch/public/files/upload', {
+                method: 'POST',
+                body: formData,
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Upload fehlgeschlagen.');
+
+            setSelectedFile(null);
+            setUploadComment('');
+            await loadFiles(access.sessionToken);
+        } catch (err) {
+            setFilesError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
+        } finally {
+            setFilesLoading(false);
+        }
+    }
+
     async function resetAccess() {
         const token = localStorage.getItem(STORAGE_SESSION_KEY) || '';
         localStorage.removeItem(STORAGE_SESSION_KEY);
@@ -285,6 +363,9 @@ export default function KundenportalPage() {
         setCode('');
         setCodeRequested(false);
         setError(null);
+        setFiles([]);
+        setFilesError(null);
+        setSelectedFile(null);
         setActiveTab('videos');
         setMobileNavOpen(false);
     }
@@ -482,7 +563,79 @@ export default function KundenportalPage() {
                                 {activeTab === 'files' && (
                                     <div className="kp-coming-soon">
                                         <h3>Dateiaustausch</h3>
-                                        <p className="text-muted">Coming soon: Hier entsteht ein echtes Datei-Management für Austausch, Versionierung und Freigaben.</p>
+                                        <p className="text-muted" style={{ marginTop: 0 }}>Uploads landen in Quarantäne und werden vor Freigabe geprüft.</p>
+
+                                        <form onSubmit={uploadFile} className="vp-stack" style={{ marginTop: 12 }}>
+                                            <input
+                                                className="input"
+                                                type="file"
+                                                onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+                                                accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
+                                                required
+                                            />
+                                            <input
+                                                className="input"
+                                                value={uploadFolderPath}
+                                                onChange={(event) => setUploadFolderPath(event.target.value)}
+                                                placeholder="Ordnerpfad (optional), z. B. Fotos/April"
+                                            />
+                                            <textarea
+                                                className="input"
+                                                rows={3}
+                                                value={uploadComment}
+                                                onChange={(event) => setUploadComment(event.target.value)}
+                                                placeholder="Kommentar zur Datei (optional)"
+                                            />
+                                            <button className="btn btn-primary" type="submit" disabled={filesLoading}>
+                                                {filesLoading ? 'Lade hoch...' : 'Datei sicher hochladen'}
+                                            </button>
+                                        </form>
+
+                                        {filesError && <p className="text-danger" style={{ marginTop: 10 }}>{filesError}</p>}
+
+                                        <div style={{ marginTop: 14, border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                                <thead>
+                                                    <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
+                                                        <th style={{ padding: '10px 12px' }}>Datei</th>
+                                                        <th style={{ padding: '10px 12px' }}>Ordner</th>
+                                                        <th style={{ padding: '10px 12px' }}>Status</th>
+                                                        <th style={{ padding: '10px 12px' }}>Version</th>
+                                                        <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
+                                                        <th style={{ padding: '10px 12px' }}>Download</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {files.map((entry) => (
+                                                        <tr key={entry.id} style={{ borderTop: '1px solid var(--line)' }}>
+                                                            <td style={{ padding: '10px 12px' }}>{entry.displayName}</td>
+                                                            <td style={{ padding: '10px 12px' }}>{entry.folderPath || 'Root'}</td>
+                                                            <td style={{ padding: '10px 12px' }}>{entry.workflowStatus}</td>
+                                                            <td style={{ padding: '10px 12px' }}>V{entry.currentVersionNo || 0}</td>
+                                                            <td style={{ padding: '10px 12px' }}>{formatDate(entry.updatedAt)}</td>
+                                                            <td style={{ padding: '10px 12px' }}>
+                                                                {entry.currentVersionId && (entry.workflowStatus === 'clean' || entry.workflowStatus === 'reviewed') ? (
+                                                                    <a
+                                                                        href={`/api/plugins/dateiaustausch/public/files/${entry.id}/versions/${entry.currentVersionId}/download?sessionToken=${encodeURIComponent(access.sessionToken)}`}
+                                                                        target="_blank"
+                                                                        rel="noreferrer"
+                                                                    >
+                                                                        Laden
+                                                                    </a>
+                                                                ) : <span className="text-muted">Gesperrt</span>}
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                    {!filesLoading && files.length === 0 && (
+                                                        <tr>
+                                                            <td colSpan={6} style={{ padding: '12px' }} className="text-muted">
+                                                                Noch keine Dateien vorhanden.
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
                             </main>

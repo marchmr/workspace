@@ -21,21 +21,29 @@ NC='\033[0m'
 
 APP_DIR="/opt/mike-workspace"
 APP_USER="mike"
+SCAN_USER="workspace-scan"
 SERVICE="mike-workspace"
 BACKUP_BASE_DIR="$APP_DIR/backups/pre-update"
 DEFAULT_GIT_REPO="https://github.com/marchmr/workspace.git"
 EXPECTED_REPO_SLUG="marchmr/workspace"
+UPLOADS_DATA_DIR="/srv/mike-workspace-uploads"
 REQUIRED_APT_PACKAGES=(
   zip
   unzip
   curl
   git
+  rsync
   ca-certificates
   ffmpeg
   acl
+  build-essential
+  python3
+  pkg-config
   nginx
   certbot
   python3-certbot-nginx
+  clamav
+  clamav-daemon
 )
 
 upsert_env_file() {
@@ -55,6 +63,16 @@ ensure_env_key_if_missing() {
   local value="$3"
   if ! grep -q "^${key}=" "$env_file"; then
     printf "\n%s=%s\n" "$key" "$value" >> "$env_file"
+  fi
+}
+
+resolve_nologin_shell() {
+  if [ -x /usr/sbin/nologin ]; then
+    echo "/usr/sbin/nologin"
+  elif [ -x /sbin/nologin ]; then
+    echo "/sbin/nologin"
+  else
+    echo "/bin/false"
   fi
 }
 
@@ -115,6 +133,107 @@ ensure_subdomain_automation_defaults() {
   if [ -n "$ssl_email" ]; then
     upsert_env_file "$env_file" "SUBDOMAIN_SSL_EMAIL" "$ssl_email"
   fi
+}
+
+ensure_file_security_defaults() {
+  local env_file="$APP_DIR/backend/.env"
+  if [ ! -f "$env_file" ]; then
+    return 0
+  fi
+
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_MAX_UPLOAD_MB" "500"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_STRICT_SIGNATURE" "true"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ALLOW_ZIP_UPLOADS" "false"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_ENTRIES" "500"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB" "1000"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_RATIO" "60"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_ENABLED" "true"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "clamscan"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_TIMEOUT_MS" "120000"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_FAIL_CLOSED" "true"
+}
+
+ensure_runtime_users_hardening() {
+  local nologin_shell
+  nologin_shell="$(resolve_nologin_shell)"
+
+  if id "$APP_USER" >/dev/null 2>&1; then
+    usermod -s "$nologin_shell" "$APP_USER" >/dev/null 2>&1 || true
+  fi
+
+  if ! id "$SCAN_USER" >/dev/null 2>&1; then
+    useradd --system --home-dir /nonexistent --shell "$nologin_shell" "$SCAN_USER" >/dev/null 2>&1 || true
+  else
+    usermod -s "$nologin_shell" "$SCAN_USER" >/dev/null 2>&1 || true
+  fi
+}
+
+ensure_upload_mount_hardening() {
+  mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+
+  if [ -d "$APP_DIR/uploads" ] && [ "$(ls -A "$APP_DIR/uploads" 2>/dev/null | wc -l)" -gt 0 ]; then
+    rsync -a "$APP_DIR/uploads/" "$UPLOADS_DATA_DIR/" 2>/dev/null || true
+  fi
+
+  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+bind" /etc/fstab; then
+    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none bind 0 0" >> /etc/fstab
+  fi
+  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+remount,bind,noexec,nodev,nosuid" /etc/fstab; then
+    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none remount,bind,noexec,nodev,nosuid 0 0" >> /etc/fstab
+  fi
+
+  if ! mountpoint -q "$APP_DIR/uploads"; then
+    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+  fi
+  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" 2>/dev/null || true
+}
+
+configure_clamav_isolation() {
+  local dropin_dir="/etc/systemd/system/clamav-daemon.service.d"
+  local dropin_file="${dropin_dir}/workspace-isolation.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/var/lib/clamav
+ReadWritePaths=/run/clamav
+ReadWritePaths=/var/log/clamav
+ReadOnlyPaths=$APP_DIR/uploads
+EOF
+}
+
+configure_app_runtime_hardening() {
+  local dropin_dir="/etc/systemd/system/${SERVICE}.service.d"
+  local dropin_file="${dropin_dir}/security-hardening.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=$APP_DIR/uploads
+ReadWritePaths=$APP_DIR/backups
+EOF
 }
 
 resolve_workspace_host_from_nginx() {
@@ -259,10 +378,20 @@ ensure_required_apt_packages() {
   apt-get update -qq > /dev/null 2>&1
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${missing_packages[@]}" > /dev/null 2>&1
   echo -e "  ${GREEN}[OK]${NC} System-Abhaengigkeiten installiert"
+
+}
+
+ensure_clamav_services() {
+  if dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed"; then
+    systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+    systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+    echo -e "  ${GREEN}[OK]${NC} ClamAV-Dienste aktiv"
+  fi
 }
 
 echo -e "\n${CYAN}> System-Abhaengigkeiten pruefen...${NC}"
 ensure_required_apt_packages
+ensure_clamav_services
 
 # ============================================
 # Branch bestimmen
@@ -529,8 +658,10 @@ fi
 # ============================================
 echo -e "\n${CYAN}> Backend Dependencies...${NC}"
 cd "$APP_DIR/backend"
-sudo -u "$APP_USER" npm ci --omit=dev --silent --no-audit 2>/dev/null || sudo -u "$APP_USER" npm install --omit=dev --silent --no-audit 2>/dev/null
-sudo -u "$APP_USER" npm install --save-dev typescript tsx 2>/dev/null
+sudo -u "$APP_USER" npm ci --include=dev --silent --no-audit 2>/dev/null || sudo -u "$APP_USER" npm install --include=dev --silent --no-audit 2>/dev/null
+if [ -d "$APP_DIR/backend/node_modules/.bin" ]; then
+  find "$APP_DIR/backend/node_modules/.bin" -type f -exec chmod u+x {} \; 2>/dev/null || true
+fi
 echo -e "  ${GREEN}[OK]${NC} Dependencies installiert"
 
 # ============================================
@@ -546,6 +677,9 @@ if [ -f "$APP_DIR/frontend/package.json" ] && grep -q '"build"' "$APP_DIR/fronte
     find "$APP_DIR/frontend/dist" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
     cd "$APP_DIR/frontend"
     sudo -u "$APP_USER" npm ci --silent 2>/dev/null || sudo -u "$APP_USER" npm install --silent 2>/dev/null
+    if [ -d "$APP_DIR/frontend/node_modules/.bin" ]; then
+      find "$APP_DIR/frontend/node_modules/.bin" -type f -exec chmod u+x {} \; 2>/dev/null || true
+    fi
     if ! sudo -u "$APP_USER" npm run build --silent; then
       echo -e "  ${RED}[FAIL]${NC} Frontend-Build fehlgeschlagen"
       echo -e "  ${YELLOW}Restore-Befehl:${NC}"
@@ -581,9 +715,15 @@ fi
 
 echo -e "\n${CYAN}> Subdomain-Automation absichern...${NC}"
 ensure_subdomain_automation_defaults
+ensure_file_security_defaults
+ensure_runtime_users_hardening
+ensure_upload_mount_hardening
 configure_subdomain_provisioning_prereqs
+configure_app_runtime_hardening
+configure_clamav_isolation
 echo -e "  ${GREEN}[OK]${NC} Systemvoraussetzungen fuer automatische Subdomain-Einrichtung aktualisiert"
 systemctl daemon-reload
+ensure_clamav_services
 
 # ============================================
 # Service neu starten

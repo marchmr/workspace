@@ -36,6 +36,13 @@ function optionalCsvEnv(key: string): string[] {
         .filter(Boolean);
 }
 
+function optionalIntEnv(key: string, defaultValue: number): number {
+    const raw = process.env[key];
+    if (!raw) return defaultValue;
+    const value = parseInt(raw, 10);
+    return Number.isFinite(value) ? value : defaultValue;
+}
+
 function normalizeUpdateUrl(value: string): string {
     const fallback = 'https://api.github.com/repos/marchmr/workspace';
     const raw = (value || '').trim();
@@ -129,6 +136,23 @@ export const config = {
         storageProvider: optionalEnv('DOCUMENT_STORAGE_PROVIDER', 'local'),
         maxFileSizeMb: parseInt(optionalEnv('DOCUMENT_MAX_FILE_SIZE_MB', '25'), 10),
         allowAllMimeTypes: optionalBoolEnv('DOCUMENT_ALLOW_ALL_MIME_TYPES', false),
+    },
+
+    fileSecurity: {
+        maxUploadSizeMb: optionalIntEnv('FILE_SECURITY_MAX_UPLOAD_MB', 500),
+        strictSignatureCheck: optionalBoolEnv('FILE_SECURITY_STRICT_SIGNATURE', true),
+        allowZipUploads: optionalBoolEnv('FILE_SECURITY_ALLOW_ZIP_UPLOADS', false),
+        zip: {
+            maxEntries: optionalIntEnv('FILE_SECURITY_ZIP_MAX_ENTRIES', 500),
+            maxUncompressedMb: optionalIntEnv('FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB', 1000),
+            maxCompressionRatio: optionalIntEnv('FILE_SECURITY_ZIP_MAX_RATIO', 60),
+        },
+        clamav: {
+            enabled: optionalBoolEnv('FILE_SECURITY_CLAMAV_ENABLED', true),
+            binary: optionalEnv('FILE_SECURITY_CLAMAV_BINARY', 'clamscan'),
+            timeoutMs: optionalIntEnv('FILE_SECURITY_CLAMAV_TIMEOUT_MS', 120000),
+            failClosed: optionalBoolEnv('FILE_SECURITY_CLAMAV_FAIL_CLOSED', true),
+        },
     },
 
     app: {

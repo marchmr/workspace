@@ -105,9 +105,11 @@ ask_password() {
 # ============================================
 APP_DIR="/opt/mike-workspace"
 APP_USER="mike"
+SCAN_USER="workspace-scan"
 GIT_REPO="https://github.com/marchmr/workspace.git"
 NODE_VERSION="20"
 SERVICE_NAME="mike-workspace"
+UPLOADS_DATA_DIR="/srv/mike-workspace-uploads"
 
 upsert_env_file() {
   local env_file="$1"
@@ -118,6 +120,96 @@ upsert_env_file() {
   else
     printf "\n%s=%s\n" "$key" "$value" >> "$env_file"
   fi
+}
+
+resolve_nologin_shell() {
+  if [ -x /usr/sbin/nologin ]; then
+    echo "/usr/sbin/nologin"
+  elif [ -x /sbin/nologin ]; then
+    echo "/sbin/nologin"
+  else
+    echo "/bin/false"
+  fi
+}
+
+ensure_upload_mount_hardening() {
+  print_step "Upload-Mount hardening (noexec,nodev,nosuid)..."
+  mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+
+  if [ -d "$APP_DIR/uploads" ] && [ "$(ls -A "$APP_DIR/uploads" 2>/dev/null | wc -l)" -gt 0 ]; then
+    rsync -a "$APP_DIR/uploads/" "$UPLOADS_DATA_DIR/" 2>/dev/null || true
+  fi
+
+  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+bind" /etc/fstab; then
+    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none bind 0 0" >> /etc/fstab
+  fi
+  if ! grep -Eq "^[^#]+[[:space:]]+$APP_DIR/uploads[[:space:]]+none[[:space:]]+remount,bind,noexec,nodev,nosuid" /etc/fstab; then
+    echo "$UPLOADS_DATA_DIR $APP_DIR/uploads none remount,bind,noexec,nodev,nosuid 0 0" >> /etc/fstab
+  fi
+
+  if ! mountpoint -q "$APP_DIR/uploads"; then
+    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+  fi
+  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" 2>/dev/null || true
+
+  print_ok "Upload-Pfad isoliert: $APP_DIR/uploads"
+}
+
+configure_clamav_isolation() {
+  print_step "ClamAV-Service isolieren..."
+  local dropin_dir="/etc/systemd/system/clamav-daemon.service.d"
+  local dropin_file="${dropin_dir}/workspace-isolation.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/var/lib/clamav
+ReadWritePaths=/run/clamav
+ReadWritePaths=/var/log/clamav
+ReadOnlyPaths=$APP_DIR/uploads
+EOF
+
+  systemctl daemon-reload
+  systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+  systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+  print_ok "ClamAV Isolation aktiv"
+}
+
+configure_app_runtime_hardening() {
+  print_step "App-Service hardening anwenden..."
+  local dropin_dir="/etc/systemd/system/${SERVICE_NAME}.service.d"
+  local dropin_file="${dropin_dir}/security-hardening.conf"
+  mkdir -p "$dropin_dir"
+
+  cat > "$dropin_file" <<EOF
+[Service]
+PrivateTmp=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=$APP_DIR/uploads
+ReadWritePaths=$APP_DIR/backups
+EOF
+
+  print_ok "App-Hardening Drop-In gesetzt: $dropin_file"
 }
 
 configure_subdomain_provisioning_prereqs() {
@@ -310,9 +402,15 @@ print_ok "Paketquellen aktuell"
 
 print_step "Basis-Pakete installieren..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  nginx mariadb-server curl zip unzip ufw gnupg2 git \
-  ca-certificates lsb-release software-properties-common ffmpeg acl > /dev/null 2>&1
-print_ok "nginx, mariadb-server, ffmpeg, acl, curl, unzip, ufw, git installiert"
+  nginx mariadb-server curl zip unzip ufw gnupg2 git rsync \
+  ca-certificates lsb-release software-properties-common ffmpeg acl \
+  build-essential python3 pkg-config clamav clamav-daemon > /dev/null 2>&1
+print_ok "Basis-Pakete inkl. Build-Toolchain und ClamAV installiert"
+
+print_step "ClamAV-Dienste initialisieren..."
+systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+print_ok "ClamAV bereit (soweit auf dem System verfuegbar)"
 
 # Certbot fuer SSL
 if [ "$SETUP_SSL" = true ]; then
@@ -376,11 +474,21 @@ print_header "Schritt 5/8: Hammer WorkSpace"
 
 # App-User
 print_step "System-User erstellen..."
+NOLOGIN_SHELL="$(resolve_nologin_shell)"
 if ! id "$APP_USER" &>/dev/null; then
-  useradd --system --home-dir "$APP_DIR" --shell /bin/false "$APP_USER"
+  useradd --system --home-dir "$APP_DIR" --shell "$NOLOGIN_SHELL" "$APP_USER"
   print_ok "User '$APP_USER' erstellt"
 else
+  usermod -s "$NOLOGIN_SHELL" "$APP_USER" >/dev/null 2>&1 || true
   print_ok "User '$APP_USER' existiert bereits"
+fi
+
+if ! id "$SCAN_USER" &>/dev/null; then
+  useradd --system --home-dir /nonexistent --shell "$NOLOGIN_SHELL" "$SCAN_USER"
+  print_ok "Scan-User '$SCAN_USER' erstellt"
+else
+  usermod -s "$NOLOGIN_SHELL" "$SCAN_USER" >/dev/null 2>&1 || true
+  print_ok "Scan-User '$SCAN_USER' existiert bereits"
 fi
 
 # Repository klonen
@@ -410,13 +518,13 @@ print_ok "Backup-Verzeichnisse vorbereitet"
 # Backend Dependencies
 print_step "Backend Dependencies installieren..."
 cd "$APP_DIR/backend"
-npm ci --omit=dev --silent --no-audit 2>/dev/null || npm install --omit=dev --silent --no-audit 2>/dev/null
+npm ci --include=dev --silent --no-audit 2>/dev/null || npm install --include=dev --silent --no-audit 2>/dev/null
 print_ok "Backend Dependencies installiert"
 
-# Dev-Dependencies fuer Build und Migrationen (tsx, typescript)
-print_step "Build-Tools installieren..."
-npm install --save-dev typescript tsx 2>/dev/null
-print_ok "Build-Tools installiert"
+# Sicherstellen, dass lokale Bin-Skripte ausfuehrbar sind
+if [ -d "$APP_DIR/backend/node_modules/.bin" ]; then
+  find "$APP_DIR/backend/node_modules/.bin" -type f -exec chmod u+x {} \; 2>/dev/null || true
+fi
 
 # Frontend-Hostrouting (Workspace/Public Hosts) vorbereiten
 print_step "Frontend-Hostrouting konfigurieren..."
@@ -435,6 +543,9 @@ print_ok "frontend/.env.production geschrieben"
 print_step "Frontend bauen..."
 cd "$APP_DIR/frontend"
 npm ci --silent --no-audit 2>/dev/null || npm install --silent --no-audit 2>/dev/null
+if [ -d "$APP_DIR/frontend/node_modules/.bin" ]; then
+  find "$APP_DIR/frontend/node_modules/.bin" -type f -exec chmod u+x {} \; 2>/dev/null || true
+fi
 npm run build --silent 2>/dev/null
 print_ok "Frontend gebaut"
 
@@ -484,6 +595,18 @@ SUBDOMAIN_NGINX_SITES_AVAILABLE_DIR=/etc/nginx/sites-available
 SUBDOMAIN_NGINX_SITES_ENABLED_DIR=/etc/nginx/sites-enabled
 SUBDOMAIN_EXPECTED_SERVER_IPS=$(hostname -I | awk '{print $1}')
 SUBDOMAIN_SSL_EMAIL=${SSL_EMAIL:-}
+
+# File Security / Dateiaustausch
+FILE_SECURITY_MAX_UPLOAD_MB=500
+FILE_SECURITY_STRICT_SIGNATURE=true
+FILE_SECURITY_ALLOW_ZIP_UPLOADS=false
+FILE_SECURITY_ZIP_MAX_ENTRIES=500
+FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB=1000
+FILE_SECURITY_ZIP_MAX_RATIO=60
+FILE_SECURITY_CLAMAV_ENABLED=true
+FILE_SECURITY_CLAMAV_BINARY=clamscan
+FILE_SECURITY_CLAMAV_TIMEOUT_MS=120000
+FILE_SECURITY_CLAMAV_FAIL_CLOSED=true
 EOF
 print_ok ".env erstellt"
 
@@ -776,6 +899,9 @@ WantedBy=multi-user.target
 EOF
 
 configure_subdomain_provisioning_prereqs
+configure_app_runtime_hardening
+ensure_upload_mount_hardening
+configure_clamav_isolation
 
 systemctl daemon-reload
 systemctl enable mike-workspace 2>/dev/null
