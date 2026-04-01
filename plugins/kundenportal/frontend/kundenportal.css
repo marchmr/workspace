@@ -720,14 +720,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     flex: 0 0 auto;
 }
 
 .kp-page .kp-btn-icon svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
 }
 
 .kp-page .kp-btn-icon path {
@@ -739,9 +739,9 @@
 }
 
 .kp-page .kp-icon-btn {
-    width: 40px;
-    min-width: 40px;
-    height: 38px;
+    width: 38px;
+    min-width: 38px;
+    height: 36px;
     padding: 0;
     justify-content: center;
 }
@@ -1165,6 +1165,8 @@
     background: transparent;
     text-align: left;
     padding: 11px 16px;
+    display: flex;
+    align-items: center;
     border-radius: 0;
     font: inherit;
     color: #1f304a;
@@ -1183,6 +1185,11 @@
 
 .kp-page .kp-fm-menu .kp-fm-menu-item--danger:hover {
     background: #fff1f1;
+}
+
+.kp-page .kp-fm-menu-item .kp-btn-icon {
+    margin-right: 10px;
+    color: #52627b;
 }
 
 .kp-page .kp-fm-menu .is-disabled {

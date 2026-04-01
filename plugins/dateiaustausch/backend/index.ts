@@ -390,6 +390,128 @@ async function ensureFolderExists(db: any, tenantId: number, customerId: number,
     }
 }
 
+function splitFileNameAndExt(fileName: string): { name: string; ext: string } {
+    const clean = sanitizeFileName(fileName || 'Datei');
+    const ext = path.extname(clean);
+    const name = ext ? clean.slice(0, -ext.length) : clean;
+    return { name: name || 'Datei', ext: ext || '' };
+}
+
+async function resolveUniqueItemDisplayName(
+    db: any,
+    tenantId: number,
+    customerId: number,
+    folderPath: string,
+    preferredName: string,
+): Promise<string> {
+    const { name, ext } = splitFileNameAndExt(preferredName);
+    const rows = await db('dtx_items')
+        .where({
+            tenant_id: tenantId,
+            customer_id: customerId,
+            folder_path: folderPath,
+        })
+        .select('display_name');
+    const existing = new Set<string>(rows.map((row: any) => String(row.display_name || '').toLowerCase()));
+    if (!existing.has(preferredName.toLowerCase())) return preferredName;
+
+    for (let index = 1; index <= 5000; index += 1) {
+        const candidate = `${name} (${index})${ext}`;
+        if (!existing.has(candidate.toLowerCase())) return candidate;
+    }
+    return `${name}-${randomUUID().slice(0, 8)}${ext}`;
+}
+
+async function duplicateCurrentItemVersion(db: any, args: {
+    tenantId: number;
+    customerId: number;
+    sourceItemId: number;
+    targetFolderPath: string;
+    actor: UploadActor;
+}): Promise<number> {
+    const sourceItem = await db('dtx_items')
+        .where({ id: args.sourceItemId, tenant_id: args.tenantId, customer_id: args.customerId })
+        .first();
+    if (!sourceItem) throw new Error('Quelldatei nicht gefunden.');
+    if (!sourceItem.current_version_id) throw new Error('Quelldatei hat keine aktuelle Version.');
+
+    const sourceVersion = await db('dtx_versions')
+        .where({
+            id: Number(sourceItem.current_version_id),
+            item_id: Number(sourceItem.id),
+            tenant_id: args.tenantId,
+        })
+        .first();
+    if (!sourceVersion) throw new Error('Dateiversion nicht gefunden.');
+
+    const sourceStorageKey = String(sourceVersion.storage_key || '');
+    const sourceAbsPath = buildSafeStoragePath(STORAGE_ROOT, sourceStorageKey);
+    await fs.access(sourceAbsPath);
+
+    const sourceZone = String(sourceVersion.storage_zone || '');
+    const sourceScanStatus = String(sourceVersion.scan_status || '');
+    if (sourceZone !== 'clean' || sourceScanStatus !== 'clean') {
+        throw new Error('Nur saubere Dateien koennen kopiert werden.');
+    }
+    const zone: 'clean' = 'clean';
+    const sourceFileName = sanitizeFileName(String(sourceVersion.original_file_name || sourceItem.display_name || 'Datei'));
+    const targetDisplayName = await resolveUniqueItemDisplayName(
+        db,
+        args.tenantId,
+        args.customerId,
+        args.targetFolderPath,
+        sourceFileName,
+    );
+    const targetStorageKey = buildStorageKey(args.tenantId, zone as 'clean' | 'quarantine', targetDisplayName);
+    await saveTempFileToStorage(targetStorageKey, sourceAbsPath);
+
+    const now = new Date();
+    const [newItemId] = await db('dtx_items').insert({
+        tenant_id: args.tenantId,
+        customer_id: args.customerId,
+        folder_path: args.targetFolderPath,
+        display_name: targetDisplayName,
+        workflow_status: 'clean',
+        current_version_id: null,
+        last_activity_at: now,
+        created_at: now,
+        updated_at: now,
+    });
+
+    const [newVersionId] = await db('dtx_versions').insert({
+        item_id: Number(newItemId),
+        tenant_id: args.tenantId,
+        version_no: 1,
+        storage_zone: zone,
+        storage_key: targetStorageKey,
+        original_file_name: targetDisplayName,
+        mime_type: String(sourceVersion.mime_type || 'application/octet-stream'),
+        detected_mime_type: String(sourceVersion.detected_mime_type || sourceVersion.mime_type || 'application/octet-stream'),
+        size_bytes: Number(sourceVersion.size_bytes || 0),
+        sha256_hash: String(sourceVersion.sha256_hash || ''),
+        scan_status: 'clean',
+        scan_engine: String(sourceVersion.scan_engine || ''),
+        scan_signature: String(sourceVersion.scan_signature || ''),
+        scan_meta: sourceVersion.scan_meta || null,
+        uploaded_by_type: args.actor.type,
+        uploaded_by_user_id: args.actor.userId,
+        uploaded_by_email: args.actor.email,
+        uploaded_ip: args.actor.ip,
+        uploaded_user_agent: args.actor.userAgent,
+        created_at: now,
+    });
+
+    await db('dtx_items')
+        .where({ id: Number(newItemId), tenant_id: args.tenantId })
+        .update({ current_version_id: Number(newVersionId), updated_at: now });
+
+    if (args.targetFolderPath) {
+        await ensureFolderExists(db, args.tenantId, args.customerId, args.targetFolderPath);
+    }
+
+    return Number(newItemId);
+}
+
 async function loadItemWithDetails(db: any, tenantId: number, itemId: number): Promise<any | null> {
     const item = await db('dtx_items as i')
         .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
@@ -624,24 +746,44 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const items = await db('dtx_items as i')
-            .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
-            .where('i.tenant_id', Number(session.tenant_id))
-            .andWhere('i.customer_id', Number(session.customer_id))
-            .andWhereNotNull('i.current_version_id')
-            .select(
-                'i.id',
-                'i.folder_path',
-                'i.display_name',
-                'i.workflow_status',
-                'i.current_version_id',
-                'i.updated_at',
-                'v.version_no as current_version_no',
-                'v.scan_status as current_scan_status',
-                'v.created_at as current_version_created_at',
-            )
-            .orderBy('i.updated_at', 'desc')
-            .limit(200);
+        let items: any[] = [];
+        try {
+            items = await db('dtx_items as i')
+                .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
+                .where('i.tenant_id', Number(session.tenant_id))
+                .andWhere('i.customer_id', Number(session.customer_id))
+                .andWhereNotNull('i.current_version_id')
+                .select(
+                    'i.id',
+                    'i.folder_path',
+                    'i.display_name',
+                    'i.workflow_status',
+                    'i.current_version_id',
+                    'i.updated_at',
+                    'v.version_no as current_version_no',
+                    'v.scan_status as current_scan_status',
+                    'v.created_at as current_version_created_at',
+                )
+                .orderBy('i.updated_at', 'desc')
+                .limit(200);
+        } catch (error) {
+            // Fallback query for older/inconsistent schemas to avoid hard 500 in customer UI.
+            fastify.log.error({ error }, 'dateiaustausch: public files query failed, using fallback');
+            items = await db('dtx_items as i')
+                .where('i.tenant_id', Number(session.tenant_id))
+                .andWhere('i.customer_id', Number(session.customer_id))
+                .andWhereNotNull('i.current_version_id')
+                .select(
+                    'i.id',
+                    'i.folder_path',
+                    'i.display_name',
+                    'i.workflow_status',
+                    'i.current_version_id',
+                    'i.updated_at',
+                )
+                .orderBy('i.updated_at', 'desc')
+                .limit(200);
+        }
 
         return items.map((item: any) => ({
             id: Number(item.id),
@@ -649,7 +791,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             displayName: String(item.display_name || ''),
             workflowStatus: item.workflow_status,
             currentVersionId: item.current_version_id ? Number(item.current_version_id) : null,
-            currentVersionNo: item.current_version_no ? Number(item.current_version_no) : null,
+            currentVersionNo: item.current_version_no ? Number(item.current_version_no) : 1,
             currentScanStatus: item.current_scan_status || null,
             currentVersionCreatedAt: toIso(item.current_version_created_at),
             updatedAt: toIso(item.updated_at),
@@ -668,17 +810,29 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const [folders, itemFolders] = await Promise.all([
-            db('dtx_folders')
-                .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
-                .select('folder_path')
-                .orderBy('folder_path', 'asc'),
-            db('dtx_items')
+        let folders: Array<{ folder_path: string }> = [];
+        let itemFolders: Array<{ folder_path: string }> = [];
+        try {
+            [folders, itemFolders] = await Promise.all([
+                db('dtx_folders')
+                    .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
+                    .select('folder_path')
+                    .orderBy('folder_path', 'asc'),
+                db('dtx_items')
+                    .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
+                    .whereNotNull('folder_path')
+                    .where('folder_path', '!=', '')
+                    .distinct('folder_path'),
+            ]);
+        } catch (error) {
+            // Fallback if dtx_folders table/schema is temporarily inconsistent.
+            fastify.log.error({ error }, 'dateiaustausch: public folders query failed, using fallback');
+            itemFolders = await db('dtx_items')
                 .where({ tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
                 .whereNotNull('folder_path')
                 .where('folder_path', '!=', '')
-                .distinct('folder_path'),
-        ]);
+                .distinct('folder_path');
+        }
 
         const merged = new Set<string>();
         for (const row of folders) merged.add(String((row as FolderRow).folder_path || '').trim());
@@ -934,6 +1088,195 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }, request);
 
         return { success: true };
+    });
+
+    fastify.post('/public/files/bulk-delete', {
+        config: { policy: { public: true }, rateLimit: { max: 8, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const body = (request.body as any) || {};
+        const fileIds = Array.isArray(body.fileIds) ? body.fileIds : [];
+        const folderPathsRaw = Array.isArray(body.folderPaths) ? body.folderPaths : [];
+        const fileIdList = fileIds
+            .map((value: any) => Number(value))
+            .filter((value: number) => Number.isInteger(value) && value > 0);
+        const folderPaths = folderPathsRaw
+            .map((value: any) => normalizeFolderPath(String(value || '')))
+            .filter(Boolean);
+
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        if (fileIdList.length === 0 && folderPaths.length === 0) {
+            return reply.status(400).send({ error: 'Keine Elemente zum Löschen übergeben.' });
+        }
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+
+        const tenantId = Number(session.tenant_id);
+        const customerId = Number(session.customer_id);
+        const normalizedFolderPaths = Array.from(new Set(folderPaths)).sort((a, b) => b.length - a.length);
+
+        const folderPrefixes = normalizedFolderPaths.map((folderPath) => `${folderPath}/%`);
+        const folderQueries = normalizedFolderPaths.map((folderPath, index) => {
+            const prefix = folderPrefixes[index];
+            return db('dtx_items')
+                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: folderPath })
+                .orWhere((qb: any) => qb
+                    .where({ tenant_id: tenantId, customer_id: customerId })
+                    .where('folder_path', 'like', prefix))
+                .select('id');
+        });
+        const folderItemRows = folderQueries.length ? (await Promise.all(folderQueries)).flat() : [];
+        const folderFileIds = folderItemRows.map((row: any) => Number(row.id)).filter((id: number) => id > 0);
+        const candidateItemIds = Array.from(new Set([...fileIdList, ...folderFileIds]));
+        const validItems = candidateItemIds.length
+            ? await db('dtx_items')
+                .where({ tenant_id: tenantId, customer_id: customerId })
+                .whereIn('id', candidateItemIds)
+                .select('id')
+            : [];
+        const allItemIds = validItems.map((row: any) => Number(row.id)).filter((id: number) => id > 0);
+
+        const versions = allItemIds.length
+            ? await db('dtx_versions')
+                .where({ tenant_id: tenantId })
+                .whereIn('item_id', allItemIds)
+                .select('storage_key')
+            : [];
+
+        await db.transaction(async (trx: any) => {
+            if (allItemIds.length) {
+                await trx('dtx_comments')
+                    .where({ tenant_id: tenantId })
+                    .whereIn('item_id', allItemIds)
+                    .delete();
+                await trx('dtx_versions')
+                    .where({ tenant_id: tenantId })
+                    .whereIn('item_id', allItemIds)
+                    .delete();
+                await trx('dtx_items')
+                    .where({ tenant_id: tenantId, customer_id: customerId })
+                    .whereIn('id', allItemIds)
+                    .delete();
+            }
+
+            for (const folderPath of normalizedFolderPaths) {
+                const prefix = `${folderPath}/%`;
+                await trx('dtx_folders')
+                    .where({ tenant_id: tenantId, customer_id: customerId, folder_path: folderPath })
+                    .orWhere((qb: any) => qb
+                        .where({ tenant_id: tenantId, customer_id: customerId })
+                        .where('folder_path', 'like', prefix))
+                    .delete();
+            }
+        });
+
+        for (const row of versions) {
+            const storageKey = String((row as any).storage_key || '');
+            if (!storageKey) continue;
+            const absPath = buildSafeStoragePath(STORAGE_ROOT, storageKey);
+            await fs.rm(absPath, { force: true }).catch(() => undefined);
+        }
+
+        return {
+            success: true,
+            deletedFiles: allItemIds.length,
+            deletedFolders: normalizedFolderPaths.length,
+        };
+    });
+
+    fastify.post('/public/files/copy', {
+        config: { policy: { public: true }, rateLimit: { max: 8, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const body = (request.body as any) || {};
+        const itemIds = Array.isArray(body.itemIds) ? body.itemIds : [];
+        const folderPathsRaw = Array.isArray(body.folderPaths) ? body.folderPaths : [];
+        const targetFolderPath = normalizeFolderPath(String(body.targetFolderPath || ''));
+
+        const fileIds = itemIds
+            .map((value: any) => Number(value))
+            .filter((value: number) => Number.isInteger(value) && value > 0);
+        const folderPaths = folderPathsRaw
+            .map((value: any) => normalizeFolderPath(String(value || '')))
+            .filter(Boolean);
+
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        if (fileIds.length === 0 && folderPaths.length === 0) {
+            return reply.status(400).send({ error: 'Keine Elemente zum Kopieren übergeben.' });
+        }
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+
+        const tenantId = Number(session.tenant_id);
+        const customerId = Number(session.customer_id);
+        const actor: UploadActor = {
+            type: 'customer',
+            userId: null,
+            email: String(session.email_normalized || ''),
+            display: String(session.email_normalized || ''),
+            ip: String(request.ip || ''),
+            userAgent: String(request.headers['user-agent'] || ''),
+        };
+
+        let copiedCount = 0;
+        for (const itemId of fileIds) {
+            await duplicateCurrentItemVersion(db, {
+                tenantId,
+                customerId,
+                sourceItemId: itemId,
+                targetFolderPath,
+                actor,
+            });
+            copiedCount += 1;
+        }
+
+        const uniqueFolderPaths = Array.from(new Set(folderPaths)).sort((a, b) => a.length - b.length);
+        for (const sourceFolderPath of uniqueFolderPaths) {
+            const sourcePrefix = `${sourceFolderPath}/`;
+            const sourceFolders = await db('dtx_folders')
+                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
+                .orWhere((qb: any) => qb
+                    .where({ tenant_id: tenantId, customer_id: customerId })
+                    .where('folder_path', 'like', `${sourcePrefix}%`))
+                .select('folder_path');
+
+            const mappedRoot = targetFolderPath ? `${targetFolderPath}/${getBaseName(sourceFolderPath)}` : getBaseName(sourceFolderPath);
+            await ensureFolderExists(db, tenantId, customerId, mappedRoot);
+            for (const folderRow of sourceFolders) {
+                const sourcePath = normalizeFolderPath(String((folderRow as any).folder_path || ''));
+                if (!sourcePath) continue;
+                const relative = sourcePath === sourceFolderPath ? '' : sourcePath.slice(sourceFolderPath.length + 1);
+                const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
+                await ensureFolderExists(db, tenantId, customerId, destPath);
+            }
+
+            const sourceItems = await db('dtx_items')
+                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
+                .orWhere((qb: any) => qb
+                    .where({ tenant_id: tenantId, customer_id: customerId })
+                    .where('folder_path', 'like', `${sourcePrefix}%`))
+                .select('id', 'folder_path');
+
+            for (const sourceItem of sourceItems) {
+                const sourceItemPath = normalizeFolderPath(String((sourceItem as any).folder_path || ''));
+                const relative = sourceItemPath === sourceFolderPath ? '' : sourceItemPath.slice(sourceFolderPath.length + 1);
+                const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
+                await duplicateCurrentItemVersion(db, {
+                    tenantId,
+                    customerId,
+                    sourceItemId: Number((sourceItem as any).id),
+                    targetFolderPath: destPath,
+                    actor,
+                });
+                copiedCount += 1;
+            }
+        }
+
+        return { success: true, copiedCount };
     });
 
     fastify.get('/public/files/:itemId/versions/:versionId/download', {

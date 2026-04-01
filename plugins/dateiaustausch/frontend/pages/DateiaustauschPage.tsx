@@ -138,6 +138,13 @@ function getPreviewType(fileName: string): 'image' | 'pdf' | 'video' | 'other' {
     return 'other';
 }
 
+const ICONS = {
+    refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6',
+    download: 'M12 4v11m0 0-4-4m4 4 4-4M4 20h16',
+    up: 'M9 14l-4-4 4-4M5 10h9a5 5 0 0 1 5 5v1',
+    eye: 'M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+};
+
 export default function DateiaustauschPage() {
     const [rows, setRows] = useState<ItemRow[]>([]);
     const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -369,7 +376,7 @@ export default function DateiaustauschPage() {
                             </div>
 
                             <button className="btn btn-secondary kp-od-create kp-icon-btn" type="button" onClick={() => loadRows()} disabled={loading} title="Aktualisieren" aria-label="Aktualisieren">
-                                <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
+                                <ActionIcon path={ICONS.refresh} />
                             </button>
 
                             <div className="kp-od-folder-tree">
@@ -426,14 +433,14 @@ export default function DateiaustauschPage() {
                                         type="button"
                                         onClick={() => setCurrentPath(getParentPath(currentPath))}
                                         disabled={!currentPath}
-                                        title="Eine Ebene nach oben"
-                                        aria-label="Eine Ebene nach oben"
-                                    >
-                                        <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
-                                    </button>
-                                    <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId} title="Download" aria-label="Download">
-                                        <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
-                                    </button>
+                                    title="Eine Ebene nach oben"
+                                    aria-label="Eine Ebene nach oben"
+                                >
+                                    <ActionIcon path={ICONS.up} />
+                                </button>
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId} title="Download" aria-label="Download">
+                                    <ActionIcon path={ICONS.download} />
+                                </button>
                                 </div>
                                 <div className="kp-od-command-right">
                                     <button
@@ -451,7 +458,7 @@ export default function DateiaustauschPage() {
                                         title="Vorschau"
                                         aria-label="Vorschau"
                                     >
-                                        <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+                                        <ActionIcon path={ICONS.eye} />
                                     </button>
                                     {selectedEntry ? <span className="kp-od-selection">1 ausgewählt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
                                 </div>

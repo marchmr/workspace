@@ -33,10 +33,14 @@ type ActionMenuState = {
 const ROOT_CONTEXT_KEY = '__context:create';
 
 type DeleteCandidate = {
+    entries: BrowserEntry[];
+};
+
+type ClipboardEntry = {
     kind: 'folder' | 'file';
-    label: string;
-    fullPath?: string;
+    folderPath?: string;
     itemId?: number;
+    label: string;
 };
 
 function normalizePath(input: string): string {
@@ -78,6 +82,16 @@ function getFileTypeLabel(fileName: string): string {
     return ext.toUpperCase();
 }
 
+const ALLOWED_UPLOAD_EXTENSIONS = new Set([
+    'jpg', 'jpeg', 'png', 'webp',
+    'mp4', 'mov', 'webm',
+    'pdf',
+    'doc', 'docx', 'txt',
+    'xls', 'xlsx',
+    'ppt', 'pptx',
+    'zip',
+]);
+
 function buildDownloadUrl(item: PortalFileItem, sessionToken: string): string {
     if (!item.currentVersionId) return '#';
     return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`;
@@ -95,6 +109,19 @@ function getPreviewType(fileName: string): 'image' | 'pdf' | 'video' | 'other' {
     if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'video';
     return 'other';
 }
+
+const ICONS = {
+    folderNew: 'M3 6h6l2-2h10v14H3V6zm9 4v6m-3-3h6',
+    refresh: 'M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6',
+    upload: 'M12 16V5m0 0-4 4m4-4 4 4M4 20h16',
+    download: 'M12 4v11m0 0-4-4m4 4 4-4M4 20h16',
+    up: 'M9 14l-4-4 4-4M5 10h9a5 5 0 0 1 5 5v1',
+    copy: 'M9 9h11v11H9zM4 4h11v11H4z',
+    paste: 'M9 3h6l1 2h3v16H5V5h3l1-2zm0 9h6m-6 4h6',
+    eye: 'M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+    trash: 'M4 7h16M9 7V4h6v3m-8 0l1 13h8l1-13',
+    open: 'M3 6h6l2-2h10v4M3 10h18v10H3z',
+};
 
 function buildFolderTree(paths: string[]): TreeItem[] {
     return paths
@@ -127,13 +154,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     const [folders, setFolders] = useState<string[]>([]);
     const [currentPath, setCurrentPath] = useState('');
     const [search, setSearch] = useState('');
-    const [selectedKey, setSelectedKey] = useState<string | null>(null);
+    const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
     const [menuState, setMenuState] = useState<ActionMenuState | null>(null);
     const [createOpen, setCreateOpen] = useState(false);
     const [creatingFolder, setCreatingFolder] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
     const [newlyInsertedFolderPath, setNewlyInsertedFolderPath] = useState<string | null>(null);
     const [deleteCandidate, setDeleteCandidate] = useState<DeleteCandidate | null>(null);
+    const [clipboardEntries, setClipboardEntries] = useState<ClipboardEntry[]>([]);
+    const [pastePending, setPastePending] = useState(false);
     const [dragOver, setDragOver] = useState(false);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewIndex, setPreviewIndex] = useState(0);
@@ -259,10 +288,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         return [...folderEntries, ...fileEntries];
     }, [childFolders, currentPath, visibleFiles]);
 
-    const selectedEntry = useMemo(
-        () => visibleEntries.find((entry) => entry.key === selectedKey) || null,
-        [selectedKey, visibleEntries],
+    const selectedEntries = useMemo(
+        () => visibleEntries.filter((entry) => selectedKeys.includes(entry.key)),
+        [selectedKeys, visibleEntries],
     );
+    const selectedEntry = selectedEntries.length === 1 ? selectedEntries[0] : null;
     const previewFiles = useMemo(() => visibleFiles.filter((file) => !!file.currentVersionId), [visibleFiles]);
     const previewFile = previewFiles[previewIndex] || null;
 
@@ -283,7 +313,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         try {
             setLoading(true);
             setError(null);
-            for (const file of Array.from(fileList)) {
+            const filesToUpload = Array.from(fileList);
+            const blockedFiles = filesToUpload.filter((file) => {
+                const ext = getExtension(file.name);
+                return !ALLOWED_UPLOAD_EXTENSIONS.has(ext);
+            });
+            if (blockedFiles.length > 0) {
+                throw new Error(`Nicht erlaubte Dateitypen im Upload: ${blockedFiles.map((file) => file.name).join(', ')}`);
+            }
+            for (const file of filesToUpload) {
                 const formData = new FormData();
                 formData.append('sessionToken', sessionToken);
                 if (currentPath) formData.append('folderPath', currentPath);
@@ -305,27 +343,6 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
-    async function deleteFolder(folderPath: string) {
-        const res = await fetch(
-            `/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`,
-            {
-                method: 'DELETE',
-                headers: { 'x-public-session-token': sessionToken },
-            },
-        );
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht gelöscht werden.');
-    }
-
-    async function deleteFile(itemId: number) {
-        const res = await fetch(`/api/plugins/dateiaustausch/public/files/${itemId}?sessionToken=${encodeURIComponent(sessionToken)}`, {
-            method: 'DELETE',
-            headers: { 'x-public-session-token': sessionToken },
-        });
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht gelöscht werden.');
-    }
-
     function openEntry(entry: BrowserEntry) {
         if (entry.kind === 'folder') {
             setCurrentPath(entry.fullPath);
@@ -341,6 +358,18 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         window.open(buildDownloadUrl(entry.file, sessionToken), '_blank', 'noopener,noreferrer');
     }
 
+    function setSingleSelection(key: string | null) {
+        if (!key) {
+            setSelectedKeys([]);
+            return;
+        }
+        setSelectedKeys([key]);
+    }
+
+    function toggleSelection(key: string) {
+        setSelectedKeys((prev) => (prev.includes(key) ? prev.filter((value) => value !== key) : [...prev, key]));
+    }
+
     function ActionIcon({ path, viewBox = '0 0 24 24' }: { path: string; viewBox?: string }) {
         return (
             <span className="kp-btn-icon" aria-hidden="true">
@@ -351,21 +380,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         );
     }
 
-    function requestDelete(entry: BrowserEntry | null) {
-        if (!entry) return;
-        if (entry.kind === 'folder') {
-            setDeleteCandidate({
-                kind: 'folder',
-                label: entry.name,
-                fullPath: entry.fullPath,
-            });
-            return;
-        }
-        setDeleteCandidate({
-            kind: 'file',
-            label: entry.file.displayName,
-            itemId: entry.file.id,
-        });
+    function requestDelete(entries: BrowserEntry[] | null) {
+        if (!entries || entries.length === 0) return;
+        setDeleteCandidate({ entries });
     }
 
     async function runDeleteCandidate() {
@@ -374,13 +391,26 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         try {
             setLoading(true);
             setError(null);
-            if (deleteCandidate.kind === 'folder' && deleteCandidate.fullPath) {
-                await deleteFolder(deleteCandidate.fullPath);
-                if (currentPath === deleteCandidate.fullPath) setCurrentPath(getParentPath(currentPath));
-            } else {
-                await deleteFile(Number(deleteCandidate.itemId));
+            const folderPaths = deleteCandidate.entries
+                .filter((entry) => entry.kind === 'folder')
+                .map((entry) => entry.fullPath);
+            const fileIds = deleteCandidate.entries
+                .filter((entry) => entry.kind === 'file')
+                .map((entry) => entry.file.id);
+
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files/bulk-delete?sessionToken=${encodeURIComponent(sessionToken)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-public-session-token': sessionToken },
+                body: JSON.stringify({ fileIds, folderPaths }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Löschen fehlgeschlagen.');
+
+            const deletedPaths = new Set(folderPaths);
+            if (currentPath && [...deletedPaths].some((folderPath) => currentPath === folderPath || currentPath.startsWith(`${folderPath}/`))) {
+                setCurrentPath(getParentPath(currentPath));
             }
-            setSelectedKey(null);
+            setSelectedKeys([]);
             setDeleteCandidate(null);
             await loadData();
         } catch (err) {
@@ -403,7 +433,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             setCreateOpen(false);
             setNewFolderName('');
             setNewlyInsertedFolderPath(target);
-            setSelectedKey(`folder:${target}`);
+            setSelectedKeys([`folder:${target}`]);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Ordner konnte nicht angelegt werden.');
         } finally {
@@ -414,7 +444,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     function openActionMenu(event: MouseEvent, key: string) {
         event.preventDefault();
         event.stopPropagation();
-        setSelectedKey(key);
+        if (!selectedKeys.includes(key)) {
+            setSelectedKeys([key]);
+        }
         setMenuState({ key, x: event.clientX, y: event.clientY });
     }
 
@@ -422,8 +454,45 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         if (event.target !== event.currentTarget) return;
         event.preventDefault();
         event.stopPropagation();
-        setSelectedKey(null);
         setMenuState({ key: ROOT_CONTEXT_KEY, x: event.clientX, y: event.clientY });
+    }
+
+    function copySelection(entries: BrowserEntry[] = selectedEntries) {
+        if (!entries.length) return;
+        const payload: ClipboardEntry[] = entries.map((entry) => (
+            entry.kind === 'folder'
+                ? { kind: 'folder', folderPath: entry.fullPath, label: entry.name }
+                : { kind: 'file', itemId: entry.file.id, label: entry.file.displayName }
+        ));
+        setClipboardEntries(payload);
+    }
+
+    async function pasteClipboard(targetFolderPath: string = currentPath) {
+        if (!clipboardEntries.length) return;
+        try {
+            setPastePending(true);
+            setLoading(true);
+            setError(null);
+            const itemIds = clipboardEntries.filter((entry) => entry.kind === 'file').map((entry) => Number(entry.itemId));
+            const folderPaths = clipboardEntries.filter((entry) => entry.kind === 'folder').map((entry) => String(entry.folderPath || ''));
+            const res = await fetch(`/api/plugins/dateiaustausch/public/files/copy?sessionToken=${encodeURIComponent(sessionToken)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-public-session-token': sessionToken },
+                body: JSON.stringify({
+                    itemIds,
+                    folderPaths,
+                    targetFolderPath: normalizePath(targetFolderPath),
+                }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Einfügen fehlgeschlagen.');
+            await loadData();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Einfügen fehlgeschlagen.');
+        } finally {
+            setPastePending(false);
+            setLoading(false);
+        }
     }
 
     function handleDrop(event: DragEvent<HTMLElement>) {
@@ -527,7 +596,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 type="button"
                                 onClick={() => {
                                     setCurrentPath('');
-                                    setSelectedKey(null);
+                                    setSelectedKeys([]);
                                 }}
                             >
                                 Eigene Dateien
@@ -540,7 +609,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     style={{ paddingLeft: `${14 + folder.depth * 14}px` }}
                                     onClick={() => {
                                         setCurrentPath(folder.path);
-                                        setSelectedKey(null);
+                                        setSelectedKeys([]);
                                     }}
                                 >
                                     {folder.name}
@@ -565,7 +634,10 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 {breadcrumbs.map((entry, index) => (
                                     <span key={entry.path}>
                                         {index > 0 ? ' > ' : ''}
-                                        <button className="btn-link" type="button" onClick={() => setCurrentPath(entry.path)}>
+                                        <button className="btn-link" type="button" onClick={() => {
+                                            setCurrentPath(entry.path);
+                                            setSelectedKeys([]);
+                                        }}>
                                             {entry.label}
                                         </button>
                                     </span>
@@ -593,50 +665,74 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     title="Neuer Ordner"
                                     aria-label="Neuer Ordner"
                                 >
-                                    <ActionIcon path="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm14 7h-2v-2h-2v2h-2v2h2v2h2v-2h2v-2z" />
+                                    <ActionIcon path={ICONS.folderNew} />
                                 </button>
                                 <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => loadData()} disabled={loading} title="Aktualisieren" aria-label="Aktualisieren">
-                                    <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
+                                    <ActionIcon path={ICONS.refresh} />
                                 </button>
                                 <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => hiddenUploadInputRef.current?.click()} title="Hochladen" aria-label="Hochladen">
-                                    <ActionIcon path="M12 21V10m0 0l4 4m-4-4l-4 4M5 3h14" />
+                                    <ActionIcon path={ICONS.upload} />
                                 </button>
                                 <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} title="Download" aria-label="Download">
-                                    <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
+                                    <ActionIcon path={ICONS.download} />
                                 </button>
                                 <button
                                     className="btn btn-secondary kp-icon-btn"
                                     type="button"
-                                    onClick={() => setCurrentPath(getParentPath(currentPath))}
+                                    onClick={() => copySelection()}
+                                    disabled={selectedEntries.length === 0}
+                                    title="Kopieren"
+                                    aria-label="Kopieren"
+                                >
+                                    <ActionIcon path={ICONS.copy} />
+                                </button>
+                                <button
+                                    className="btn btn-secondary kp-icon-btn"
+                                    type="button"
+                                    onClick={() => pasteClipboard(currentPath)}
+                                    disabled={!clipboardEntries.length || pastePending}
+                                    title="Einfügen"
+                                    aria-label="Einfügen"
+                                >
+                                    <ActionIcon path={ICONS.paste} />
+                                </button>
+                                <button
+                                    className="btn btn-secondary kp-icon-btn"
+                                    type="button"
+                                    onClick={() => {
+                                        setCurrentPath(getParentPath(currentPath));
+                                        setSelectedKeys([]);
+                                    }}
                                     disabled={!currentPath}
                                     title="Eine Ebene nach oben"
                                     aria-label="Eine Ebene nach oben"
                                 >
-                                    <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
+                                    <ActionIcon path={ICONS.up} />
                                 </button>
                             </div>
                             <div className="kp-od-command-right">
-                                {selectedEntry ? (
+                                {selectedEntries.length > 0 ? (
                                     <>
                                         <button
                                             className="btn btn-secondary kp-icon-btn"
                                             type="button"
-                                            disabled={selectedEntry.kind === 'folder' || !selectedEntry.file.currentVersionId}
+                                            disabled={selectedEntry?.kind !== 'file' || !selectedEntry.file.currentVersionId}
                                             onClick={() => {
-                                                if (selectedEntry.kind === 'folder') return;
+                                                if (!selectedEntry || selectedEntry.kind === 'folder') return;
                                                 openEntry(selectedEntry);
                                             }}
                                             title="Vorschau"
                                             aria-label="Vorschau"
                                         >
-                                            <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+                                            <ActionIcon path={ICONS.eye} />
                                         </button>
                                         <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} title="Download" aria-label="Download">
-                                            <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
+                                            <ActionIcon path={ICONS.download} />
                                         </button>
-                                        <button className="btn btn-danger kp-icon-btn" type="button" onClick={() => requestDelete(selectedEntry)} title="Löschen" aria-label="Löschen">
-                                            <ActionIcon path="M6 7h12M9 7V5h6v2m-8 0l1 12h6l1-12" />
+                                        <button className="btn btn-danger kp-icon-btn" type="button" onClick={() => requestDelete(selectedEntries)} title="Löschen" aria-label="Löschen">
+                                            <ActionIcon path={ICONS.trash} />
                                         </button>
+                                        <span className="kp-od-selection">{selectedEntries.length} ausgewählt</span>
                                     </>
                                 ) : (
                                     <span className="kp-od-selection">Keine Auswahl</span>
@@ -648,6 +744,20 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             <table className="kp-module-table kp-od-table">
                                 <thead>
                                     <tr>
+                                        <th style={{ width: 36 }}>
+                                            <input
+                                                type="checkbox"
+                                                aria-label="Alle auswählen"
+                                                checked={visibleEntries.length > 0 && selectedEntries.length === visibleEntries.length}
+                                                onChange={(event) => {
+                                                    if (event.target.checked) {
+                                                        setSelectedKeys(visibleEntries.map((entry) => entry.key));
+                                                    } else {
+                                                        setSelectedKeys([]);
+                                                    }
+                                                }}
+                                            />
+                                        </th>
                                         <th>Name</th>
                                         <th>Typ</th>
                                         <th>Geändert</th>
@@ -655,17 +765,32 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 </thead>
                                 <tbody>
                                     {visibleEntries.map((entry) => {
-                                        const isSelected = selectedKey === entry.key;
+                                        const isSelected = selectedKeys.includes(entry.key);
                                         if (entry.kind === 'folder') {
                                             const isNew = newlyInsertedFolderPath === entry.fullPath;
                                             return (
                                                 <tr
                                                     key={entry.key}
                                                     className={`${isSelected ? 'is-selected' : ''}${isNew ? ' is-new' : ''}`}
-                                                    onClick={() => setSelectedKey(entry.key)}
+                                                    onClick={(event) => {
+                                                        if (event.metaKey || event.ctrlKey) {
+                                                            toggleSelection(entry.key);
+                                                            return;
+                                                        }
+                                                        setSingleSelection(entry.key);
+                                                    }}
                                                     onDoubleClick={() => setCurrentPath(entry.fullPath)}
                                                     onContextMenu={(event) => openActionMenu(event, entry.key)}
                                                 >
+                                                    <td>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isSelected}
+                                                            onChange={() => toggleSelection(entry.key)}
+                                                            onClick={(event) => event.stopPropagation()}
+                                                            aria-label={`${entry.name} auswählen`}
+                                                        />
+                                                    </td>
                                                     <td>
                                                         <span className="kp-od-name">
                                                             <span className="kp-od-folder-icon" aria-hidden="true" />
@@ -683,7 +808,13 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                             <tr
                                                 key={entry.key}
                                                 className={isSelected ? 'is-selected' : ''}
-                                                onClick={() => setSelectedKey(entry.key)}
+                                                onClick={(event) => {
+                                                    if (event.metaKey || event.ctrlKey) {
+                                                        toggleSelection(entry.key);
+                                                        return;
+                                                    }
+                                                    setSingleSelection(entry.key);
+                                                }}
                                                 onDoubleClick={() => {
                                                     if (!file.currentVersionId) return;
                                                     const idx = previewFiles.findIndex((value) => value.id === file.id);
@@ -694,6 +825,15 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                 }}
                                                 onContextMenu={(event) => openActionMenu(event, entry.key)}
                                             >
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => toggleSelection(entry.key)}
+                                                        onClick={(event) => event.stopPropagation()}
+                                                        aria-label={`${file.displayName} auswählen`}
+                                                    />
+                                                </td>
                                                 <td>
                                                     <span className="kp-od-name">
                                                         <FileTypeIcon fileName={file.displayName} />
@@ -707,13 +847,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     })}
                                     {!loading && visibleEntries.length === 0 && (
                                         <tr>
-                                            <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
+                                            <td colSpan={4} className="text-muted" style={{ padding: 20 }}>
                                                 Dieser Ordner ist leer. Dateien hier hineinziehen oder hochladen.
                                             </td>
                                         </tr>
                                     )}
                                     {creatingFolder && (
                                         <tr className="kp-od-new-folder-row">
+                                            <td />
                                             <td>
                                                 <span className="kp-od-name">
                                                     <span className="kp-od-folder-icon" aria-hidden="true" />
@@ -769,7 +910,30 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     setMenuState(null);
                                 }}
                             >
-                                Öffnen
+                                <ActionIcon path={ICONS.open} /> Öffnen
+                            </button>
+                            <button
+                                className="kp-fm-menu-item tile-grid-context-menu-item"
+                                type="button"
+                                onClick={() => {
+                                    const folderPath = menuState.key.replace('folder:', '');
+                                    copySelection([{ kind: 'folder', key: menuState.key, name: getBaseName(folderPath), fullPath: folderPath }]);
+                                    setMenuState(null);
+                                }}
+                            >
+                                <ActionIcon path={ICONS.copy} /> Kopieren
+                            </button>
+                            <button
+                                className={`kp-fm-menu-item tile-grid-context-menu-item ${!clipboardEntries.length ? 'is-disabled' : ''}`}
+                                type="button"
+                                disabled={!clipboardEntries.length}
+                                onClick={() => {
+                                    const folderPath = menuState.key.replace('folder:', '');
+                                    pasteClipboard(folderPath).catch(() => undefined);
+                                    setMenuState(null);
+                                }}
+                            >
+                                <ActionIcon path={ICONS.paste} /> Einfügen
                             </button>
                             <button
                                 className="kp-fm-menu-item tile-grid-context-menu-item"
@@ -781,7 +945,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     setMenuState(null);
                                 }}
                             >
-                                Download
+                                <ActionIcon path={ICONS.download} /> Download
                             </button>
                             <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                             <button
@@ -790,25 +954,38 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 onClick={async () => {
                                     const fullPath = menuState.key.replace('folder:', '');
                                     const name = getBaseName(fullPath);
-                                    setDeleteCandidate({ kind: 'folder', label: name, fullPath });
+                                    requestDelete([{ kind: 'folder', key: `folder:${fullPath}`, name, fullPath }]);
                                     setMenuState(null);
                                 }}
                             >
-                                Löschen
+                                <ActionIcon path={ICONS.trash} /> Löschen
                             </button>
                         </>
                     ) : menuState.key === ROOT_CONTEXT_KEY ? (
-                        <button
-                            className="kp-fm-menu-item tile-grid-context-menu-item"
-                            type="button"
-                            onClick={() => {
-                                setCreatingFolder(true);
-                                setCreateOpen(false);
-                                setMenuState(null);
-                            }}
-                        >
-                            Neuer Ordner
-                        </button>
+                        <>
+                            <button
+                                className="kp-fm-menu-item tile-grid-context-menu-item"
+                                type="button"
+                                onClick={() => {
+                                    setCreatingFolder(true);
+                                    setCreateOpen(false);
+                                    setMenuState(null);
+                                }}
+                            >
+                                <ActionIcon path={ICONS.folderNew} /> Neuer Ordner
+                            </button>
+                            <button
+                                className={`kp-fm-menu-item tile-grid-context-menu-item ${!clipboardEntries.length ? 'is-disabled' : ''}`}
+                                type="button"
+                                disabled={!clipboardEntries.length}
+                                onClick={() => {
+                                    pasteClipboard(currentPath).catch(() => undefined);
+                                    setMenuState(null);
+                                }}
+                            >
+                                <ActionIcon path={ICONS.paste} /> Einfügen
+                            </button>
+                        </>
                     ) : (
                         (() => {
                             const fileId = Number(menuState.key.replace('file:', ''));
@@ -816,6 +993,20 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             const canOpen = !!file?.currentVersionId;
                             return (
                                 <>
+                                    {file ? (
+                                        <button
+                                            className="kp-fm-menu-item tile-grid-context-menu-item"
+                                            type="button"
+                                            onClick={() => {
+                                                copySelection([{ kind: 'file', key: menuState.key, file }]);
+                                                setMenuState(null);
+                                            }}
+                                        >
+                                            <ActionIcon path={ICONS.copy} /> Kopieren
+                                        </button>
+                                    ) : (
+                                        <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Kopieren</span>
+                                    )}
                                     {file && canOpen ? (
                                         <button
                                             className="kp-fm-menu-item tile-grid-context-menu-item"
@@ -829,13 +1020,13 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                 setMenuState(null);
                                             }}
                                         >
-                                            Vorschau
+                                            <ActionIcon path={ICONS.eye} /> Vorschau
                                         </button>
                                     ) : (
                                         <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Vorschau</span>
                                     )}
                                     {file && canOpen ? (
-                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Download</a>
+                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer"><ActionIcon path={ICONS.download} /> Download</a>
                                     ) : (
                                         <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Download</span>
                                     )}
@@ -844,15 +1035,12 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         className="kp-fm-menu-item kp-fm-menu-item--danger tile-grid-context-menu-item tile-grid-context-menu-item--danger"
                                         type="button"
                                         onClick={async () => {
-                                            setDeleteCandidate({
-                                                kind: 'file',
-                                                label: file?.displayName || `Datei #${fileId}`,
-                                                itemId: fileId,
-                                            });
+                                            if (!file) return;
+                                            requestDelete([{ kind: 'file', key: menuState.key, file }]);
                                             setMenuState(null);
                                         }}
                                     >
-                                        Löschen
+                                        <ActionIcon path={ICONS.trash} /> Löschen
                                     </button>
                                 </>
                             );
@@ -917,8 +1105,17 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                         </div>
                         <div className="kp-od-dialog-body">
                             <p>
-                                Soll {deleteCandidate.kind === 'folder' ? 'der Ordner' : 'die Datei'} <strong>{deleteCandidate.label}</strong> wirklich gelöscht werden?
+                                Soll{deleteCandidate.entries.length > 1 ? 'en diese Elemente' : ' dieses Element'} wirklich gelöscht werden?
                             </p>
+                            {deleteCandidate.entries.length === 1 && (
+                                <p>
+                                    <strong>
+                                        {deleteCandidate.entries[0].kind === 'folder'
+                                            ? deleteCandidate.entries[0].name
+                                            : deleteCandidate.entries[0].file.displayName}
+                                    </strong>
+                                </p>
+                            )}
                             <div className="kp-od-preview-actions">
                                 <button className="btn btn-secondary" type="button" onClick={() => setDeleteCandidate(null)}>
                                     Abbrechen
