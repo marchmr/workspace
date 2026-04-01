@@ -662,6 +662,12 @@ function buildCustomerDisplayName(customer: any): string {
     return `CRM-Kunde #${customer?.id ?? ''}`.trim();
 }
 
+function buildUniqueCustomerName(baseName: string, crmId: number): string {
+    const normalizedBase = String(baseName || '').trim() || `CRM-Kunde #${crmId}`;
+    const fallback = `${normalizedBase} (#${crmId})`;
+    return fallback.slice(0, 255);
+}
+
 async function resolveCustomerSource(db: any): Promise<ResolvedCustomerSource> {
     const crmTableExists = await db.schema.hasTable('crm_customers').catch(() => false);
     if (!crmTableExists) return { mode: 'videoplattform', hasLinkColumn: false };
@@ -691,9 +697,16 @@ async function syncCustomersFromCrm(db: any, tenantId: number): Promise<void> {
 
         if (existingByCrm) {
             if (String(existingByCrm.name || '') !== name) {
-                await db('vp_customers')
-                    .where({ id: existingByCrm.id, tenant_id: tenantId })
-                    .update({ name });
+                try {
+                    await db('vp_customers')
+                        .where({ id: existingByCrm.id, tenant_id: tenantId })
+                        .update({ name });
+                } catch (error: any) {
+                    if (error?.code !== 'ER_DUP_ENTRY') throw error;
+                    await db('vp_customers')
+                        .where({ id: existingByCrm.id, tenant_id: tenantId })
+                        .update({ name: buildUniqueCustomerName(name, crmId) });
+                }
             }
             continue;
         }
@@ -709,12 +722,22 @@ async function syncCustomersFromCrm(db: any, tenantId: number): Promise<void> {
             continue;
         }
 
-        await db('vp_customers').insert({
-            tenant_id: tenantId,
-            name,
-            crm_customer_id: crmId,
-            created_at: crmRow.created_at || new Date(),
-        });
+        try {
+            await db('vp_customers').insert({
+                tenant_id: tenantId,
+                name,
+                crm_customer_id: crmId,
+                created_at: crmRow.created_at || new Date(),
+            });
+        } catch (error: any) {
+            if (error?.code !== 'ER_DUP_ENTRY') throw error;
+            await db('vp_customers').insert({
+                tenant_id: tenantId,
+                name: buildUniqueCustomerName(name, crmId),
+                crm_customer_id: crmId,
+                created_at: crmRow.created_at || new Date(),
+            });
+        }
     }
 }
 
@@ -776,9 +799,16 @@ async function ensureVpCustomerForCrm(db: any, tenantId: number, crmCustomerId: 
 
     if (existingByCrm) {
         if (String(existingByCrm.name || '') !== customerName) {
-            await db('vp_customers')
-                .where({ id: existingByCrm.id, tenant_id: tenantId })
-                .update({ name: customerName });
+            try {
+                await db('vp_customers')
+                    .where({ id: existingByCrm.id, tenant_id: tenantId })
+                    .update({ name: customerName });
+            } catch (error: any) {
+                if (error?.code !== 'ER_DUP_ENTRY') throw error;
+                await db('vp_customers')
+                    .where({ id: existingByCrm.id, tenant_id: tenantId })
+                    .update({ name: buildUniqueCustomerName(customerName, crmCustomerId) });
+            }
         }
         return Number(existingByCrm.id);
     }
@@ -796,12 +826,23 @@ async function ensureVpCustomerForCrm(db: any, tenantId: number, crmCustomerId: 
         return Number(existingByName.id);
     }
 
-    const [id] = await db('vp_customers').insert({
-        tenant_id: tenantId,
-        name: customerName,
-        crm_customer_id: crmCustomerId,
-        created_at: new Date(),
-    });
+    let id: any;
+    try {
+        [id] = await db('vp_customers').insert({
+            tenant_id: tenantId,
+            name: customerName,
+            crm_customer_id: crmCustomerId,
+            created_at: new Date(),
+        });
+    } catch (error: any) {
+        if (error?.code !== 'ER_DUP_ENTRY') throw error;
+        [id] = await db('vp_customers').insert({
+            tenant_id: tenantId,
+            name: buildUniqueCustomerName(customerName, crmCustomerId),
+            crm_customer_id: crmCustomerId,
+            created_at: new Date(),
+        });
+    }
     return Number(id);
 }
 
@@ -906,31 +947,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.post('/customers', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {
-        const tenantId = getTenantId(request);
-        const source = await resolveCustomerSource(db);
-        if (source.mode === 'crm') {
-            return reply.status(409).send({ error: 'Kunden werden aus dem CRM synchronisiert und können hier nicht manuell erstellt werden.' });
-        }
-
-        const name = String((request.body as any)?.name || '').trim();
-        if (!name) {
-            return reply.status(400).send({ error: 'Kundenname ist erforderlich' });
-        }
-
-        try {
-            const [id] = await db('vp_customers').insert({ tenant_id: tenantId, name });
-            await fastify.audit.log({
-                action: 'videoplattform.customer.created',
-                category: 'plugin',
-                entityType: 'vp_customers',
-                entityId: String(id),
-                pluginId: PLUGIN_ID,
-                newState: { name },
-            }, request);
-            return reply.status(201).send({ id, name });
-        } catch {
-            return reply.status(409).send({ error: 'Kunde existiert bereits' });
-        }
+        return reply.status(409).send({
+            error: 'Manuelle Kundenanlage ist deaktiviert. Kunden bitte im CRM verwalten.',
+        });
     });
 
     fastify.put('/customers/:id', { preHandler: [requirePermission('videoplattform.manage')] }, async (request, reply) => {

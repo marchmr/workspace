@@ -94,8 +94,6 @@ export default function VideoPlatformAdminPage() {
     const [customerSource, setCustomerSource] = useState<'videoplattform' | 'crm'>('videoplattform');
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
-    const [newCustomerName, setNewCustomerName] = useState('');
-
     const [title, setTitle] = useState('');
     const [description, setDescription] = useState('');
     const [category, setCategory] = useState('Allgemein');
@@ -148,30 +146,6 @@ export default function VideoPlatformAdminPage() {
             toast.error(err instanceof Error ? err.message : 'Laden fehlgeschlagen');
         } finally {
             setLoading(false);
-        }
-    }
-
-    async function createCustomer(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (!newCustomerName.trim()) return;
-        setBusy(true);
-
-        try {
-            const res = await apiFetch('/api/plugins/videoplattform/customers', {
-                method: 'POST',
-                body: JSON.stringify({ name: newCustomerName.trim() }),
-            });
-            if (!res.ok) {
-                const payload = await res.json().catch(() => ({}));
-                throw new Error(payload?.error || 'Kunde konnte nicht erstellt werden');
-            }
-            setNewCustomerName('');
-            toast.success('Kunde erstellt');
-            await reloadAll();
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : 'Kunde konnte nicht erstellt werden');
-        } finally {
-            setBusy(false);
         }
     }
 
@@ -625,20 +599,10 @@ export default function VideoPlatformAdminPage() {
 
             {activeTab === 'customers' && (
                 <>
-                    {customerSource === 'crm' ? (
-                        <div className="card vp-panel">
-                            <div className="card-title">Kundenquelle</div>
-                            <p className="text-muted">Kunden werden aus dem CRM-Plugin synchronisiert. Anlage und Löschen erfolgt im CRM.</p>
-                        </div>
-                    ) : (
-                        <div className="card vp-panel">
-                            <div className="card-title">Neuer Kunde</div>
-                            <form onSubmit={createCustomer} className="vp-inline-form">
-                                <input className="input" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Kundenname" required />
-                                <button className="btn btn-primary" type="submit" disabled={busy}>Kunde erstellen</button>
-                            </form>
-                        </div>
-                    )}
+                    <div className="card vp-panel">
+                        <div className="card-title">Kundenquelle</div>
+                        <p className="text-muted">Kundenverwaltung erfolgt zentral im CRM. In der Videoplattform ist keine manuelle Kundenanlage möglich.</p>
+                    </div>
 
                     <div className="card vp-panel" style={{ marginTop: 'var(--space-md)' }}>
                         <div className="card-title">Kunden ({customers.length})</div>
