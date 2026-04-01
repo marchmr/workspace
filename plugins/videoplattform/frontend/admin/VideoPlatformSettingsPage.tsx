@@ -4,6 +4,7 @@ import { useToast } from '@mike/components/ModalProvider';
 import '../videoplattform.css';
 
 const SETTING_KEY = 'videoplattform.public_subdomain';
+const LOGO_HEIGHT_KEY = 'videoplattform.public_logo_height';
 
 function normalizeHost(value: string): string {
     return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
@@ -63,6 +64,7 @@ export default function VideoPlatformSettingsPage() {
     const toast = useToast();
 
     const [host, setHost] = useState('kunden.webdesign-hammer.de');
+    const [logoHeight, setLogoHeight] = useState('52');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [checking, setChecking] = useState(false);
@@ -87,6 +89,8 @@ export default function VideoPlatformSettingsPage() {
                 if (value.trim()) {
                     setHost(normalizeHost(value));
                 }
+                const logoHeightValue = typeof payload?.[LOGO_HEIGHT_KEY] === 'string' ? payload[LOGO_HEIGHT_KEY].trim() : '';
+                if (logoHeightValue) setLogoHeight(logoHeightValue);
             })
             .catch(() => {
                 // ignore
@@ -128,13 +132,20 @@ export default function VideoPlatformSettingsPage() {
                 method: 'PUT',
                 body: JSON.stringify({ key: SETTING_KEY, value: normalized }),
             });
+            const parsedHeight = Number(logoHeight);
+            const safeHeight = Number.isFinite(parsedHeight) ? String(Math.max(24, Math.min(180, Math.round(parsedHeight)))) : '52';
+            const logoHeightRes = await apiFetch('/api/admin/settings/plugin/videoplattform', {
+                method: 'PUT',
+                body: JSON.stringify({ key: LOGO_HEIGHT_KEY, value: safeHeight }),
+            });
 
-            if (!res.ok) {
+            if (!res.ok || !logoHeightRes.ok) {
                 const payload = await res.json().catch(() => ({}));
                 throw new Error(payload?.error || 'Einstellung konnte nicht gespeichert werden');
             }
 
             setHost(normalized);
+            setLogoHeight(safeHeight);
             toast.success('Subdomain gespeichert');
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Einstellung konnte nicht gespeichert werden');
@@ -288,6 +299,15 @@ export default function VideoPlatformSettingsPage() {
                     value={host}
                     onChange={(e) => setHost(e.target.value)}
                     placeholder="kunden.webdesign-hammer.de"
+                />
+                <input
+                    className="input"
+                    type="number"
+                    min={24}
+                    max={180}
+                    value={logoHeight}
+                    onChange={(e) => setLogoHeight(e.target.value)}
+                    placeholder="Logo-Höhe (px)"
                 />
                 <button className="btn btn-primary" type="submit" disabled={saving}>
                     {saving ? 'Speichere...' : 'Speichern'}

@@ -42,6 +42,7 @@ export default function VideoPlatformPortalPage() {
     const [expectedHost, setExpectedHost] = useState('');
     const [keyword, setKeyword] = useState('');
     const [portalLogoUrl, setPortalLogoUrl] = useState<string | null>(null);
+    const [portalLogoHeight, setPortalLogoHeight] = useState(52);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +57,10 @@ export default function VideoPlatformPortalPage() {
                 }
                 if (typeof data.logoUrl === 'string' && data.logoUrl) {
                     setPortalLogoUrl(`${data.logoUrl}${data.logoUrl.includes('?') ? '&' : '?'}v=${Date.now()}`);
+                }
+                const logoHeight = Number(data?.logoHeight);
+                if (Number.isFinite(logoHeight)) {
+                    setPortalLogoHeight(Math.max(24, Math.min(180, Math.round(logoHeight))));
                 }
             })
             .catch(() => {
@@ -129,7 +134,7 @@ export default function VideoPlatformPortalPage() {
                     <section className="card vp-access-card">
                         <div className="vp-portal-brand">
                             {portalLogoUrl ? (
-                                <img src={portalLogoUrl} alt="Kundenportal Logo" />
+                                <img src={portalLogoUrl} alt="Kundenportal Logo" style={{ maxHeight: `${portalLogoHeight}px` }} />
                             ) : (
                                 <div className="vp-portal-brand-fallback">Kundenportal</div>
                             )}

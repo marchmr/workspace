@@ -2,6 +2,8 @@ import { createHash, randomUUID } from 'crypto';
 import { createReadStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -11,8 +13,10 @@ import { decrypt, encrypt } from '../../../backend/src/core/encryption.js';
 const PLUGIN_ID = 'videoplattform';
 const PUBLIC_SUBDOMAIN_SETTING_KEY = 'videoplattform.public_subdomain';
 const PUBLIC_LOGO_FILE_SETTING_KEY = 'videoplattform.public_logo_file';
+const PUBLIC_LOGO_HEIGHT_SETTING_KEY = 'videoplattform.public_logo_height';
 const DEFAULT_PUBLIC_SUBDOMAIN = 'kunden.webdesign-hammer.de';
 const MAX_VIDEO_SIZE_BYTES = 3 * 1024 * 1024 * 1024; // 3 GB
+const execFileAsync = promisify(execFile);
 
 interface VideoRecord {
     id: number;
@@ -185,6 +189,50 @@ function logoMimeTypeFromFileName(fileName: string): string {
     if (ext === '.webp') return 'image/webp';
     if (ext === '.svg') return 'image/svg+xml';
     return 'image/jpeg';
+}
+
+async function readPublicLogoHeight(db: any): Promise<number> {
+    const row = await db('settings')
+        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_LOGO_HEIGHT_SETTING_KEY })
+        .whereNull('tenant_id')
+        .first('value_encrypted');
+    if (!row?.value_encrypted) return 52;
+    try {
+        const raw = decrypt(String(row.value_encrypted)).trim();
+        const value = Number(raw);
+        if (!Number.isFinite(value)) return 52;
+        return Math.max(24, Math.min(180, Math.round(value)));
+    } catch {
+        return 52;
+    }
+}
+
+function toPlayableMp4Name(fileName: string): string {
+    const base = sanitizeFileName(fileName).replace(/\.[^/.]+$/, '');
+    return `${base || 'video'}.mp4`;
+}
+
+async function transcodeToMp4(inputPath: string, outputPath: string): Promise<void> {
+    const args = [
+        '-y',
+        '-i', inputPath,
+        '-map', '0:v:0',
+        '-map', '0:a:0?',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '23',
+        '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        outputPath,
+    ];
+    try {
+        await execFileAsync('ffmpeg', args, { timeout: 60 * 60 * 1000 });
+    } catch (error: any) {
+        const details = `${error?.stderr || ''}${error?.stdout || ''}${error?.message || ''}`.trim();
+        throw new Error(`Video-Konvertierung fehlgeschlagen. Stelle sicher, dass ffmpeg installiert ist. ${details}`.trim());
+    }
 }
 
 function sanitizeCode(input: unknown): string {
@@ -692,17 +740,29 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(tenantId));
             await fs.mkdir(uploadsRoot, { recursive: true });
 
-            const safeName = sanitizeFileName(uploadFile.filename || 'video.mp4');
-            const storageName = `${Date.now()}-${randomUUID()}-${safeName}`;
-            const relPath = path.join(String(tenantId), storageName);
-            const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, relPath);
-            await fs.writeFile(absPath, uploadBuffer);
+            const inputName = sanitizeFileName(uploadFile.filename || 'video');
+            const tempInputName = `${Date.now()}-${randomUUID()}-src-${inputName}`;
+            const tempInputRelPath = path.join(String(tenantId), tempInputName);
+            const tempInputAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, tempInputRelPath);
+
+            const playableName = toPlayableMp4Name(uploadFile.filename || 'video.mp4');
+            const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
+            const convertedRelPath = path.join(String(tenantId), convertedName);
+            const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
+
+            await fs.writeFile(tempInputAbsPath, uploadBuffer);
+            try {
+                await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
+            } finally {
+                await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
+            }
+            const convertedStat = await fs.stat(convertedAbsPath);
 
             sourceType = 'upload';
-            fileName = safeName;
-            filePath = relPath;
-            mimeType = safeMime || 'video/mp4';
-            sizeBytes = uploadBuffer.length;
+            fileName = sanitizeFileName(playableName);
+            filePath = convertedRelPath;
+            mimeType = 'video/mp4';
+            sizeBytes = convertedStat.size;
         } else {
             const rawUrl = String(payload.videoUrl || '').trim();
             if (!rawUrl) return reply.status(400).send({ error: 'Für URL-Video ist videoUrl erforderlich' });
@@ -797,19 +857,31 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(tenantId));
         await fs.mkdir(uploadsRoot, { recursive: true });
 
-        const safeName = sanitizeFileName(uploadFile.filename || 'video.mp4');
-        const storageName = `${Date.now()}-${randomUUID()}-${safeName}`;
-        const relPath = path.join(String(tenantId), storageName);
-        const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, relPath);
-        await fs.writeFile(absPath, uploadBuffer);
+        const inputName = sanitizeFileName(uploadFile.filename || 'video');
+        const tempInputName = `${Date.now()}-${randomUUID()}-src-${inputName}`;
+        const tempInputRelPath = path.join(String(tenantId), tempInputName);
+        const tempInputAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, tempInputRelPath);
+
+        const playableName = toPlayableMp4Name(uploadFile.filename || 'video.mp4');
+        const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
+        const convertedRelPath = path.join(String(tenantId), convertedName);
+        const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
+
+        await fs.writeFile(tempInputAbsPath, uploadBuffer);
+        try {
+            await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
+        } finally {
+            await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
+        }
+        const convertedStat = await fs.stat(convertedAbsPath);
 
         await db('vp_videos').where({ id, tenant_id: tenantId }).update({
             source_type: 'upload',
             video_url: null,
-            file_name: safeName,
-            file_path: relPath,
-            mime_type: safeMime || 'video/mp4',
-            size_bytes: uploadBuffer.length,
+            file_name: sanitizeFileName(playableName),
+            file_path: convertedRelPath,
+            mime_type: 'video/mp4',
+            size_bytes: convertedStat.size,
             updated_at: new Date(),
         });
 
@@ -1108,10 +1180,12 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const configuredHost = await readPublicSubdomain(db);
         const fallbackLogoFile = await readPublicLogoFile(db);
+        const logoHeight = await readPublicLogoHeight(db);
         return {
             expectedHost: configuredHost,
             brand: 'Webdesign Hammer',
             logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
+            logoHeight,
         };
     });
 
