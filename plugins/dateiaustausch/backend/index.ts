@@ -296,7 +296,10 @@ async function streamFolderZip(reply: any, args: {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Cache-Control', 'no-store, max-age=0');
     reply.header('Pragma', 'no-cache');
-    reply.header('Content-Disposition', `attachment; filename="${sanitizeFileName(args.fileName)}.zip"`);
+    const zipName = `${sanitizeFileName(args.fileName)}.zip`;
+    const encodedName = encodeFileNameForHeader(zipName);
+    const safeName = zipName.replace(/"/g, '');
+    reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
 
     let archiveFactory: any;
     try {
@@ -604,6 +607,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
             .where('i.tenant_id', Number(session.tenant_id))
             .andWhere('i.customer_id', Number(session.customer_id))
+            .andWhereNotNull('i.current_version_id')
             .select(
                 'i.id',
                 'i.folder_path',
@@ -756,6 +760,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         };
 
         let itemId = rawItemId;
+        let createdNewItem = false;
         if (!Number.isInteger(itemId) || itemId <= 0) {
             const [createdItemId] = await db('dtx_items').insert({
                 tenant_id: Number(session.tenant_id),
@@ -769,6 +774,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 updated_at: new Date(),
             });
             itemId = Number(createdItemId);
+            createdNewItem = true;
         }
         if (folderPath) {
             await ensureFolderExists(db, Number(session.tenant_id), Number(session.customer_id), folderPath);
@@ -848,6 +854,14 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 scanStatus: result.scanStatus,
             });
         } catch (error) {
+            if (createdNewItem && Number.isInteger(itemId) && itemId > 0) {
+                // If validation/upload fails, remove orphan item so blocked files never appear as uploaded.
+                await db('dtx_items')
+                    .where({ id: itemId, tenant_id: Number(session.tenant_id) })
+                    .whereNull('current_version_id')
+                    .delete()
+                    .catch(() => undefined);
+            }
             const message = error instanceof Error ? error.message : 'Upload fehlgeschlagen.';
             fastify.log.error({ error, durationMs: Date.now() - uploadStart }, 'dateiaustausch: upload failed');
             return reply.status(400).send({ error: message });
@@ -981,14 +995,14 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const itemId = Number((request.params as any)?.itemId || 0);
         const versionId = Number((request.params as any)?.versionId || 0);
         if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
-            return reply.status(400).send({ error: 'Ungueltige Dateiversion.' });
+            return reply.status(400).send({ error: 'Ungültige Dateiversion.' });
         }
 
         const sessionToken = resolvePublicSessionToken(request);
         if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
 
         const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungueltig.' });
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
 
         const version = await db('dtx_versions as v')
             .join('dtx_items as i', 'i.id', 'v.item_id')
@@ -1035,6 +1049,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             })
             .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
             .where('i.tenant_id', tenantId)
+            .andWhereNotNull('i.current_version_id')
             .modify((qb: any) => {
                 if (status) qb.andWhere('i.workflow_status', status);
                 if (Number.isInteger(customerId) && customerId > 0) qb.andWhere('i.customer_id', customerId);
@@ -1200,7 +1215,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const itemId = Number((request.params as any)?.itemId || 0);
         const versionId = Number((request.params as any)?.versionId || 0);
         if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(versionId) || versionId <= 0) {
-            return reply.status(400).send({ error: 'Ungueltige Dateiversion.' });
+            return reply.status(400).send({ error: 'Ungültige Dateiversion.' });
         }
 
         const version = await db('dtx_versions')

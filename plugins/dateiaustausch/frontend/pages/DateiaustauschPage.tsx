@@ -111,7 +111,7 @@ function getFileTypeLabel(fileName: string): string {
     if (!ext) return 'Datei';
     if (['doc', 'docx', 'txt'].includes(ext)) return 'Dokument';
     if (['xls', 'xlsx'].includes(ext)) return 'Tabelle';
-    if (['ppt', 'pptx'].includes(ext)) return 'Praesentation';
+    if (['ppt', 'pptx'].includes(ext)) return 'Präsentation';
     if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'Video';
     if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) return 'Bild';
     if (ext === 'pdf') return 'PDF';
@@ -302,10 +302,30 @@ export default function DateiaustauschPage() {
         window.open(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`, '_blank', 'noopener,noreferrer');
     }
 
-    function downloadCurrentFolderZip() {
+    function triggerDownload(url: string) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.rel = 'noreferrer noopener';
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
+    function downloadEntry(entry: BrowserEntry | null) {
         if (!selectedCustomerId) return;
-        const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
-        window.open(url, '_blank', 'noopener,noreferrer');
+        if (!entry) {
+            const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(currentPath)}`;
+            triggerDownload(url);
+            return;
+        }
+        if (entry.kind === 'folder') {
+            const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(entry.fullPath)}`;
+            triggerDownload(url);
+            return;
+        }
+        if (!entry.file.currentVersionId) return;
+        triggerDownload(`/api/plugins/dateiaustausch/items/${entry.file.id}/versions/${entry.file.currentVersionId}/download`);
     }
 
     const selectedCustomerLabel = useMemo(() => {
@@ -400,18 +420,11 @@ export default function DateiaustauschPage() {
                                     >
                                         Nach oben
                                     </button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => downloadCurrentFolderZip()} disabled={!selectedCustomerId}>
-                                        Ordner als ZIP
+                                    <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId}>
+                                        ↓ Download
                                     </button>
-                                    <button
-                                        className="btn btn-secondary"
-                                        type="button"
-                                        disabled={!selectedEntry}
-                                        onClick={() => {
-                                            if (selectedEntry) openEntry(selectedEntry);
-                                        }}
-                                    >
-                                        Oeffnen
+                                    <button className="btn btn-secondary" type="button" disabled={!selectedEntry} onClick={() => downloadEntry(selectedEntry)}>
+                                        Download
                                     </button>
                                 </div>
                                 <div className="kp-od-command-right">
@@ -444,7 +457,7 @@ export default function DateiaustauschPage() {
                                     >
                                         Vorschau
                                     </button>
-                                    {selectedEntry ? <span className="kp-od-selection">1 ausgewaehlt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
+                                    {selectedEntry ? <span className="kp-od-selection">1 ausgewählt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
                                 </div>
                             </div>
 
@@ -455,8 +468,7 @@ export default function DateiaustauschPage() {
                                             <tr>
                                                 <th>Name</th>
                                                 <th>Typ</th>
-                                                <th>Geaendert</th>
-                                                <th style={{ width: 82 }}>Aktion</th>
+                                                <th>Geändert</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -479,11 +491,6 @@ export default function DateiaustauschPage() {
                                                             </td>
                                                             <td>Ordner</td>
                                                             <td>-</td>
-                                                            <td>
-                                                                <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
-                                                                    •••
-                                                                </button>
-                                                            </td>
                                                         </tr>
                                                     );
                                                 }
@@ -510,17 +517,12 @@ export default function DateiaustauschPage() {
                                                         </td>
                                                         <td>{getFileTypeLabel(entry.file.displayName)}</td>
                                                         <td>{formatDate(entry.file.updatedAt)}</td>
-                                                        <td>
-                                                            <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
-                                                                •••
-                                                            </button>
-                                                        </td>
                                                     </tr>
                                                 );
                                             })}
                                             {!loading && visibleEntries.length === 0 && (
                                                 <tr>
-                                                    <td colSpan={4} className="text-muted" style={{ padding: 20 }}>
+                                                    <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
                                                         Keine Dateien in diesem Ordner.
                                                     </td>
                                                 </tr>
@@ -589,7 +591,7 @@ export default function DateiaustauschPage() {
                                         setMenuState(null);
                                     }}
                                 >
-                                    Oeffnen
+                                    Öffnen
                                 </button>
                                 <button
                                     className="kp-fm-menu-item tile-grid-context-menu-item"
@@ -598,11 +600,11 @@ export default function DateiaustauschPage() {
                                         if (!selectedCustomerId) return;
                                         const folderPath = menuState.key.replace('folder:', '');
                                         const url = `/api/plugins/dateiaustausch/folders/download?customerId=${encodeURIComponent(String(selectedCustomerId))}&folderPath=${encodeURIComponent(folderPath)}`;
-                                        window.open(url, '_blank', 'noopener,noreferrer');
+                                        triggerDownload(url);
                                         setMenuState(null);
                                     }}
                                 >
-                                    Als ZIP herunterladen
+                                    Download
                                 </button>
                             </>
                         ) : (
@@ -626,11 +628,11 @@ export default function DateiaustauschPage() {
                                             Vorschau
                                         </button>
                                         <a className="kp-fm-menu-item tile-grid-context-menu-item" href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
-                                            Oeffnen
+                                            Download
                                         </a>
                                     </>
                                 ) : (
-                                    <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Oeffnen</span>
+                                    <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Download</span>
                                 );
                             })()
                         )}
@@ -649,7 +651,7 @@ export default function DateiaustauschPage() {
                                         onClick={() => setPreviewIndex((current) => (current - 1 + previewFiles.length) % previewFiles.length)}
                                         disabled={previewFiles.length <= 1}
                                     >
-                                        Zurueck
+                                        Zurück
                                     </button>
                                     <button
                                         className="btn btn-secondary"
@@ -663,7 +665,7 @@ export default function DateiaustauschPage() {
                                         Herunterladen
                                     </a>
                                     <button className="btn btn-secondary" type="button" onClick={() => setPreviewOpen(false)}>
-                                        Schliessen
+                                        Schließen
                                     </button>
                                 </div>
                             </div>

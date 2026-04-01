@@ -30,6 +30,8 @@ type ActionMenuState = {
     y: number;
 };
 
+const ROOT_CONTEXT_KEY = '__context:create';
+
 type DeleteCandidate = {
     kind: 'folder' | 'file';
     label: string;
@@ -68,7 +70,7 @@ function getFileTypeLabel(fileName: string): string {
     if (!ext) return 'Datei';
     if (['doc', 'docx', 'txt'].includes(ext)) return 'Dokument';
     if (['xls', 'xlsx'].includes(ext)) return 'Tabelle';
-    if (['ppt', 'pptx'].includes(ext)) return 'Praesentation';
+    if (['ppt', 'pptx'].includes(ext)) return 'Präsentation';
     if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) return 'Video';
     if (['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext)) return 'Bild';
     if (ext === 'pdf') return 'PDF';
@@ -313,7 +315,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             },
         );
         const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht geloescht werden.');
+        if (!res.ok) throw new Error(payload?.error || 'Ordner konnte nicht gelöscht werden.');
     }
 
     async function deleteFile(itemId: number) {
@@ -322,7 +324,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             headers: { 'x-public-session-token': sessionToken },
         });
         const payload = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht geloescht werden.');
+        if (!res.ok) throw new Error(payload?.error || 'Datei konnte nicht gelöscht werden.');
     }
 
     function openEntry(entry: BrowserEntry) {
@@ -373,7 +375,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             setDeleteCandidate(null);
             await loadData();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Loeschen fehlgeschlagen.');
+            setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
         } finally {
             setLoading(false);
         }
@@ -407,6 +409,14 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         setMenuState({ key, x: event.clientX, y: event.clientY });
     }
 
+    function openRootActionMenu(event: MouseEvent) {
+        if (event.target !== event.currentTarget) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setSelectedKey(null);
+        setMenuState({ key: ROOT_CONTEXT_KEY, x: event.clientX, y: event.clientY });
+    }
+
     function handleDrop(event: DragEvent<HTMLElement>) {
         event.preventDefault();
         setDragOver(false);
@@ -415,9 +425,29 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         }
     }
 
-    function downloadCurrentFolderZip() {
-        const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
-        window.open(url, '_blank', 'noopener,noreferrer');
+    function triggerDownload(url: string) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.rel = 'noreferrer noopener';
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
+    function downloadEntry(entry: BrowserEntry | null) {
+        if (!entry) {
+            const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
+            triggerDownload(url);
+            return;
+        }
+        if (entry.kind === 'folder') {
+            const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(entry.fullPath)}`;
+            triggerDownload(url);
+            return;
+        }
+        if (!entry.file.currentVersionId) return;
+        triggerDownload(buildDownloadUrl(entry.file, sessionToken));
     }
 
     useEffect(() => {
@@ -519,6 +549,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                         onDragOver={(event) => event.preventDefault()}
                         onDragLeave={() => setDragOver(false)}
                         onDrop={handleDrop}
+                        onContextMenu={openRootActionMenu}
                     >
                         <div className="kp-od-top">
                             <div className="kp-od-breadcrumbs">
@@ -549,8 +580,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 <button className="btn btn-secondary" type="button" onClick={() => hiddenUploadInputRef.current?.click()}>
                                     Upload
                                 </button>
-                                <button className="btn btn-secondary" type="button" onClick={() => downloadCurrentFolderZip()}>
-                                    Ordner als ZIP
+                                <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
+                                    ↓ Download
                                 </button>
                                 <button
                                     className="btn btn-secondary"
@@ -589,11 +620,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         >
                                             Vorschau
                                         </button>
-                                        <button className="btn btn-secondary" type="button" onClick={() => openEntry(selectedEntry)}>
-                                            Oeffnen
+                                        <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
+                                            Download
                                         </button>
                                         <button className="btn btn-danger" type="button" onClick={() => requestDelete(selectedEntry)}>
-                                            Loeschen
+                                            Löschen
                                         </button>
                                     </>
                                 ) : (
@@ -609,8 +640,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         <tr>
                                             <th>Name</th>
                                             <th>Typ</th>
-                                            <th>Geaendert</th>
-                                            <th style={{ width: 82 }}>Aktion</th>
+                                            <th>Geändert</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -634,11 +664,6 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                         </td>
                                                         <td>Ordner</td>
                                                         <td>-</td>
-                                                        <td>
-                                                            <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
-                                                                •••
-                                                            </button>
-                                                        </td>
                                                     </tr>
                                                 );
                                             }
@@ -667,17 +692,12 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                     </td>
                                                     <td>{getFileTypeLabel(file.displayName)}</td>
                                                     <td>{formatDate(file.updatedAt)}</td>
-                                                    <td>
-                                                        <button className="btn btn-secondary" type="button" onClick={(event) => openActionMenu(event, entry.key)}>
-                                                            •••
-                                                        </button>
-                                                    </td>
                                                 </tr>
                                             );
                                         })}
                                         {!loading && visibleEntries.length === 0 && (
                                             <tr>
-                                                <td colSpan={4} className="text-muted" style={{ padding: 20 }}>
+                                                <td colSpan={3} className="text-muted" style={{ padding: 20 }}>
                                                     Dieser Ordner ist leer. Dateien hier hineinziehen oder hochladen.
                                                 </td>
                                             </tr>
@@ -705,23 +725,6 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                                 </td>
                                                 <td>Ordner</td>
                                                 <td>-</td>
-                                                <td>
-                                                    <div style={{ display: 'flex', gap: 6 }}>
-                                                        <button className="btn btn-primary" type="button" onClick={() => submitCreateFolder()}>
-                                                            OK
-                                                        </button>
-                                                        <button
-                                                            className="btn btn-secondary"
-                                                            type="button"
-                                                            onClick={() => {
-                                                                setCreatingFolder(false);
-                                                                setNewFolderName('');
-                                                            }}
-                                                        >
-                                                            Abbrechen
-                                                        </button>
-                                                    </div>
-                                                </td>
                                             </tr>
                                         )}
                                     </tbody>
@@ -834,7 +837,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     setMenuState(null);
                                 }}
                             >
-                                Oeffnen
+                                Öffnen
                             </button>
                             <button
                                 className="kp-fm-menu-item tile-grid-context-menu-item"
@@ -842,11 +845,11 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 onClick={() => {
                                     const folderPath = menuState.key.replace('folder:', '');
                                     const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
-                                    window.open(url, '_blank', 'noopener,noreferrer');
+                                    triggerDownload(url);
                                     setMenuState(null);
                                 }}
                             >
-                                Als ZIP herunterladen
+                                Download
                             </button>
                             <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                             <button
@@ -859,9 +862,21 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     setMenuState(null);
                                 }}
                             >
-                                Loeschen
+                                Löschen
                             </button>
                         </>
+                    ) : menuState.key === ROOT_CONTEXT_KEY ? (
+                        <button
+                            className="kp-fm-menu-item tile-grid-context-menu-item"
+                            type="button"
+                            onClick={() => {
+                                setCreatingFolder(true);
+                                setCreateOpen(false);
+                                setMenuState(null);
+                            }}
+                        >
+                            Neuer Ordner
+                        </button>
                     ) : (
                         (() => {
                             const fileId = Number(menuState.key.replace('file:', ''));
@@ -888,9 +903,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                         <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Vorschau</span>
                                     )}
                                     {file && canOpen ? (
-                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Oeffnen</a>
+                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Download</a>
                                     ) : (
-                                        <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Oeffnen</span>
+                                        <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Download</span>
                                     )}
                                     <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                                     <button
@@ -905,7 +920,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                             setMenuState(null);
                                         }}
                                     >
-                                        Loeschen
+                                        Löschen
                                     </button>
                                 </>
                             );
@@ -926,7 +941,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     onClick={() => setPreviewIndex((current) => (current - 1 + previewFiles.length) % previewFiles.length)}
                                     disabled={previewFiles.length <= 1}
                                 >
-                                    Zurueck
+                                    Zurück
                                 </button>
                                 <button
                                     className="btn btn-secondary"
@@ -940,7 +955,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     Herunterladen
                                 </a>
                                 <button className="btn btn-secondary" type="button" onClick={() => setPreviewOpen(false)}>
-                                    Schliessen
+                                    Schließen
                                 </button>
                             </div>
                         </div>
@@ -966,18 +981,18 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                 <div className="kp-od-preview-backdrop modal-overlay" onClick={() => setDeleteCandidate(null)}>
                     <div className="kp-od-preview-modal kp-od-dialog-modal modal-card" onClick={(event) => event.stopPropagation()}>
                         <div className="kp-od-preview-head">
-                            <strong>Element loeschen</strong>
+                            <strong>Element löschen</strong>
                         </div>
                         <div className="kp-od-dialog-body">
                             <p>
-                                Soll {deleteCandidate.kind === 'folder' ? 'der Ordner' : 'die Datei'} <strong>{deleteCandidate.label}</strong> wirklich geloescht werden?
+                                Soll {deleteCandidate.kind === 'folder' ? 'der Ordner' : 'die Datei'} <strong>{deleteCandidate.label}</strong> wirklich gelöscht werden?
                             </p>
                             <div className="kp-od-preview-actions">
                                 <button className="btn btn-secondary" type="button" onClick={() => setDeleteCandidate(null)}>
                                     Abbrechen
                                 </button>
                                 <button className="btn btn-danger" type="button" onClick={() => runDeleteCandidate()}>
-                                    Loeschen
+                                    Löschen
                                 </button>
                             </div>
                         </div>
