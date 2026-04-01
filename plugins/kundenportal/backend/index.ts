@@ -1,4 +1,7 @@
 import { createHash, randomInt, randomUUID } from 'crypto';
+import { createReadStream } from 'fs';
+import fs from 'fs/promises';
+import path from 'path';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../../../backend/src/core/config.js';
 import { getDatabase } from '../../../backend/src/core/database.js';
@@ -135,6 +138,14 @@ async function readPublicLogoFile(db: any): Promise<string> {
     } catch {
         return '';
     }
+}
+
+function logoMimeTypeFromFileName(fileName: string): string {
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    if (ext === '.png') return 'image/png';
+    if (ext === '.webp') return 'image/webp';
+    if (ext === '.svg') return 'image/svg+xml';
+    return 'image/jpeg';
 }
 
 async function readPublicLogoHeight(db: any): Promise<number> {
@@ -682,19 +693,25 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         exposeHeadRoute: false,
         config: { policy: { public: true } },
         policy: { public: true },
-    }, async (request, reply) => {
-        const response = await fastify.inject({
-            method: 'GET',
-            url: buildTargetUrl('/logo', request.query as Record<string, any>),
-            headers: { host: String(request.headers.host || '') },
-        });
+    }, async (_request, reply) => {
+        const fileName = await readPublicLogoFile(db);
+        if (!fileName) return reply.status(404).send({ error: 'Kein Portal-Logo hinterlegt' });
+        
+        const absPathNew = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding', fileName);
+        const absPathOld = path.join(config.app.uploadsDir, 'plugins', VIDEOPLATTFORM_PLUGIN_ID, 'branding', fileName);
 
-        reply.code(response.statusCode);
-        for (const [key, value] of Object.entries(response.headers)) {
-            if (typeof value === 'undefined') continue;
-            reply.header(key, value as any);
+        for (const targetPath of [absPathNew, absPathOld]) {
+            try {
+                await fs.access(targetPath);
+                reply.header('Cache-Control', 'public, max-age=300');
+                reply.type(logoMimeTypeFromFileName(fileName));
+                return reply.send(createReadStream(targetPath));
+            } catch {
+                continue;
+            }
         }
-        return reply.send(response.rawPayload);
+        
+        return reply.status(404).send({ error: 'Logo-Datei nicht gefunden' });
     });
 
     fastify.get('/public/tenant-logo/:tenantId', {
@@ -702,21 +719,24 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
         const tenantId = Number((request.params as any)?.tenantId || 0);
         if (!Number.isInteger(tenantId) || tenantId <= 0) return reply.status(400).send({ error: 'Ungültige Mandanten-ID' });
 
-        const response = await fastify.inject({
-            method: 'GET',
-            url: buildTargetUrl(`/tenant-logo/${tenantId}`, request.query as Record<string, any>),
-            headers: { host: String(request.headers.host || '') },
-        });
+        const tenant = await db('tenants').where({ id: tenantId }).first('logo_file');
+        if (!tenant?.logo_file) return reply.status(404).send({ error: 'Kein Tenant-Logo vorhanden' });
 
-        reply.code(response.statusCode);
-        for (const [key, value] of Object.entries(response.headers)) {
-            if (typeof value === 'undefined') continue;
-            reply.header(key, value as any);
+        const absPath = path.join(config.app.uploadsDir, 'tenant-logos', String(tenant.logo_file));
+        try {
+            await fs.access(absPath);
+            reply.header('Cache-Control', 'public, max-age=300');
+            reply.type(logoMimeTypeFromFileName(String(tenant.logo_file)));
+            return reply.send(createReadStream(absPath));
+        } catch {
+            return reply.status(404).send({ error: 'Tenant-Logo-Datei nicht gefunden' });
         }
-        return reply.send(response.rawPayload);
     });
 
     fastify.get('/public/health', {
