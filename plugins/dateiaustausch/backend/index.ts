@@ -4,7 +4,6 @@ import path from 'path';
 import { createReadStream, createWriteStream } from 'fs';
 import { once } from 'events';
 import type { FastifyInstance } from 'fastify';
-import archiver from 'archiver';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
 import { config } from '../../../backend/src/core/config.js';
@@ -299,7 +298,16 @@ async function streamFolderZip(reply: any, args: {
     reply.header('Pragma', 'no-cache');
     reply.header('Content-Disposition', `attachment; filename="${sanitizeFileName(args.fileName)}.zip"`);
 
-    const archive = archiver('zip', { zlib: { level: 9 } });
+    let archiveFactory: any;
+    try {
+        const module = await import('archiver');
+        archiveFactory = module.default || module;
+    } catch {
+        reply.status(503).send({ error: 'ZIP-Erstellung momentan nicht verfügbar (archiver fehlt).' });
+        return;
+    }
+
+    const archive = archiveFactory('zip', { zlib: { level: 9 } });
     archive.on('warning', () => undefined);
     archive.on('error', (err) => {
         reply.raw.destroy(err);

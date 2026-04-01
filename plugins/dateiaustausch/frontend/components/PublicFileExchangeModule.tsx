@@ -821,10 +821,13 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             )}
 
             {menuState && (
-                <div className="kp-fm-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
+                <div className="kp-fm-menu tile-grid-context-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
+                    <div className="kp-fm-menu-title tile-grid-context-menu-title">Dateiaustausch</div>
+                    <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                     {menuState.key.startsWith('folder:') ? (
                         <>
                             <button
+                                className="kp-fm-menu-item tile-grid-context-menu-item"
                                 type="button"
                                 onClick={() => {
                                     setCurrentPath(menuState.key.replace('folder:', ''));
@@ -834,6 +837,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 Oeffnen
                             </button>
                             <button
+                                className="kp-fm-menu-item tile-grid-context-menu-item"
                                 type="button"
                                 onClick={() => {
                                     const folderPath = menuState.key.replace('folder:', '');
@@ -844,7 +848,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                             >
                                 Als ZIP herunterladen
                             </button>
+                            <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                             <button
+                                className="kp-fm-menu-item kp-fm-menu-item--danger tile-grid-context-menu-item tile-grid-context-menu-item--danger"
                                 type="button"
                                 onClick={async () => {
                                     const fullPath = menuState.key.replace('folder:', '');
@@ -865,6 +871,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                 <>
                                     {file && canOpen ? (
                                         <button
+                                            className="kp-fm-menu-item tile-grid-context-menu-item"
                                             type="button"
                                             onClick={() => {
                                                 const idx = previewFiles.findIndex((value) => value.id === file.id);
@@ -878,14 +885,16 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                             Vorschau
                                         </button>
                                     ) : (
-                                        <span className="is-disabled">Vorschau</span>
+                                        <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Vorschau</span>
                                     )}
                                     {file && canOpen ? (
-                                        <a href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Oeffnen</a>
+                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={buildDownloadUrl(file, sessionToken)} target="_blank" rel="noreferrer">Oeffnen</a>
                                     ) : (
-                                        <span className="is-disabled">Oeffnen</span>
+                                        <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Oeffnen</span>
                                     )}
+                                    <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                                     <button
+                                        className="kp-fm-menu-item kp-fm-menu-item--danger tile-grid-context-menu-item tile-grid-context-menu-item--danger"
                                         type="button"
                                         onClick={async () => {
                                             setDeleteCandidate({
@@ -906,8 +915,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             )}
 
             {previewOpen && previewFile && (
-                <div className="kp-od-preview-backdrop" onClick={() => setPreviewOpen(false)}>
-                    <div className="kp-od-preview-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="kp-od-preview-backdrop modal-overlay" onClick={() => setPreviewOpen(false)}>
+                    <div className="kp-od-preview-modal modal-card" onClick={(event) => event.stopPropagation()}>
                         <div className="kp-od-preview-head">
                             <strong>{previewFile.displayName}</strong>
                             <div className="kp-od-preview-actions">
@@ -954,8 +963,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             )}
 
             {deleteCandidate && (
-                <div className="kp-od-preview-backdrop" onClick={() => setDeleteCandidate(null)}>
-                    <div className="kp-od-preview-modal kp-od-dialog-modal" onClick={(event) => event.stopPropagation()}>
+                <div className="kp-od-preview-backdrop modal-overlay" onClick={() => setDeleteCandidate(null)}>
+                    <div className="kp-od-preview-modal kp-od-dialog-modal modal-card" onClick={(event) => event.stopPropagation()}>
                         <div className="kp-od-preview-head">
                             <strong>Element loeschen</strong>
                         </div>

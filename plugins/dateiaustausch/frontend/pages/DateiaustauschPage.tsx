@@ -576,10 +576,13 @@ export default function DateiaustauschPage() {
                 </div>
 
                 {menuState && (
-                    <div className="kp-fm-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
+                    <div className="kp-fm-menu tile-grid-context-menu" style={{ left: menuState.x, top: menuState.y }} onClick={(event) => event.stopPropagation()}>
+                        <div className="kp-fm-menu-title tile-grid-context-menu-title">Dateiaustausch</div>
+                        <div className="kp-fm-menu-divider tile-grid-context-menu-divider" />
                         {menuState.key.startsWith('folder:') ? (
                             <>
                                 <button
+                                    className="kp-fm-menu-item tile-grid-context-menu-item"
                                     type="button"
                                     onClick={() => {
                                         setCurrentPath(menuState.key.replace('folder:', ''));
@@ -589,6 +592,7 @@ export default function DateiaustauschPage() {
                                     Oeffnen
                                 </button>
                                 <button
+                                    className="kp-fm-menu-item tile-grid-context-menu-item"
                                     type="button"
                                     onClick={() => {
                                         if (!selectedCustomerId) return;
@@ -608,6 +612,7 @@ export default function DateiaustauschPage() {
                                 return file && file.currentVersionId ? (
                                     <>
                                         <button
+                                            className="kp-fm-menu-item tile-grid-context-menu-item"
                                             type="button"
                                             onClick={() => {
                                                 const idx = previewFiles.findIndex((value) => value.id === file.id);
@@ -620,12 +625,12 @@ export default function DateiaustauschPage() {
                                         >
                                             Vorschau
                                         </button>
-                                        <a href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
+                                        <a className="kp-fm-menu-item tile-grid-context-menu-item" href={`/api/plugins/dateiaustausch/items/${file.id}/versions/${file.currentVersionId}/download`} target="_blank" rel="noreferrer">
                                             Oeffnen
                                         </a>
                                     </>
                                 ) : (
-                                    <span className="is-disabled">Oeffnen</span>
+                                    <span className="kp-fm-menu-item tile-grid-context-menu-item is-disabled">Oeffnen</span>
                                 );
                             })()
                         )}
@@ -633,8 +638,8 @@ export default function DateiaustauschPage() {
                 )}
 
                 {previewOpen && previewFile && (
-                    <div className="kp-od-preview-backdrop" onClick={() => setPreviewOpen(false)}>
-                        <div className="kp-od-preview-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="kp-od-preview-backdrop modal-overlay" onClick={() => setPreviewOpen(false)}>
+                        <div className="kp-od-preview-modal modal-card" onClick={(event) => event.stopPropagation()}>
                             <div className="kp-od-preview-head">
                                 <strong>{previewFile.displayName}</strong>
                                 <div className="kp-od-preview-actions">

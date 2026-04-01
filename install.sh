@@ -132,6 +132,16 @@ resolve_nologin_shell() {
   fi
 }
 
+resolve_clamav_binary() {
+  if command -v clamdscan >/dev/null 2>&1; then
+    echo "clamdscan"
+  elif command -v clamscan >/dev/null 2>&1; then
+    echo "clamscan"
+  else
+    echo "clamdscan"
+  fi
+}
+
 ensure_upload_mount_hardening() {
   print_step "Upload-Mount hardening (noexec,nodev,nosuid)..."
   mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
@@ -423,7 +433,7 @@ print_step "Basis-Pakete installieren..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   nginx mariadb-server curl zip unzip ufw gnupg2 git rsync \
   ca-certificates lsb-release software-properties-common ffmpeg acl \
-  build-essential python3 pkg-config clamav clamav-daemon > /dev/null 2>&1
+  build-essential python3 pkg-config clamav clamav-daemon clamav-freshclam > /dev/null 2>&1
 print_ok "Basis-Pakete inkl. Build-Toolchain und ClamAV installiert"
 
 print_step "ClamAV-Dienste initialisieren..."
@@ -575,6 +585,7 @@ print_header "Schritt 6/8: Konfiguration"
 
 JWT_SECRET=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
+CLAMAV_BINARY_DEFAULT="$(resolve_clamav_binary)"
 
 print_step ".env-Datei erstellen..."
 cat > "$APP_DIR/backend/.env" <<EOF
@@ -623,11 +634,12 @@ FILE_SECURITY_ZIP_MAX_ENTRIES=500
 FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB=1000
 FILE_SECURITY_ZIP_MAX_RATIO=60
 FILE_SECURITY_CLAMAV_ENABLED=true
-FILE_SECURITY_CLAMAV_BINARY=clamscan
+FILE_SECURITY_CLAMAV_BINARY=$CLAMAV_BINARY_DEFAULT
 FILE_SECURITY_CLAMAV_TIMEOUT_MS=120000
 FILE_SECURITY_CLAMAV_FAIL_CLOSED=true
 EOF
 print_ok ".env erstellt"
+print_ok "ClamAV Scanner gesetzt: $CLAMAV_BINARY_DEFAULT"
 
 # Datenbank-Migrationen (tsx fuer TypeScript-Migrationen)
 print_step "Datenbank-Schema aufsetzen..."

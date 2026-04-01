@@ -44,6 +44,7 @@ REQUIRED_APT_PACKAGES=(
   python3-certbot-nginx
   clamav
   clamav-daemon
+  clamav-freshclam
 )
 
 run_with_timeout() {
@@ -83,6 +84,16 @@ resolve_nologin_shell() {
     echo "/sbin/nologin"
   else
     echo "/bin/false"
+  fi
+}
+
+resolve_clamav_binary() {
+  if command -v clamdscan >/dev/null 2>&1; then
+    echo "clamdscan"
+  elif command -v clamscan >/dev/null 2>&1; then
+    echo "clamscan"
+  else
+    echo "clamdscan"
   fi
 }
 
@@ -150,6 +161,8 @@ ensure_file_security_defaults() {
   if [ ! -f "$env_file" ]; then
     return 0
   fi
+  local detected_clamav_binary
+  detected_clamav_binary="$(resolve_clamav_binary)"
 
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_MAX_UPLOAD_MB" "500"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_STRICT_SIGNATURE" "true"
@@ -158,9 +171,16 @@ ensure_file_security_defaults() {
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB" "1000"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_RATIO" "60"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_ENABLED" "true"
-  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "clamscan"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "$detected_clamav_binary"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_TIMEOUT_MS" "120000"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_FAIL_CLOSED" "true"
+
+  local configured_binary
+  configured_binary="$(grep '^FILE_SECURITY_CLAMAV_BINARY=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  if [ -z "$configured_binary" ] || ! command -v "$configured_binary" >/dev/null 2>&1; then
+    upsert_env_file "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "$detected_clamav_binary"
+    echo -e "  ${YELLOW}[!!]${NC} FILE_SECURITY_CLAMAV_BINARY angepasst auf '${detected_clamav_binary}'"
+  fi
 }
 
 ensure_runtime_users_hardening() {
