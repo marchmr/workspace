@@ -333,9 +333,23 @@ function createFailureResult(args: {
 }
 
 async function runCommand(command: string, args: string[]): Promise<{ ok: boolean; output: string }> {
+    let effectiveCommand = command;
+    let effectiveArgs = [...args];
+
+    // In gehärteten Systemd-Services ist /var/log und /run oft read-only.
+    // Mit -g überschreiben wir testweise error_log/pid auf /tmp, damit nginx -t trotzdem funktioniert.
+    if (command === 'nginx' && args.length > 0 && args[0] === '-t') {
+        const suffix = `${process.pid}-${Date.now()}`;
+        effectiveArgs = [
+            '-t',
+            '-g',
+            `pid /tmp/mike-nginx-test-${suffix}.pid; error_log /tmp/mike-nginx-test-${suffix}.log;`,
+        ];
+    }
+
     const shouldUseSudo = config.subdomainProvisioning.useSudo;
-    const cmd = shouldUseSudo ? 'sudo' : command;
-    const fullArgs = shouldUseSudo ? ['-n', command, ...args] : args;
+    const cmd = shouldUseSudo ? 'sudo' : effectiveCommand;
+    const fullArgs = shouldUseSudo ? ['-n', effectiveCommand, ...effectiveArgs] : effectiveArgs;
 
     try {
         const { stdout, stderr } = await execFileAsync(cmd, fullArgs, { timeout: 30_000 });

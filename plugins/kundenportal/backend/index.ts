@@ -57,10 +57,17 @@ async function proxyJson(
     const contentType = String(response.headers['content-type'] || 'application/json');
     reply.code(response.statusCode);
     reply.header('Content-Type', contentType);
-
-    const payload = response.json().catch(() => null);
     if (contentType.includes('application/json')) {
-        const resolved = await payload;
+        let resolved: any = null;
+        try {
+            resolved = response.json();
+        } catch {
+            try {
+                resolved = JSON.parse(response.body || '{}');
+            } catch {
+                resolved = null;
+            }
+        }
         return reply.send(replacePublicUrls(resolved));
     }
 
