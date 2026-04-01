@@ -63,10 +63,11 @@ export function Sidebar() {
 
     const pluginNavItems = useMemo(() =>
         pluginRegistry
+            .filter((entry) => !user?.activePlugins || user.activePlugins.includes(entry.name))
             .flatMap((entry) => entry.navItems)
             .slice()
             .sort((a, b) => (a.order - b.order) || a.label.localeCompare(b.label)),
-        []
+        [user?.activePlugins]
     );
 
     const handleLogout = async (event?: MouseEvent<HTMLButtonElement>) => {

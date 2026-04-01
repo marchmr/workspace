@@ -17,6 +17,7 @@ interface User {
     avatarUpdatedAt?: string | null;
     createdAt?: string | null;
     pinnedTabs?: string[];
+    activePlugins?: string[];
 }
 
 interface AuthContextType {

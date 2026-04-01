@@ -117,13 +117,14 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
         }
     }
 
-    function buildUserResponse(user: any, context: {
+    async function buildUserResponse(user: any, context: {
         permissions: string[];
         tenants: Array<{ id: number; name: string; slug: string; logoUrl: string | null; logoUpdatedAt: string | null }>;
         currentTenantId: number | null;
     }) {
         const decryptedUser = decryptUserSensitiveFields(user);
         const avatar = getAvatarMeta(decryptedUser);
+        const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
         return {
             id: decryptedUser.id,
             username: decryptedUser.username,
@@ -139,6 +140,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             avatarUpdatedAt: avatar.avatarUpdatedAt,
             createdAt: decryptedUser.created_at ? new Date(decryptedUser.created_at).toISOString() : null,
             pinnedTabs: parsePinnedTabs(user.pinned_tabs_json),
+            activePlugins,
         };
     }
 
@@ -462,7 +464,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             entityId: user.id,
         }, request);
 
-        return reply.send({ user: buildUserResponse(user, context) });
+        return reply.send({ user: await buildUserResponse(user, context) });
     });
 
     // POST /api/auth/refresh
@@ -538,7 +540,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
 
         setAuthCookies(request, reply, newAccessToken, newRefreshToken);
 
-        return reply.send({ user: buildUserResponse(user, context) });
+        return reply.send({ user: await buildUserResponse(user, context) });
     });
 
     // POST /api/auth/logout
@@ -599,7 +601,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
         const context = await buildAuthContext(user);
 
         return reply.send({
-            ...buildUserResponse(user, context),
+            ...(await buildUserResponse(user, context)),
             roles: roles.map((r: any) => r.name),
         });
     });
@@ -618,7 +620,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
         const context = await buildAuthContext(user);
 
         return reply.send({
-            ...buildUserResponse(user, context),
+            ...(await buildUserResponse(user, context)),
             roles: roles.map((r: any) => r.name),
         });
     });
@@ -918,7 +920,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             newState: { tenantId: targetTenant.id, tenantName: targetTenant.name },
         }, request);
 
-        return reply.send({ user: buildUserResponse(user, context) });
+        return reply.send({ user: await buildUserResponse(user, context) });
     });
 
     // GET /api/auth/search?q=...  -- Globale Suche
@@ -1223,7 +1225,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
         }, request);
 
         return reply.send({
-            user: buildUserResponse(user, context),
+            user: await buildUserResponse(user, context),
             remainingRecoveryCodes: result.remainingCodes.length,
         });
     });
