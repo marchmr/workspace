@@ -14,5 +14,5 @@
     "videoplattform.view",
     "videoplattform.manage"
   ],
-  "settings_page": true
+  "settings_page": false
 }

@@ -1,0 +1,128 @@
+.kp-page .kp-tabbar {
+    display: flex;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+}
+
+.kp-page .kp-coming-soon {
+    border: 1px dashed #b9c8df;
+    border-radius: 14px;
+    padding: var(--space-lg);
+    background: linear-gradient(180deg, #f8fbff 0%, #f2f6fd 100%);
+}
+
+.vp-settings {
+    display: grid;
+    gap: var(--space-xs);
+}
+
+.vp-inline-form {
+    margin-top: var(--space-sm);
+    display: grid;
+    grid-template-columns: 1fr 220px auto;
+    gap: var(--space-sm);
+}
+
+.vp-action-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: var(--space-sm);
+}
+
+.vp-provision-box {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: #f8fafc;
+    padding: var(--space-sm);
+    margin-top: var(--space-sm);
+    display: grid;
+    gap: 2px;
+}
+
+.vp-code-list {
+    display: grid;
+    gap: var(--space-sm);
+}
+
+.vp-code-row {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.vp-code-row code {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+}
+
+.vp-guidance {
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    border-radius: var(--radius-md);
+    padding: var(--space-sm);
+    display: grid;
+    gap: 4px;
+}
+
+.vp-guidance-list {
+    display: grid;
+    gap: 2px;
+}
+
+.vp-command-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: var(--space-sm);
+    align-items: center;
+    margin-top: var(--space-xs);
+}
+
+.vp-logo-row {
+    margin-top: var(--space-sm);
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: var(--space-sm);
+    align-items: center;
+}
+
+.vp-logo-preview {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: #fff;
+    height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-xs);
+}
+
+.vp-logo-preview img {
+    max-height: 70px;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+.vp-logo-actions {
+    display: flex;
+    gap: var(--space-xs);
+    flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+    .vp-inline-form {
+        grid-template-columns: 1fr;
+    }
+
+    .vp-logo-row {
+        grid-template-columns: 1fr;
+    }
+
+    .vp-command-row {
+        grid-template-columns: 1fr;
+    }
+}

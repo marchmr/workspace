@@ -1,10 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { apiFetch } from '@mike/context/AuthContext';
 import { useToast } from '@mike/components/ModalProvider';
-import '../videoplattform.css';
+import '../kundenportal.css';
 
-const SETTING_KEY = 'videoplattform.public_subdomain';
-const LOGO_HEIGHT_KEY = 'videoplattform.public_logo_height';
+const SETTING_KEY = 'kundenportal.public_subdomain';
+const LOGO_HEIGHT_KEY = 'kundenportal.public_logo_height';
+const LEGACY_SETTING_KEY = 'videoplattform.public_subdomain';
+const LEGACY_LOGO_HEIGHT_KEY = 'videoplattform.public_logo_height';
 
 function normalizeHost(value: string): string {
     return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
@@ -60,7 +62,7 @@ type PreflightResponse = {
     guidance: Guidance[];
 };
 
-export default function VideoPlatformSettingsPage() {
+export default function KundenportalSettingsPage() {
     const toast = useToast();
 
     const [host, setHost] = useState('kunden.webdesign-hammer.de');
@@ -80,16 +82,23 @@ export default function VideoPlatformSettingsPage() {
     useEffect(() => {
         let active = true;
 
-        apiFetch('/api/admin/settings/plugin/videoplattform')
+        Promise.all([
+            apiFetch('/api/admin/settings/plugin/kundenportal').then(async (res) => (res.ok ? res.json() : {})).catch(() => ({})),
+            apiFetch('/api/admin/settings/plugin/videoplattform').then(async (res) => (res.ok ? res.json() : {})).catch(() => ({})),
+        ])
             .then(async (res) => {
-                if (!res.ok) return;
-                const payload = await res.json();
+                const payload = (res?.[0] || {}) as Record<string, string | undefined>;
+                const legacy = (res?.[1] || {}) as Record<string, string | undefined>;
                 if (!active) return;
-                const value = typeof payload?.[SETTING_KEY] === 'string' ? payload[SETTING_KEY] : '';
+                const value = typeof payload?.[SETTING_KEY] === 'string'
+                    ? payload[SETTING_KEY]
+                    : (typeof legacy?.[LEGACY_SETTING_KEY] === 'string' ? legacy[LEGACY_SETTING_KEY] : '');
                 if (value.trim()) {
                     setHost(normalizeHost(value));
                 }
-                const logoHeightValue = typeof payload?.[LOGO_HEIGHT_KEY] === 'string' ? payload[LOGO_HEIGHT_KEY].trim() : '';
+                const logoHeightValue = typeof payload?.[LOGO_HEIGHT_KEY] === 'string'
+                    ? payload[LOGO_HEIGHT_KEY].trim()
+                    : (typeof legacy?.[LEGACY_LOGO_HEIGHT_KEY] === 'string' ? legacy[LEGACY_LOGO_HEIGHT_KEY].trim() : '');
                 if (logoHeightValue) setLogoHeight(logoHeightValue);
             })
             .catch(() => {
@@ -128,16 +137,24 @@ export default function VideoPlatformSettingsPage() {
 
         setSaving(true);
         try {
-            const res = await apiFetch('/api/admin/settings/plugin/videoplattform', {
+            const res = await apiFetch('/api/admin/settings/plugin/kundenportal', {
                 method: 'PUT',
                 body: JSON.stringify({ key: SETTING_KEY, value: normalized }),
             });
             const parsedHeight = Number(logoHeight);
             const safeHeight = Number.isFinite(parsedHeight) ? String(Math.max(24, Math.min(180, Math.round(parsedHeight)))) : '52';
-            const logoHeightRes = await apiFetch('/api/admin/settings/plugin/videoplattform', {
+            const logoHeightRes = await apiFetch('/api/admin/settings/plugin/kundenportal', {
                 method: 'PUT',
                 body: JSON.stringify({ key: LOGO_HEIGHT_KEY, value: safeHeight }),
             });
+            await apiFetch('/api/admin/settings/plugin/videoplattform', {
+                method: 'PUT',
+                body: JSON.stringify({ key: LEGACY_SETTING_KEY, value: normalized }),
+            }).catch(() => undefined);
+            await apiFetch('/api/admin/settings/plugin/videoplattform', {
+                method: 'PUT',
+                body: JSON.stringify({ key: LEGACY_LOGO_HEIGHT_KEY, value: safeHeight }),
+            }).catch(() => undefined);
 
             if (!res.ok || !logoHeightRes.ok) {
                 const payload = await res.json().catch(() => ({}));
@@ -163,7 +180,7 @@ export default function VideoPlatformSettingsPage() {
 
         setChecking(true);
         try {
-            const res = await apiFetch(`/api/admin/subdomain-provisioning/videoplattform/status?host=${encodeURIComponent(normalized)}`);
+            const res = await apiFetch(`/api/admin/subdomain-provisioning/kundenportal/status?host=${encodeURIComponent(normalized)}`);
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(payload?.error || 'Statusprüfung fehlgeschlagen');
             setStatus(payload as ProvisionStatus);
@@ -184,7 +201,7 @@ export default function VideoPlatformSettingsPage() {
 
         setPreflighting(true);
         try {
-            const res = await apiFetch(`/api/admin/subdomain-provisioning/videoplattform/preflight?host=${encodeURIComponent(normalized)}`);
+            const res = await apiFetch(`/api/admin/subdomain-provisioning/kundenportal/preflight?host=${encodeURIComponent(normalized)}`);
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(payload?.error || 'Preflight fehlgeschlagen');
 
@@ -210,7 +227,7 @@ export default function VideoPlatformSettingsPage() {
 
         setProvisioning(true);
         try {
-            const res = await apiFetch('/api/admin/subdomain-provisioning/videoplattform/provision', {
+            const res = await apiFetch('/api/admin/subdomain-provisioning/kundenportal/provision', {
                 method: 'POST',
                 body: JSON.stringify({
                     host: normalized,
@@ -288,7 +305,7 @@ export default function VideoPlatformSettingsPage() {
 
     return (
         <div className="vp-settings">
-            <h3 style={{ marginBottom: 'var(--space-xs)' }}>Kundenportal Subdomain</h3>
+            <h3 style={{ marginBottom: 'var(--space-xs)' }}>Kundenportal Host</h3>
             <p className="text-muted" style={{ marginBottom: 'var(--space-md)' }}>
                 Diese globale Subdomain gilt für alle Kunden. Das öffentliche Video-Frontend ist nur über diesen Host erreichbar.
             </p>

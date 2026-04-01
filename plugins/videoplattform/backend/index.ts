@@ -11,10 +11,15 @@ import { config } from '../../../backend/src/core/config.js';
 import { decrypt, encrypt } from '../../../backend/src/core/encryption.js';
 
 const PLUGIN_ID = 'videoplattform';
+const KUNDENPORTAL_PLUGIN_ID = 'kundenportal';
 const PUBLIC_SUBDOMAIN_SETTING_KEY = 'videoplattform.public_subdomain';
+const KUNDENPORTAL_PUBLIC_SUBDOMAIN_SETTING_KEY = 'kundenportal.public_subdomain';
 const PUBLIC_LOGO_FILE_SETTING_KEY = 'videoplattform.public_logo_file';
+const KUNDENPORTAL_PUBLIC_LOGO_FILE_SETTING_KEY = 'kundenportal.public_logo_file';
 const PUBLIC_LOGO_HEIGHT_SETTING_KEY = 'videoplattform.public_logo_height';
+const KUNDENPORTAL_PUBLIC_LOGO_HEIGHT_SETTING_KEY = 'kundenportal.public_logo_height';
 const PUBLIC_AUTH_MODE_SETTING_KEY = 'videoplattform.public_auth_mode';
+const KUNDENPORTAL_PUBLIC_AUTH_MODE_SETTING_KEY = 'kundenportal.public_auth_mode';
 const DEFAULT_PUBLIC_SUBDOMAIN = 'kunden.webdesign-hammer.de';
 const DEFAULT_PUBLIC_AUTH_MODE = 'magic_code';
 const MAX_VIDEO_SIZE_BYTES = 3 * 1024 * 1024 * 1024; // 3 GB
@@ -225,16 +230,31 @@ function isLikelyDevelopmentHost(host: string): boolean {
     return host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost');
 }
 
-async function readPublicSubdomain(db: any): Promise<string> {
-    const row = await db('settings')
-        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_SUBDOMAIN_SETTING_KEY })
-        .whereNull('tenant_id')
-        .first('value_encrypted');
+async function readGlobalEncryptedSetting(
+    db: any,
+    variants: Array<{ pluginId: string; key: string }>,
+): Promise<string | null> {
+    for (const variant of variants) {
+        const row = await db('settings')
+            .where({ plugin_id: variant.pluginId, key: variant.key })
+            .whereNull('tenant_id')
+            .first('value_encrypted');
+        if (row?.value_encrypted) {
+            return String(row.value_encrypted);
+        }
+    }
+    return null;
+}
 
-    if (!row?.value_encrypted) return DEFAULT_PUBLIC_SUBDOMAIN;
+async function readPublicSubdomain(db: any): Promise<string> {
+    const encrypted = await readGlobalEncryptedSetting(db, [
+        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_SUBDOMAIN_SETTING_KEY },
+        { pluginId: PLUGIN_ID, key: PUBLIC_SUBDOMAIN_SETTING_KEY },
+    ]);
+    if (!encrypted) return DEFAULT_PUBLIC_SUBDOMAIN;
 
     try {
-        const value = decrypt(String(row.value_encrypted));
+        const value = decrypt(encrypted);
         return normalizeHost(value) || DEFAULT_PUBLIC_SUBDOMAIN;
     } catch {
         return DEFAULT_PUBLIC_SUBDOMAIN;
@@ -242,14 +262,13 @@ async function readPublicSubdomain(db: any): Promise<string> {
 }
 
 async function readPublicLogoFile(db: any): Promise<string | null> {
-    const row = await db('settings')
-        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_LOGO_FILE_SETTING_KEY })
-        .whereNull('tenant_id')
-        .first('value_encrypted');
-
-    if (!row?.value_encrypted) return null;
+    const encrypted = await readGlobalEncryptedSetting(db, [
+        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_LOGO_FILE_SETTING_KEY },
+        { pluginId: PLUGIN_ID, key: PUBLIC_LOGO_FILE_SETTING_KEY },
+    ]);
+    if (!encrypted) return null;
     try {
-        const value = decrypt(String(row.value_encrypted)).trim();
+        const value = decrypt(encrypted).trim();
         return value || null;
     } catch {
         return null;
@@ -265,13 +284,13 @@ function logoMimeTypeFromFileName(fileName: string): string {
 }
 
 async function readPublicLogoHeight(db: any): Promise<number> {
-    const row = await db('settings')
-        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_LOGO_HEIGHT_SETTING_KEY })
-        .whereNull('tenant_id')
-        .first('value_encrypted');
-    if (!row?.value_encrypted) return 52;
+    const encrypted = await readGlobalEncryptedSetting(db, [
+        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_LOGO_HEIGHT_SETTING_KEY },
+        { pluginId: PLUGIN_ID, key: PUBLIC_LOGO_HEIGHT_SETTING_KEY },
+    ]);
+    if (!encrypted) return 52;
     try {
-        const raw = decrypt(String(row.value_encrypted)).trim();
+        const raw = decrypt(encrypted).trim();
         const value = Number(raw);
         if (!Number.isFinite(value)) return 52;
         return Math.max(24, Math.min(180, Math.round(value)));
@@ -281,14 +300,13 @@ async function readPublicLogoHeight(db: any): Promise<number> {
 }
 
 async function readPublicAuthMode(db: any): Promise<'share_code' | 'magic_code'> {
-    const row = await db('settings')
-        .where({ plugin_id: PLUGIN_ID, key: PUBLIC_AUTH_MODE_SETTING_KEY })
-        .whereNull('tenant_id')
-        .first('value_encrypted');
-
-    if (!row?.value_encrypted) return DEFAULT_PUBLIC_AUTH_MODE as 'magic_code';
+    const encrypted = await readGlobalEncryptedSetting(db, [
+        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_AUTH_MODE_SETTING_KEY },
+        { pluginId: PLUGIN_ID, key: PUBLIC_AUTH_MODE_SETTING_KEY },
+    ]);
+    if (!encrypted) return DEFAULT_PUBLIC_AUTH_MODE as 'magic_code';
     try {
-        const raw = decrypt(String(row.value_encrypted)).trim().toLowerCase();
+        const raw = decrypt(encrypted).trim().toLowerCase();
         if (raw === 'share_code') return 'share_code';
         return 'magic_code';
     } catch {
