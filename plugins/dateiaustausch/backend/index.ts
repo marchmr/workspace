@@ -752,7 +752,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
                 .where('i.tenant_id', Number(session.tenant_id))
                 .andWhere('i.customer_id', Number(session.customer_id))
-                .andWhereNotNull('i.current_version_id')
+                .whereNotNull('i.current_version_id')
                 .select(
                     'i.id',
                     'i.folder_path',
@@ -772,7 +772,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             items = await db('dtx_items as i')
                 .where('i.tenant_id', Number(session.tenant_id))
                 .andWhere('i.customer_id', Number(session.customer_id))
-                .andWhereNotNull('i.current_version_id')
+                .whereNotNull('i.current_version_id')
                 .select(
                     'i.id',
                     'i.folder_path',
@@ -1414,7 +1414,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             })
             .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
             .where('i.tenant_id', tenantId)
-            .andWhereNotNull('i.current_version_id')
+            .whereNotNull('i.current_version_id')
             .modify((qb: any) => {
                 if (status) qb.andWhere('i.workflow_status', status);
                 if (Number.isInteger(customerId) && customerId > 0) qb.andWhere('i.customer_id', customerId);

@@ -744,12 +744,22 @@
     height: 36px;
     padding: 0;
     justify-content: center;
+    border-radius: 10px;
+    color: #51627c;
+    border-color: #d5e0ee;
+    background: #ffffff;
 }
 
 .kp-page .kp-icon-btn.kp-od-create {
     width: 100%;
     min-width: 0;
     height: 44px;
+}
+
+.kp-page .kp-icon-btn:hover {
+    color: #2f4058;
+    border-color: #b9cbe2;
+    background: #f7fbff;
 }
 
 .kp-page .kp-od-table-wrap {
