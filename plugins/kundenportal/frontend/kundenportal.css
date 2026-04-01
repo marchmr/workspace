@@ -46,7 +46,7 @@
     display: grid;
     gap: var(--space-sm);
     position: sticky;
-    top: calc(var(--topbar-height) + var(--space-sm));
+    top: var(--space-sm);
 }
 
 .kp-page .kp-sidebar-brand {
@@ -453,7 +453,7 @@
     }
 }
 
-@media (min-width: 1600px) {
+@media (min-width: 1320px) {
     .kp-page .kp-portal-layout {
         grid-template-columns: 300px minmax(0, 1fr);
     }
