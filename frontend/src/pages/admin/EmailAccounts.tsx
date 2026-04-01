@@ -42,7 +42,7 @@ const emptyAccount: Omit<EmailAccount, 'id' | 'created_at' | 'updated_at'> = {
     oauth_refresh_token: '',
     oauth_access_token: '',
     oauth_access_expires_at: '',
-    oauth_scope: 'https://outlook.office.com/SMTP.Send offline_access',
+    oauth_scope: 'offline_access https://graph.microsoft.com/Mail.Send',
 };
 
 export default function EmailAccounts() {
@@ -91,7 +91,7 @@ export default function EmailAccounts() {
             oauth_refresh_token: account.oauth_refresh_token || '',
             oauth_access_token: account.oauth_access_token || '',
             oauth_access_expires_at: account.oauth_access_expires_at || '',
-            oauth_scope: account.oauth_scope || 'https://outlook.office.com/SMTP.Send offline_access',
+            oauth_scope: account.oauth_scope || 'offline_access https://graph.microsoft.com/Mail.Send',
         });
         setMessage(null);
     };
@@ -188,7 +188,7 @@ export default function EmailAccounts() {
                 <div className="flex-between">
                     <div>
                         <h1 className="page-title">E-Mail-Konten</h1>
-                        <p className="page-subtitle">SMTP- und E-Mail-Konten fuer den Systemversand verwalten</p>
+                        <p className="page-subtitle">SMTP- und OAuth-E-Mail-Konten fuer den Systemversand verwalten</p>
                     </div>
                     {editingId === null && (
                         <button className="btn btn-primary" onClick={handleNew}>
@@ -263,21 +263,10 @@ export default function EmailAccounts() {
 
                         {form.provider === 'm365' && (
                             <>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: 'var(--space-md)' }}>
-                                    <div className="form-group">
-                                        <label className="form-label">SMTP Host</label>
-                                        <input className="form-input" value={form.smtp_host} onChange={(e) => setForm({ ...form, smtp_host: e.target.value })} placeholder="smtp.office365.com" />
-                                    </div>
-                                    <div className="form-group">
-                                        <label className="form-label">Port</label>
-                                        <input className="form-input" type="number" value={form.smtp_port} onChange={(e) => setForm({ ...form, smtp_port: parseInt(e.target.value, 10) || 587 })} placeholder="587" />
-                                    </div>
+                                <div className="alert alert-info">
+                                    Microsoft 365 wird hier ohne SMTP direkt per OAuth2 (Microsoft Graph) verwendet.
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-md)' }}>
-                                    <div className="form-group">
-                                        <label className="form-label">SMTP Benutzer (E-Mail)</label>
-                                        <input className="form-input" value={form.smtp_user} onChange={(e) => setForm({ ...form, smtp_user: e.target.value })} placeholder="konto@firma.de" />
-                                    </div>
                                     <div className="form-group">
                                         <label className="form-label">Tenant ID</label>
                                         <input className="form-input" value={form.oauth_tenant_id} onChange={(e) => setForm({ ...form, oauth_tenant_id: e.target.value })} placeholder="common oder Tenant GUID" />
@@ -301,7 +290,7 @@ export default function EmailAccounts() {
                                 </div>
                                 <div className="form-group">
                                     <label className="form-label">OAuth Scope</label>
-                                    <input className="form-input" value={form.oauth_scope} onChange={(e) => setForm({ ...form, oauth_scope: e.target.value })} placeholder="https://outlook.office.com/SMTP.Send offline_access" />
+                                    <input className="form-input" value={form.oauth_scope} onChange={(e) => setForm({ ...form, oauth_scope: e.target.value })} placeholder="offline_access https://graph.microsoft.com/Mail.Send" />
                                 </div>
                             </>
                         )}

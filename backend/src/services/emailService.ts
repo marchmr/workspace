@@ -55,6 +55,12 @@ function normalizeEmail(value: string): string {
     return String(value || '').trim().toLowerCase();
 }
 
+function nullIfBlank(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    const str = String(value).trim();
+    return str ? str : null;
+}
+
 function sanitizeAccount(account: EmailAccount): EmailAccount {
     return {
         ...account,
@@ -96,7 +102,7 @@ async function refreshM365AccessToken(account: EmailAccount): Promise<string> {
     const clientId = String(account.oauth_client_id || '').trim();
     const clientSecret = String(account.oauth_client_secret || '').trim();
     const refreshToken = String(account.oauth_refresh_token || '').trim();
-    const scope = String(account.oauth_scope || 'https://outlook.office.com/SMTP.Send offline_access').trim();
+    const scope = String(account.oauth_scope || 'offline_access https://graph.microsoft.com/Mail.Send').trim();
 
     if (!clientId || !clientSecret || !refreshToken) {
         throw new Error('M365 OAuth ist unvollständig konfiguriert (client_id/client_secret/refresh_token).');
@@ -147,6 +153,58 @@ async function getM365AccessToken(account: EmailAccount): Promise<string> {
     return refreshM365AccessToken(account);
 }
 
+function toEmailAddressList(value: string | string[]): Array<{ emailAddress: { address: string } }> {
+    const values = Array.isArray(value) ? value : String(value).split(',');
+    const addresses = values
+        .map((entry) => normalizeEmail(String(entry)))
+        .filter(Boolean);
+
+    if (addresses.length === 0) {
+        throw new Error('Empfänger-Adresse fehlt.');
+    }
+
+    return addresses.map((address) => ({ emailAddress: { address } }));
+}
+
+async function sendViaM365Graph(account: EmailAccount, opts: SendMailOptions): Promise<void> {
+    const accessToken = await getM365AccessToken(account);
+    const fromAddress = normalizeEmail(account.from_address || account.smtp_user || '');
+    const fromName = String(account.from_name || '').trim();
+    if (!fromAddress) throw new Error('Absender-Adresse fehlt (from_address).');
+
+    const payload = {
+        message: {
+            subject: opts.subject,
+            body: {
+                contentType: opts.html ? 'HTML' : 'Text',
+                content: opts.html || opts.text || '',
+            },
+            from: {
+                emailAddress: {
+                    address: fromAddress,
+                    ...(fromName ? { name: fromName } : {}),
+                },
+            },
+            toRecipients: toEmailAddressList(opts.to),
+        },
+        saveToSentItems: true,
+    };
+
+    const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const details = await response.text().catch(() => '');
+        throw new Error(`M365 Graph Versand fehlgeschlagen (${response.status}): ${details || 'Unbekannter Fehler'}`);
+    }
+}
+
 async function createTransport(account: EmailAccount): Promise<any> {
     const host = String(account.smtp_host || '').trim();
     const port = Number(account.smtp_port || 587);
@@ -166,24 +224,6 @@ async function createTransport(account: EmailAccount): Promise<any> {
         });
     }
 
-    if (account.provider === 'm365') {
-        if (!user) throw new Error('M365-Konfiguration unvollständig (SMTP-Benutzer fehlt).');
-        const accessToken = await getM365AccessToken(account);
-        return nodemailer.createTransport({
-            host: host || 'smtp.office365.com',
-            port: port || 587,
-            secure: false,
-            auth: {
-                type: 'OAuth2',
-                user,
-                accessToken,
-            },
-            tls: {
-                ciphers: 'SSLv3',
-            },
-        });
-    }
-
     throw new Error(`Unbekannter E-Mail-Provider: ${account.provider}`);
 }
 
@@ -193,6 +233,11 @@ async function emailPlugin(fastify: FastifyInstance): Promise<void> {
             const account = opts.accountId ? await getAccountById(opts.accountId) : await getDefaultAccount();
             if (!account) {
                 throw new Error('Kein E-Mail-Konto konfiguriert. Bitte unter Administration > E-Mail-Konten einrichten.');
+            }
+
+            if (account.provider === 'm365') {
+                await sendViaM365Graph(account, opts);
+                return;
             }
 
             const transporter = await createTransport(account);
@@ -256,21 +301,21 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         const [id] = await db('email_accounts').insert({
             name: body.name.trim(),
             provider: body.provider || 'smtp',
-            smtp_host: body.smtp_host || null,
+            smtp_host: nullIfBlank(body.smtp_host),
             smtp_port: body.smtp_port ? parseInt(String(body.smtp_port), 10) : 587,
-            smtp_user: body.smtp_user || null,
+            smtp_user: nullIfBlank(body.smtp_user),
             smtp_password: body.smtp_password ? encrypt(String(body.smtp_password)) : null,
             smtp_secure: body.smtp_secure !== false,
-            from_address: body.from_address || null,
-            from_name: body.from_name || null,
+            from_address: nullIfBlank(body.from_address),
+            from_name: nullIfBlank(body.from_name),
             is_default: !!body.is_default,
-            oauth_tenant_id: body.oauth_tenant_id || null,
-            oauth_client_id: body.oauth_client_id || null,
+            oauth_tenant_id: nullIfBlank(body.oauth_tenant_id),
+            oauth_client_id: nullIfBlank(body.oauth_client_id),
             oauth_client_secret: body.oauth_client_secret ? encrypt(String(body.oauth_client_secret)) : null,
             oauth_refresh_token: body.oauth_refresh_token ? encrypt(String(body.oauth_refresh_token)) : null,
             oauth_access_token: body.oauth_access_token ? encrypt(String(body.oauth_access_token)) : null,
-            oauth_access_expires_at: body.oauth_access_expires_at || null,
-            oauth_scope: body.oauth_scope || null,
+            oauth_access_expires_at: nullIfBlank(body.oauth_access_expires_at),
+            oauth_scope: nullIfBlank(body.oauth_scope),
             created_at: new Date(),
             updated_at: new Date(),
         });
@@ -297,17 +342,17 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         const updates: Record<string, any> = {
             name: body.name?.trim() || existing.name,
             provider: body.provider || existing.provider,
-            smtp_host: body.smtp_host ?? existing.smtp_host,
+            smtp_host: body.smtp_host !== undefined ? nullIfBlank(body.smtp_host) : existing.smtp_host,
             smtp_port: body.smtp_port ? parseInt(String(body.smtp_port), 10) : existing.smtp_port,
-            smtp_user: body.smtp_user ?? existing.smtp_user,
+            smtp_user: body.smtp_user !== undefined ? nullIfBlank(body.smtp_user) : existing.smtp_user,
             smtp_secure: body.smtp_secure !== undefined ? body.smtp_secure !== false : existing.smtp_secure,
-            from_address: body.from_address ?? existing.from_address,
-            from_name: body.from_name ?? existing.from_name,
+            from_address: body.from_address !== undefined ? nullIfBlank(body.from_address) : existing.from_address,
+            from_name: body.from_name !== undefined ? nullIfBlank(body.from_name) : existing.from_name,
             is_default: body.is_default !== undefined ? !!body.is_default : existing.is_default,
-            oauth_tenant_id: body.oauth_tenant_id ?? existing.oauth_tenant_id,
-            oauth_client_id: body.oauth_client_id ?? existing.oauth_client_id,
-            oauth_access_expires_at: body.oauth_access_expires_at ?? existing.oauth_access_expires_at,
-            oauth_scope: body.oauth_scope ?? existing.oauth_scope,
+            oauth_tenant_id: body.oauth_tenant_id !== undefined ? nullIfBlank(body.oauth_tenant_id) : existing.oauth_tenant_id,
+            oauth_client_id: body.oauth_client_id !== undefined ? nullIfBlank(body.oauth_client_id) : existing.oauth_client_id,
+            oauth_access_expires_at: body.oauth_access_expires_at !== undefined ? nullIfBlank(body.oauth_access_expires_at) : existing.oauth_access_expires_at,
+            oauth_scope: body.oauth_scope !== undefined ? nullIfBlank(body.oauth_scope) : existing.oauth_scope,
             updated_at: new Date(),
         };
 
