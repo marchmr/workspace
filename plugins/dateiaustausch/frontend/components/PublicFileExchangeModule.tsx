@@ -69,6 +69,8 @@ export default function PublicFileExchangeModule(props: Props) {
     const [filesSort, setFilesSort] = useState<'newest' | 'name' | 'folder'>('newest');
     const [filesFolderFilter, setFilesFolderFilter] = useState('');
     const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [showUploadPanel, setShowUploadPanel] = useState(false);
 
     async function loadFiles() {
         setFilesLoading(true);
@@ -198,6 +200,13 @@ export default function PublicFileExchangeModule(props: Props) {
 
     const visibleFiles = useMemo(() => {
         let list = files.slice();
+        const q = searchQuery.trim().toLowerCase();
+        if (q) {
+            list = list.filter((entry) => {
+                const haystack = `${entry.displayName} ${entry.folderPath}`.toLowerCase();
+                return haystack.includes(q);
+            });
+        }
         if (filesFolderFilter.trim()) {
             list = list.filter((entry) => String(entry.folderPath || '') === filesFolderFilter.trim());
         }
@@ -209,7 +218,7 @@ export default function PublicFileExchangeModule(props: Props) {
             list.sort((a, b) => new Date(String(b.updatedAt || 0)).getTime() - new Date(String(a.updatedAt || 0)).getTime());
         }
         return list;
-    }, [files, filesFolderFilter, filesSort]);
+    }, [files, filesFolderFilter, filesSort, searchQuery]);
 
     const folderTreeNodes = useMemo<FolderTreeNode[]>(() => {
         type Node = { name: string; path: string; children: Record<string, Node>; count: number };
@@ -239,6 +248,8 @@ export default function PublicFileExchangeModule(props: Props) {
         return toArray(root);
     }, [files]);
 
+    const selectedFolderLabel = filesFolderFilter || 'Alle Ordner';
+
     return (
         <div className="kp-coming-soon kp-module-shell">
             <h3 className="kp-module-title">Dateiaustausch</h3>
@@ -265,59 +276,82 @@ export default function PublicFileExchangeModule(props: Props) {
                 </aside>
 
                 <div className="kp-cloud-main">
-                    <form onSubmit={uploadFile} className="vp-stack">
-                        <div
-                            className={`kp-cloud-dropzone${dragOverUpload ? ' is-dragover' : ''}`}
-                            onDragOver={(event) => {
-                                event.preventDefault();
-                                setDragOverUpload(true);
-                            }}
-                            onDragLeave={() => setDragOverUpload(false)}
-                            onDrop={(event) => {
-                                event.preventDefault();
-                                onDropFiles(event.dataTransfer?.files || null);
-                            }}
-                        >
-                            <p className="kp-cloud-dropzone-title">Dateien hier hineinziehen oder auswaehlen</p>
-                            <p className="text-muted kp-cloud-dropzone-subtitle">Mehrere Dateien gleichzeitig moeglich.</p>
+                    <div className="kp-drive-toolbar">
+                        <div className="kp-drive-search">
                             <input
                                 className="input"
-                                type="file"
-                                multiple
-                                onChange={(event) => onFileInputChange(event.target.files)}
-                                accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
-                                disabled={!available}
-                                required
+                                value={searchQuery}
+                                onChange={(event) => setSearchQuery(event.target.value)}
+                                placeholder="Dateien und Ordner durchsuchen"
                             />
-                            {selectedFiles.length > 0 && (
-                                <p className="text-muted kp-cloud-selected-count">
-                                    {selectedFiles.length} Datei(en) ausgewählt
-                                </p>
-                            )}
                         </div>
-                        <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
-                            <option value="">Ordner auswählen (optional)</option>
-                            {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-                        </select>
-                        <input
-                            className="input"
-                            value={newFolderName}
-                            onChange={(event) => setNewFolderName(event.target.value)}
-                            disabled={!available}
-                            placeholder="Oder neuen Ordner anlegen, z. B. Fotos/April"
-                        />
-                        <textarea
-                            className="input"
-                            rows={3}
-                            value={uploadComment}
-                            onChange={(event) => setUploadComment(event.target.value)}
-                            disabled={!available}
-                            placeholder="Kommentar zur Datei (optional)"
-                        />
-                        <button className="btn btn-primary" type="submit" disabled={filesLoading || !available}>
-                            {filesLoading ? (uploadProgress ? `Lade hoch... (${uploadProgress.done}/${uploadProgress.total})` : 'Lade hoch...') : 'Dateien sicher hochladen'}
-                        </button>
-                    </form>
+                        <div className="kp-drive-actions">
+                            <button className="btn btn-secondary" type="button" onClick={() => loadFiles()}>
+                                Aktualisieren
+                            </button>
+                            <button className="btn btn-primary" type="button" onClick={() => setShowUploadPanel((prev) => !prev)}>
+                                {showUploadPanel ? 'Upload schließen' : 'Datei hochladen'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {showUploadPanel && (
+                        <form onSubmit={uploadFile} className="vp-stack kp-drive-upload-panel">
+                            <div
+                                className={`kp-cloud-dropzone${dragOverUpload ? ' is-dragover' : ''}`}
+                                onDragOver={(event) => {
+                                    event.preventDefault();
+                                    setDragOverUpload(true);
+                                }}
+                                onDragLeave={() => setDragOverUpload(false)}
+                                onDrop={(event) => {
+                                    event.preventDefault();
+                                    onDropFiles(event.dataTransfer?.files || null);
+                                }}
+                            >
+                                <p className="kp-cloud-dropzone-title">Dateien hier hineinziehen oder auswaehlen</p>
+                                <p className="text-muted kp-cloud-dropzone-subtitle">Mehrere Dateien gleichzeitig moeglich.</p>
+                                <input
+                                    className="input"
+                                    type="file"
+                                    multiple
+                                    onChange={(event) => onFileInputChange(event.target.files)}
+                                    accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
+                                    disabled={!available}
+                                    required
+                                />
+                                {selectedFiles.length > 0 && (
+                                    <p className="text-muted kp-cloud-selected-count">
+                                        {selectedFiles.length} Datei(en) ausgewählt
+                                    </p>
+                                )}
+                            </div>
+                            <div className="kp-drive-upload-grid">
+                                <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
+                                    <option value="">Ordner auswählen (optional)</option>
+                                    {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+                                </select>
+                                <input
+                                    className="input"
+                                    value={newFolderName}
+                                    onChange={(event) => setNewFolderName(event.target.value)}
+                                    disabled={!available}
+                                    placeholder="Neuen Ordner anlegen, z. B. Fotos/April"
+                                />
+                            </div>
+                            <textarea
+                                className="input"
+                                rows={2}
+                                value={uploadComment}
+                                onChange={(event) => setUploadComment(event.target.value)}
+                                disabled={!available}
+                                placeholder="Kommentar zur Datei (optional)"
+                            />
+                            <button className="btn btn-primary" type="submit" disabled={filesLoading || !available}>
+                                {filesLoading ? (uploadProgress ? `Lade hoch... (${uploadProgress.done}/${uploadProgress.total})` : 'Lade hoch...') : 'Sicher hochladen'}
+                            </button>
+                        </form>
+                    )}
 
                     {filesError && <p className="text-danger" style={{ marginTop: 10 }}>{filesError}</p>}
 
@@ -333,8 +367,13 @@ export default function PublicFileExchangeModule(props: Props) {
                         </select>
                     </div>
 
+                    <div className="kp-drive-meta">
+                        <span>{visibleFiles.length} Einträge</span>
+                        <span>Ordner: {selectedFolderLabel}</span>
+                    </div>
+
                     <div className="kp-module-table-wrap">
-                        <table className="kp-module-table">
+                        <table className="kp-module-table kp-drive-table">
                             <thead>
                                 <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
                                     <th style={{ padding: '10px 12px' }}>Datei</th>
@@ -349,7 +388,12 @@ export default function PublicFileExchangeModule(props: Props) {
                             <tbody>
                                 {visibleFiles.map((entry) => (
                                     <tr key={entry.id} style={{ borderTop: '1px solid var(--line)' }}>
-                                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>{entry.displayName}</td>
+                                        <td style={{ padding: '10px 12px', fontWeight: 600 }}>
+                                            <span className="kp-drive-file">
+                                                <span className="kp-drive-file-icon" aria-hidden="true" />
+                                                <span>{entry.displayName}</span>
+                                            </span>
+                                        </td>
                                         <td style={{ padding: '10px 12px' }}>{entry.folderPath || 'Root'}</td>
                                         <td style={{ padding: '10px 12px' }}>
                                             <span className={`kp-status-badge is-${entry.workflowStatus}`}>{formatWorkflowStatus(entry.workflowStatus)}</span>
