@@ -228,6 +228,12 @@ function getFolderNameForZip(folderPath: string): string {
     return sanitizeZipPathPart(parts[parts.length - 1] || 'ordner');
 }
 
+function getBaseName(folderPath: string): string {
+    const normalized = normalizeFolderPath(folderPath);
+    const parts = normalized.split('/').filter(Boolean);
+    return parts[parts.length - 1] || 'ordner';
+}
+
 async function loadCleanFolderZipEntries(db: any, args: {
     tenantId: number;
     customerId: number;
@@ -292,15 +298,6 @@ async function streamFolderZip(reply: any, args: {
         }
     }
 
-    reply.header('Content-Type', 'application/zip');
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Cache-Control', 'no-store, max-age=0');
-    reply.header('Pragma', 'no-cache');
-    const zipName = `${sanitizeFileName(args.fileName)}.zip`;
-    const encodedName = encodeFileNameForHeader(zipName);
-    const safeName = zipName.replace(/"/g, '');
-    reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
-
     let archiveFactory: any;
     try {
         const module = await import('archiver');
@@ -313,29 +310,44 @@ async function streamFolderZip(reply: any, args: {
     const archive = archiveFactory('zip', { zlib: { level: 9 } });
     archive.on('warning', () => undefined);
     archive.on('error', (err) => {
+        if (!reply.sent) {
+            reply.status(500).send({ error: 'ZIP-Erstellung fehlgeschlagen.' });
+            return;
+        }
         reply.raw.destroy(err);
     });
-    reply.raw.on('close', () => {
-        archive.abort();
-    });
 
+    reply.header('Content-Type', 'application/zip');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.header('Cache-Control', 'no-store, max-age=0');
+    reply.header('Pragma', 'no-cache');
+    const zipName = `${sanitizeFileName(args.fileName)}.zip`;
+    const encodedName = encodeFileNameForHeader(zipName);
+    const safeName = zipName.replace(/"/g, '');
+    reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
     reply.send(archive);
 
-    for (const entry of args.entries) {
-        const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
+    (async () => {
         try {
-            const st = await fs.stat(absPath);
-            if (!st.isFile()) continue;
-        } catch {
-            continue;
-        }
-        const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
-        const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}/` : '';
-        const name = `${rootPrefix}${relativeName}`.replace(/^\/+/, '');
-        archive.file(absPath, { name: name || sanitizeFileName(entry.displayName) });
-    }
+            for (const entry of args.entries) {
+                const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
+                try {
+                    const st = await fs.stat(absPath);
+                    if (!st.isFile()) continue;
+                } catch {
+                    continue;
+                }
+                const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
+                const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}/` : '';
+                const name = `${rootPrefix}${relativeName}`.replace(/^\/+/, '');
+                archive.file(absPath, { name: name || sanitizeFileName(entry.displayName) });
+            }
 
-    await archive.finalize();
+            await archive.finalize();
+        } catch (error) {
+            archive.destroy(error as Error);
+        }
+    })().catch(() => undefined);
 }
 
 function resolvePublicSessionToken(request: any, fileFields?: Record<string, any>): string {
