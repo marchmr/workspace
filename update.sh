@@ -430,6 +430,21 @@ ensure_required_apt_packages() {
 
 }
 
+ensure_zip_runtime_tool() {
+  if command -v zip >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo -e "  ${YELLOW}[!!]${NC} Kommando 'zip' fehlt. Installiere zip..."
+  apt-get update -qq > /dev/null 2>&1
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zip > /dev/null 2>&1
+  if ! command -v zip >/dev/null 2>&1; then
+    echo -e "  ${RED}[FAIL]${NC} zip konnte nicht installiert werden."
+    exit 1
+  fi
+  echo -e "  ${GREEN}[OK]${NC} zip ist verfuegbar"
+}
+
 ensure_clamav_services() {
   if dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed"; then
     systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
@@ -464,6 +479,7 @@ EOF
 
 echo -e "\n${CYAN}> System-Abhaengigkeiten pruefen...${NC}"
 ensure_required_apt_packages
+ensure_zip_runtime_tool
 ensure_clamav_services
 
 # ============================================

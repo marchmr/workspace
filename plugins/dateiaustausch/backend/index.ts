@@ -1,8 +1,11 @@
 import { createHash, randomUUID } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import { createReadStream, createWriteStream } from 'fs';
 import { once } from 'events';
+import os from 'os';
 import type { FastifyInstance } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -20,6 +23,7 @@ const STORAGE_ROOT = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID);
 const MAX_FOLDER_ZIP_ITEMS = 3000;
 const MAX_FOLDER_ZIP_TOTAL_BYTES = 8 * 1024 * 1024 * 1024; // 8 GB
 const MAX_SCAN_QUEUE_PENDING = 200;
+const execFileAsync = promisify(execFile);
 
 type WorkflowStatus = 'pending' | 'clean' | 'rejected' | 'reviewed';
 
@@ -298,56 +302,53 @@ async function streamFolderZip(reply: any, args: {
         }
     }
 
-    let archiveFactory: any;
-    try {
-        const module = await import('archiver');
-        archiveFactory = module.default || module;
-    } catch {
-        reply.status(503).send({ error: 'ZIP-Erstellung momentan nicht verfügbar (archiver fehlt).' });
-        return;
-    }
-
-    const archive = archiveFactory('zip', { zlib: { level: 9 } });
-    archive.on('warning', () => undefined);
-    archive.on('error', (err) => {
-        if (!reply.sent) {
-            reply.status(500).send({ error: 'ZIP-Erstellung fehlgeschlagen.' });
-            return;
-        }
-        reply.raw.destroy(err);
-    });
-
-    reply.header('Content-Type', 'application/zip');
-    reply.header('X-Content-Type-Options', 'nosniff');
-    reply.header('Cache-Control', 'no-store, max-age=0');
-    reply.header('Pragma', 'no-cache');
     const zipName = `${sanitizeFileName(args.fileName)}.zip`;
     const encodedName = encodeFileNameForHeader(zipName);
     const safeName = zipName.replace(/"/g, '');
-    reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
-    reply.send(archive);
 
-    (async () => {
-        try {
-            for (const entry of args.entries) {
-                const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
-                try {
-                    const st = await fs.stat(absPath);
-                    if (!st.isFile()) continue;
-                } catch {
-                    continue;
-                }
-                const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
-                const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}/` : '';
-                const name = `${rootPrefix}${relativeName}`.replace(/^\/+/, '');
-                archive.file(absPath, { name: name || sanitizeFileName(entry.displayName) });
+    const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'dtx-zip-'));
+    const zipPath = path.join(tempRoot, zipName);
+    const stageRoot = path.join(tempRoot, 'stage');
+
+    try {
+        await fs.mkdir(stageRoot, { recursive: true, mode: 0o700 });
+        const rootPrefix = args.baseFolderPath ? `${getFolderNameForZip(args.baseFolderPath)}` : '';
+
+        for (const entry of args.entries) {
+            const absPath = buildSafeStoragePath(STORAGE_ROOT, entry.storageKey);
+            try {
+                const st = await fs.stat(absPath);
+                if (!st.isFile()) continue;
+            } catch {
+                continue;
             }
 
-            await archive.finalize();
-        } catch (error) {
-            archive.destroy(error as Error);
+            const relativeName = buildZipFileEntryName(args.baseFolderPath, entry.folderPath, entry.displayName);
+            const targetRelative = rootPrefix ? path.posix.join(rootPrefix, relativeName) : relativeName;
+            const targetPath = path.join(stageRoot, targetRelative);
+            await fs.mkdir(path.dirname(targetPath), { recursive: true, mode: 0o700 });
+            await fs.copyFile(absPath, targetPath);
+            await fs.chmod(targetPath, 0o600).catch(() => undefined);
         }
-    })().catch(() => undefined);
+
+        try {
+            await execFileAsync('zip', ['-qr', zipPath, '.'], { cwd: stageRoot, timeout: 300000, maxBuffer: 8 * 1024 * 1024 });
+        } catch {
+            reply.status(503).send({ error: 'ZIP-Erstellung momentan nicht verfügbar (zip fehlt).' });
+            return;
+        }
+
+        reply.header('Content-Type', 'application/zip');
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Cache-Control', 'no-store, max-age=0');
+        reply.header('Pragma', 'no-cache');
+        reply.header('Content-Disposition', `attachment; filename="${safeName}"; filename*=UTF-8''${encodedName}`);
+        reply.send(createReadStream(zipPath));
+    } finally {
+        reply.raw.on('close', () => {
+            fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined);
+        });
+    }
 }
 
 function resolvePublicSessionToken(request: any, fileFields?: Record<string, any>): string {
@@ -1202,93 +1203,99 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true }, rateLimit: { max: 8, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
-        const sessionToken = resolvePublicSessionToken(request);
-        const body = (request.body as any) || {};
-        const itemIds = Array.isArray(body.itemIds) ? body.itemIds : [];
-        const folderPathsRaw = Array.isArray(body.folderPaths) ? body.folderPaths : [];
-        const targetFolderPath = normalizeFolderPath(String(body.targetFolderPath || ''));
+        try {
+            const sessionToken = resolvePublicSessionToken(request);
+            const body = (request.body as any) || {};
+            const itemIds = Array.isArray(body.itemIds) ? body.itemIds : [];
+            const folderPathsRaw = Array.isArray(body.folderPaths) ? body.folderPaths : [];
+            const targetFolderPath = normalizeFolderPath(String(body.targetFolderPath || ''));
 
-        const fileIds = itemIds
-            .map((value: any) => Number(value))
-            .filter((value: number) => Number.isInteger(value) && value > 0);
-        const folderPaths = folderPathsRaw
-            .map((value: any) => normalizeFolderPath(String(value || '')))
-            .filter(Boolean);
+            const fileIds = itemIds
+                .map((value: any) => Number(value))
+                .filter((value: number) => Number.isInteger(value) && value > 0);
+            const folderPaths = folderPathsRaw
+                .map((value: any) => normalizeFolderPath(String(value || '')))
+                .filter(Boolean);
 
-        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
-        if (fileIds.length === 0 && folderPaths.length === 0) {
-            return reply.status(400).send({ error: 'Keine Elemente zum Kopieren übergeben.' });
-        }
-
-        const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
-
-        const tenantId = Number(session.tenant_id);
-        const customerId = Number(session.customer_id);
-        const actor: UploadActor = {
-            type: 'customer',
-            userId: null,
-            email: String(session.email_normalized || ''),
-            display: String(session.email_normalized || ''),
-            ip: String(request.ip || ''),
-            userAgent: String(request.headers['user-agent'] || ''),
-        };
-
-        let copiedCount = 0;
-        for (const itemId of fileIds) {
-            await duplicateCurrentItemVersion(db, {
-                tenantId,
-                customerId,
-                sourceItemId: itemId,
-                targetFolderPath,
-                actor,
-            });
-            copiedCount += 1;
-        }
-
-        const uniqueFolderPaths = Array.from(new Set(folderPaths)).sort((a, b) => a.length - b.length);
-        for (const sourceFolderPath of uniqueFolderPaths) {
-            const sourcePrefix = `${sourceFolderPath}/`;
-            const sourceFolders = await db('dtx_folders')
-                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
-                .orWhere((qb: any) => qb
-                    .where({ tenant_id: tenantId, customer_id: customerId })
-                    .where('folder_path', 'like', `${sourcePrefix}%`))
-                .select('folder_path');
-
-            const mappedRoot = targetFolderPath ? `${targetFolderPath}/${getBaseName(sourceFolderPath)}` : getBaseName(sourceFolderPath);
-            await ensureFolderExists(db, tenantId, customerId, mappedRoot);
-            for (const folderRow of sourceFolders) {
-                const sourcePath = normalizeFolderPath(String((folderRow as any).folder_path || ''));
-                if (!sourcePath) continue;
-                const relative = sourcePath === sourceFolderPath ? '' : sourcePath.slice(sourceFolderPath.length + 1);
-                const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
-                await ensureFolderExists(db, tenantId, customerId, destPath);
+            if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+            if (fileIds.length === 0 && folderPaths.length === 0) {
+                return reply.status(400).send({ error: 'Keine Elemente zum Kopieren übergeben.' });
             }
 
-            const sourceItems = await db('dtx_items')
-                .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
-                .orWhere((qb: any) => qb
-                    .where({ tenant_id: tenantId, customer_id: customerId })
-                    .where('folder_path', 'like', `${sourcePrefix}%`))
-                .select('id', 'folder_path');
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
 
-            for (const sourceItem of sourceItems) {
-                const sourceItemPath = normalizeFolderPath(String((sourceItem as any).folder_path || ''));
-                const relative = sourceItemPath === sourceFolderPath ? '' : sourceItemPath.slice(sourceFolderPath.length + 1);
-                const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
+            const tenantId = Number(session.tenant_id);
+            const customerId = Number(session.customer_id);
+            const actor: UploadActor = {
+                type: 'customer',
+                userId: null,
+                email: String(session.email_normalized || ''),
+                display: String(session.email_normalized || ''),
+                ip: String(request.ip || ''),
+                userAgent: String(request.headers['user-agent'] || ''),
+            };
+
+            let copiedCount = 0;
+            for (const itemId of fileIds) {
                 await duplicateCurrentItemVersion(db, {
                     tenantId,
                     customerId,
-                    sourceItemId: Number((sourceItem as any).id),
-                    targetFolderPath: destPath,
+                    sourceItemId: itemId,
+                    targetFolderPath,
                     actor,
                 });
                 copiedCount += 1;
             }
-        }
 
-        return { success: true, copiedCount };
+            const uniqueFolderPaths = Array.from(new Set(folderPaths)).sort((a, b) => a.length - b.length);
+            for (const sourceFolderPath of uniqueFolderPaths) {
+                const sourcePrefix = `${sourceFolderPath}/`;
+                const sourceFolders = await db('dtx_folders')
+                    .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
+                    .orWhere((qb: any) => qb
+                        .where({ tenant_id: tenantId, customer_id: customerId })
+                        .where('folder_path', 'like', `${sourcePrefix}%`))
+                    .select('folder_path');
+
+                const mappedRoot = targetFolderPath ? `${targetFolderPath}/${getBaseName(sourceFolderPath)}` : getBaseName(sourceFolderPath);
+                await ensureFolderExists(db, tenantId, customerId, mappedRoot);
+                for (const folderRow of sourceFolders) {
+                    const sourcePath = normalizeFolderPath(String((folderRow as any).folder_path || ''));
+                    if (!sourcePath) continue;
+                    const relative = sourcePath === sourceFolderPath ? '' : sourcePath.slice(sourceFolderPath.length + 1);
+                    const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
+                    await ensureFolderExists(db, tenantId, customerId, destPath);
+                }
+
+                const sourceItems = await db('dtx_items')
+                    .where({ tenant_id: tenantId, customer_id: customerId, folder_path: sourceFolderPath })
+                    .orWhere((qb: any) => qb
+                        .where({ tenant_id: tenantId, customer_id: customerId })
+                        .where('folder_path', 'like', `${sourcePrefix}%`))
+                    .select('id', 'folder_path');
+
+                for (const sourceItem of sourceItems) {
+                    const sourceItemPath = normalizeFolderPath(String((sourceItem as any).folder_path || ''));
+                    const relative = sourceItemPath === sourceFolderPath ? '' : sourceItemPath.slice(sourceFolderPath.length + 1);
+                    const destPath = relative ? `${mappedRoot}/${relative}` : mappedRoot;
+                    await duplicateCurrentItemVersion(db, {
+                        tenantId,
+                        customerId,
+                        sourceItemId: Number((sourceItem as any).id),
+                        targetFolderPath: destPath,
+                        actor,
+                    });
+                    copiedCount += 1;
+                }
+            }
+
+            return { success: true, copiedCount };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Kopieren fehlgeschlagen.';
+            request.log.error({ error }, 'dateiaustausch public copy failed');
+            return reply.status(400).send({ error: message });
+        }
     });
 
     fastify.get('/public/files/:itemId/versions/:versionId/download', {

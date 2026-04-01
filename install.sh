@@ -142,6 +142,25 @@ resolve_clamav_binary() {
   fi
 }
 
+ensure_zip_runtime_tool() {
+  print_step "ZIP-Werkzeug pruefen..."
+  if command -v zip >/dev/null 2>&1; then
+    print_ok "zip verfuegbar"
+    return 0
+  fi
+
+  print_warn "zip fehlt, versuche Nachinstallation..."
+  apt-get update -qq > /dev/null 2>&1
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zip > /dev/null 2>&1
+  if command -v zip >/dev/null 2>&1; then
+    print_ok "zip nachinstalliert"
+    return 0
+  fi
+
+  print_error "zip konnte nicht installiert werden."
+  exit 1
+}
+
 ensure_upload_mount_hardening() {
   print_step "Upload-Mount hardening (noexec,nodev,nosuid)..."
   mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
@@ -435,6 +454,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   ca-certificates lsb-release software-properties-common ffmpeg acl \
   build-essential python3 pkg-config clamav clamav-daemon clamav-freshclam > /dev/null 2>&1
 print_ok "Basis-Pakete inkl. Build-Toolchain und ClamAV installiert"
+ensure_zip_runtime_tool
 
 print_step "ClamAV-Dienste initialisieren..."
 systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
