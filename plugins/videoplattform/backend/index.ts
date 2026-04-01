@@ -25,6 +25,13 @@ const DEFAULT_PUBLIC_AUTH_MODE = 'magic_code';
 const MAX_VIDEO_SIZE_BYTES = 3 * 1024 * 1024 * 1024; // 3 GB
 const MAGIC_CODE_TTL_MINUTES = 15;
 const MAGIC_SESSION_TTL_HOURS = 72;
+const MAGIC_CODE_REQUEST_RATE_MAX = 8;
+const MAGIC_CODE_REQUEST_RATE_WINDOW_MS = 60 * 1000;
+const MAGIC_CODE_VERIFY_RATE_MAX = 12;
+const MAGIC_CODE_VERIFY_RATE_WINDOW_MS = 60 * 1000;
+const MAGIC_CODE_REQUEST_EMAIL_WINDOW_MS = 10 * 60 * 1000;
+const MAGIC_CODE_REQUEST_EMAIL_MAX = 3;
+const MAGIC_CODE_MAX_VERIFY_ATTEMPTS = 6;
 const execFileAsync = promisify(execFile);
 
 interface VideoRecord {
@@ -551,7 +558,7 @@ async function ensurePublicHost(request: FastifyRequest, reply: FastifyReply): P
     if (!configuredHost) return true;
     if (requestHost === configuredHost) return true;
 
-    if (config.app.nodeEnv !== 'production' && isLikelyDevelopmentHost(requestHost)) {
+    if (config.server.env !== 'production' && isLikelyDevelopmentHost(requestHost)) {
         return true;
     }
 
@@ -1756,7 +1763,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.post('/public/auth/request-code', {
-        config: { policy: { public: true } },
+        config: {
+            policy: { public: true },
+            rateLimit: {
+                max: MAGIC_CODE_REQUEST_RATE_MAX,
+                timeWindow: MAGIC_CODE_REQUEST_RATE_WINDOW_MS,
+                keyGenerator: (req: FastifyRequest) => req.ip,
+                errorResponseBuilder: () => ({
+                    success: true,
+                    message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.',
+                }),
+            },
+        },
         policy: { public: true },
     }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
@@ -1771,6 +1789,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!email || !email.includes('@')) {
             return reply.status(400).send({ error: 'Gültige E-Mail ist erforderlich.' });
         }
+        const emailHash = hashValue(email);
+        const cutoff = new Date(Date.now() - MAGIC_CODE_REQUEST_EMAIL_WINDOW_MS);
+
+        // Zusätzliche Schutzschicht gegen Mail-Spam auf dieselbe Adresse.
+        const recentForEmail = await db('vp_magic_codes')
+            .where({ email_hash: emailHash })
+            .andWhere('created_at', '>=', cutoff)
+            .count('id as count')
+            .first();
+        if (Number(recentForEmail?.count || 0) >= MAGIC_CODE_REQUEST_EMAIL_MAX) {
+            return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
+        }
 
         const resolved = await resolveCustomerByEmail(db, email);
         // Immer generische Antwort für Datenschutz.
@@ -1782,7 +1812,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const code = createMagicCode();
         const codeHash = hashValue(`${email}|${code}`);
-        const emailHash = hashValue(email);
         const expiresAt = new Date(Date.now() + MAGIC_CODE_TTL_MINUTES * 60 * 1000);
 
         await db('vp_magic_codes')
@@ -1823,7 +1852,17 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.post('/public/auth/verify-code', {
-        config: { policy: { public: true } },
+        config: {
+            policy: { public: true },
+            rateLimit: {
+                max: MAGIC_CODE_VERIFY_RATE_MAX,
+                timeWindow: MAGIC_CODE_VERIFY_RATE_WINDOW_MS,
+                keyGenerator: (req: FastifyRequest) => req.ip,
+                errorResponseBuilder: () => ({
+                    error: 'Zu viele Versuche. Bitte kurz warten und erneut probieren.',
+                }),
+            },
+        },
         policy: { public: true },
     }, async (request, reply) => {
         const ok = await ensurePublicHost(request, reply);
@@ -1841,10 +1880,17 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const emailHash = hashValue(email);
         const codeHash = hashValue(`${email}|${code}`);
+        await db('vp_magic_codes')
+            .where({ email_hash: emailHash })
+            .whereNull('used_at')
+            .andWhere('expires_at', '>=', db.fn.now())
+            .increment('attempts', 1);
+
         const row = await db('vp_magic_codes')
             .where({ email_hash: emailHash, code_hash: codeHash })
             .whereNull('used_at')
             .andWhere('expires_at', '>=', db.fn.now())
+            .andWhere('attempts', '<=', MAGIC_CODE_MAX_VERIFY_ATTEMPTS)
             .orderBy('created_at', 'desc')
             .first();
 

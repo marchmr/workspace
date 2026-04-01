@@ -3,6 +3,7 @@ import fp from 'fastify-plugin';
 import nodemailer from 'nodemailer';
 import { getDatabase } from '../core/database.js';
 import { encrypt, decrypt } from '../core/encryption.js';
+import { requirePermission } from '../core/permissions.js';
 
 interface SendMailOptions {
     to: string | string[];
@@ -298,24 +299,24 @@ async function emailPlugin(fastify: FastifyInstance): Promise<void> {
 export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
 
-    fastify.get('/email/accounts', { preHandler: [fastify.authenticate] }, async (_request, reply) => {
+    fastify.get('/email/accounts', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
         const accounts = await db('email_accounts').orderBy('name', 'asc');
         return reply.send(accounts.map((a: EmailAccount) => maskAccountSecrets(a)));
     });
 
-    fastify.get('/email/accounts/list', { preHandler: [fastify.authenticate] }, async (_request, reply) => {
+    fastify.get('/email/accounts/list', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
         const accounts = await db('email_accounts').select('id', 'name', 'from_address', 'is_default').orderBy('name', 'asc');
         return reply.send(accounts);
     });
 
-    fastify.get('/email/accounts/:id', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    fastify.get('/email/accounts/:id', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const account = await db('email_accounts').where('id', id).first();
         if (!account) return reply.status(404).send({ error: 'Konto nicht gefunden' });
         return reply.send(maskAccountSecrets(account as EmailAccount));
     });
 
-    fastify.post('/email/accounts', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    fastify.post('/email/accounts', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const body = request.body as Record<string, any>;
         if (!body.name?.trim()) return reply.status(400).send({ error: 'Name ist erforderlich' });
 
@@ -354,7 +355,7 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.status(201).send({ id, success: true });
     });
 
-    fastify.put('/email/accounts/:id', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    fastify.put('/email/accounts/:id', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as Record<string, any>;
         const existing = await db('email_accounts').where('id', id).first();
@@ -409,7 +410,7 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.send({ success: true });
     });
 
-    fastify.delete('/email/accounts/:id', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    fastify.delete('/email/accounts/:id', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const existing = await db('email_accounts').where('id', id).first();
         if (!existing) return reply.status(404).send({ error: 'Konto nicht gefunden' });
@@ -425,7 +426,7 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.send({ success: true });
     });
 
-    fastify.post('/email/accounts/:id/test', { preHandler: [fastify.authenticate] }, async (request, reply) => {
+    fastify.post('/email/accounts/:id/test', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const { to } = request.body as { to?: string };
         if (!to) return reply.status(400).send({ error: 'Empfänger-Adresse (to) ist erforderlich' });
@@ -443,7 +444,7 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         }
     });
 
-    fastify.get('/email/settings', { preHandler: [fastify.authenticate] }, async (_request, reply) => {
+    fastify.get('/email/settings', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
         const account = await db('email_accounts').orderBy('is_default', 'desc').first();
         if (!account) return reply.send({ provider: 'none' });
         return reply.send(maskAccountSecrets(account as EmailAccount));
