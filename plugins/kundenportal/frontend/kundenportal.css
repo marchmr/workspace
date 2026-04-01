@@ -487,6 +487,8 @@
     align-content: start;
     position: sticky;
     top: 12px;
+    max-height: 72vh;
+    overflow: auto;
 }
 
 .kp-page .kp-cloud-sidebar-head h4 {
@@ -580,6 +582,17 @@
     font-size: 0.82rem;
     color: #657993;
     padding: 0 2px;
+}
+
+.kp-page .btn-link {
+    border: 0;
+    background: transparent;
+    color: var(--primary);
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .kp-page .kp-drive-table thead th {

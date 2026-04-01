@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { createReadStream } from 'fs';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'fs/promises';
 import path from 'path';
 import unzipper from 'unzipper';
 import { config } from '../core/config.js';
@@ -309,6 +310,76 @@ export async function validateUploadedFile(
     };
 }
 
+export async function validateUploadedFileFromPath(
+    fileName: string,
+    mimeType: string,
+    filePath: string,
+    options: ValidationOptions,
+): Promise<ValidatedFile> {
+    const stats = await stat(filePath);
+    if (!stats.isFile() || stats.size <= 0) {
+        throw new Error('Leere Datei ist nicht erlaubt.');
+    }
+    if (stats.size > options.maxBytes) {
+        throw new Error(`Datei ist zu groß (max. ${Math.round(options.maxBytes / (1024 * 1024))} MB).`);
+    }
+
+    const sanitizedFileName = sanitizeFileName(fileName);
+    const extension = path.extname(sanitizedFileName).toLowerCase();
+    const allowedType = resolveAllowedType(extension);
+
+    if (!allowedType) {
+        throw new Error(`Dateiendung '${extension || 'unbekannt'}' ist nicht erlaubt.`);
+    }
+
+    if (allowedType.kind === 'zip' && !options.allowZip) {
+        throw new Error('ZIP-Uploads sind derzeit deaktiviert.');
+    }
+
+    const normalizedMime = String(mimeType || '').toLowerCase();
+    if (!allowedType.mimeTypes.includes(normalizedMime)) {
+        throw new Error(`MIME-Typ '${normalizedMime || 'unbekannt'}' ist für ${extension} nicht erlaubt.`);
+    }
+
+    const sha256 = createHash('sha256');
+    let signatureProbe = Buffer.alloc(0);
+    for await (const chunk of createReadStream(filePath, { highWaterMark: 64 * 1024 })) {
+        const bufChunk = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        sha256.update(bufChunk);
+        if (signatureProbe.length < 256) {
+            const remaining = 256 - signatureProbe.length;
+            signatureProbe = Buffer.concat([signatureProbe, bufChunk.subarray(0, remaining)]);
+        }
+    }
+
+    const detectedMimeType = detectMimeBySignature(signatureProbe);
+    if (detectedMimeType && !allowedType.signatureMimes.includes(detectedMimeType)) {
+        throw new Error(`Dateiinhalt passt nicht zu Dateiendung (${extension}).`);
+    }
+
+    if (!detectedMimeType && options.strictSignature && allowedType.kind !== 'document') {
+        throw new Error('Dateisignatur konnte nicht eindeutig verifiziert werden.');
+    }
+
+    if (allowedType.kind === 'zip') {
+        const zipBuffer = await readFile(filePath);
+        const zipInfo = await validateZipSafety(zipBuffer);
+        if (zipInfo.blocked) {
+            throw new Error(zipInfo.reason || 'ZIP-Datei wurde aus Sicherheitsgründen blockiert.');
+        }
+    }
+
+    return {
+        sanitizedFileName,
+        extension,
+        mimeType: normalizedMime,
+        detectedMimeType,
+        kind: allowedType.kind,
+        sha256: sha256.digest('hex'),
+        sizeBytes: stats.size,
+    };
+}
+
 export async function scanBufferForMalware(buffer: Buffer, fileName: string): Promise<MalwareScanResult> {
     if (!config.fileSecurity.clamav.enabled) {
         return { status: 'skipped', engine: 'clamav', signature: null, detail: 'ClamAV disabled' };
@@ -396,6 +467,84 @@ export async function scanBufferForMalware(buffer: Buffer, fileName: string): Pr
         if (tmpDir) {
             await rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
         }
+    }
+}
+
+export async function scanStoredFileForMalware(filePath: string): Promise<MalwareScanResult> {
+    if (!config.fileSecurity.clamav.enabled) {
+        return { status: 'skipped', engine: 'clamav', signature: null, detail: 'ClamAV disabled' };
+    }
+
+    try {
+        const { stdout, stderr } = await execFileAsync(
+            config.fileSecurity.clamav.binary,
+            ['--no-summary', '--stdout', filePath],
+            { timeout: config.fileSecurity.clamav.timeoutMs, maxBuffer: 1024 * 1024 },
+        );
+
+        const output = `${stdout || ''}\n${stderr || ''}`.trim();
+        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
+
+        if (foundLine) {
+            const signature = foundLine
+                .replace(/^.*?:\s*/, '')
+                .replace(/\s+FOUND\s*$/i, '')
+                .trim() || 'Malware';
+
+            return {
+                status: 'infected',
+                engine: 'clamav',
+                signature,
+                detail: foundLine,
+            };
+        }
+
+        return {
+            status: 'clean',
+            engine: 'clamav',
+            signature: null,
+            detail: output || 'OK',
+        };
+    } catch (error: any) {
+        const output = `${error?.stdout || ''}\n${error?.stderr || ''}`.trim();
+        const foundLine = output.split(/\r?\n/).find((line) => line.includes('FOUND')) || '';
+
+        if (foundLine || error?.code === 1) {
+            const signature = foundLine
+                .replace(/^.*?:\s*/, '')
+                .replace(/\s+FOUND\s*$/i, '')
+                .trim() || 'Malware';
+            return {
+                status: 'infected',
+                engine: 'clamav',
+                signature,
+                detail: foundLine || 'Malware detected',
+            };
+        }
+
+        if (error?.code === 'ENOENT') {
+            if (config.fileSecurity.clamav.failClosed) {
+                return {
+                    status: 'error',
+                    engine: 'clamav',
+                    signature: null,
+                    detail: 'ClamAV binary nicht gefunden (fail-closed aktiv).',
+                };
+            }
+            return {
+                status: 'skipped',
+                engine: 'clamav',
+                signature: null,
+                detail: 'ClamAV binary nicht gefunden.',
+            };
+        }
+
+        return {
+            status: 'error',
+            engine: 'clamav',
+            signature: null,
+            detail: output || String(error?.message || 'Scan fehlgeschlagen'),
+        };
     }
 }
 

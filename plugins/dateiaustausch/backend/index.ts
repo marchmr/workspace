@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
-import { createReadStream } from 'fs';
+import { createReadStream, createWriteStream } from 'fs';
+import { once } from 'events';
 import type { FastifyInstance } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -10,13 +11,12 @@ import {
     buildSafeStoragePath,
     normalizeFolderPath,
     sanitizeFileName,
-    scanBufferForMalware,
-    validateUploadedFile,
+    scanStoredFileForMalware,
+    validateUploadedFileFromPath,
 } from '../../../backend/src/services/fileSecurity.js';
 
 const PLUGIN_ID = 'dateiaustausch';
 const STORAGE_ROOT = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID);
-const MAX_COMMENT_LENGTH = 2000;
 
 type WorkflowStatus = 'pending' | 'clean' | 'rejected' | 'reviewed';
 
@@ -57,11 +57,40 @@ function buildStorageKey(tenantId: number, zone: 'quarantine' | 'clean' | 'rejec
     return `${tenantId}/${zone}/${year}/${month}/${randomUUID().replace(/-/g, '')}${ext}`;
 }
 
-async function saveToStorage(storageKey: string, buffer: Buffer): Promise<void> {
+async function saveTempFileToStorage(storageKey: string, sourcePath: string): Promise<void> {
     const absPath = buildSafeStoragePath(STORAGE_ROOT, storageKey);
     await fs.mkdir(path.dirname(absPath), { recursive: true, mode: 0o700 });
-    await fs.writeFile(absPath, buffer, { mode: 0o600 });
+    await fs.copyFile(sourcePath, absPath);
     await fs.chmod(absPath, 0o600).catch(() => undefined);
+}
+
+async function streamUploadPartToTempFile(filePart: any, maxBytes: number): Promise<{ tempDir: string; tempPath: string }> {
+    const tempDir = path.join(STORAGE_ROOT, 'tmp', randomUUID());
+    await fs.mkdir(tempDir, { recursive: true, mode: 0o700 });
+
+    const tempPath = path.join(tempDir, 'upload.bin');
+    const output = createWriteStream(tempPath, { mode: 0o600 });
+    let bytes = 0;
+
+    try {
+        for await (const chunk of filePart.file) {
+            const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += part.length;
+            if (bytes > maxBytes) {
+                throw new Error(`Datei ist zu groß (max. ${Math.round(maxBytes / (1024 * 1024))} MB).`);
+            }
+            if (!output.write(part)) {
+                await once(output, 'drain');
+            }
+        }
+        output.end();
+        await once(output, 'finish');
+        return { tempDir, tempPath };
+    } catch (error) {
+        output.destroy();
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+        throw error;
+    }
 }
 
 function getFieldValue(fields: Record<string, any> | undefined, key: string): string | undefined {
@@ -139,26 +168,27 @@ function resolvePublicSessionToken(request: any, fileFields?: Record<string, any
     ).trim();
 }
 
-function parseScanMeta(value: unknown): any | null {
-    if (!value) return null;
-    try {
-        return JSON.parse(String(value));
-    } catch {
-        return { raw: String(value) };
-    }
-}
-
 async function loadItemWithDetails(db: any, tenantId: number, itemId: number): Promise<any | null> {
-    const item = await db('dtx_items').where({ id: itemId, tenant_id: tenantId }).first();
+    const item = await db('dtx_items as i')
+        .leftJoin('dtx_versions as v', 'v.id', 'i.current_version_id')
+        .where('i.id', itemId)
+        .andWhere('i.tenant_id', tenantId)
+        .select(
+            'i.id',
+            'i.customer_id',
+            'i.folder_path',
+            'i.display_name',
+            'i.workflow_status',
+            'i.current_version_id',
+            'i.last_activity_at',
+            'i.created_at',
+            'i.updated_at',
+            'v.version_no as current_version_no',
+            'v.scan_status as current_scan_status',
+            'v.created_at as current_version_created_at',
+        )
+        .first();
     if (!item) return null;
-
-    const versions = await db('dtx_versions')
-        .where({ item_id: itemId, tenant_id: tenantId })
-        .orderBy('version_no', 'desc');
-
-    const comments = await db('dtx_comments')
-        .where({ item_id: itemId, tenant_id: tenantId })
-        .orderBy('created_at', 'asc');
 
     return {
         id: Number(item.id),
@@ -167,58 +197,13 @@ async function loadItemWithDetails(db: any, tenantId: number, itemId: number): P
         displayName: String(item.display_name || ''),
         workflowStatus: item.workflow_status,
         currentVersionId: item.current_version_id ? Number(item.current_version_id) : null,
+        currentVersionNo: item.current_version_no ? Number(item.current_version_no) : null,
+        currentScanStatus: item.current_scan_status || null,
+        currentVersionCreatedAt: toIso(item.current_version_created_at),
         lastActivityAt: toIso(item.last_activity_at),
         createdAt: toIso(item.created_at),
         updatedAt: toIso(item.updated_at),
-        versions: versions.map((version: any) => ({
-            id: Number(version.id),
-            versionNo: Number(version.version_no),
-            storageZone: version.storage_zone,
-            originalFileName: version.original_file_name,
-            mimeType: version.mime_type,
-            detectedMimeType: version.detected_mime_type || null,
-            sizeBytes: Number(version.size_bytes || 0),
-            sha256: version.sha256_hash,
-            scanStatus: version.scan_status,
-            scanEngine: version.scan_engine || null,
-            scanSignature: version.scan_signature || null,
-            scanMeta: parseScanMeta(version.scan_meta),
-            uploadedByType: version.uploaded_by_type,
-            uploadedByUserId: version.uploaded_by_user_id ? Number(version.uploaded_by_user_id) : null,
-            uploadedByEmail: version.uploaded_by_email || null,
-            createdAt: toIso(version.created_at),
-        })),
-        comments: comments.map((comment: any) => ({
-            id: Number(comment.id),
-            versionId: comment.version_id ? Number(comment.version_id) : null,
-            authorType: comment.author_type,
-            authorDisplay: comment.author_display || null,
-            message: comment.message,
-            createdAt: toIso(comment.created_at),
-        })),
     };
-}
-
-async function createComment(db: any, args: {
-    tenantId: number;
-    itemId: number;
-    versionId?: number | null;
-    actor: UploadActor;
-    message: string;
-}): Promise<void> {
-    const trimmed = String(args.message || '').trim();
-    if (!trimmed) return;
-
-    await db('dtx_comments').insert({
-        item_id: args.itemId,
-        version_id: args.versionId || null,
-        tenant_id: args.tenantId,
-        author_type: args.actor.type,
-        author_user_id: args.actor.userId,
-        author_display: args.actor.display || args.actor.email || null,
-        message: trimmed.slice(0, MAX_COMMENT_LENGTH),
-        created_at: new Date(),
-    });
 }
 
 async function saveUploadVersion(db: any, args: {
@@ -227,14 +212,14 @@ async function saveUploadVersion(db: any, args: {
     itemId: number;
     fileName: string;
     mimeType: string;
-    buffer: Buffer;
+    tempPath: string;
     folderPath: string;
     actor: UploadActor;
 }): Promise<{ itemId: number; versionId: number; versionNo: number; workflowStatus: WorkflowStatus; scanStatus: string; storageKey: string; storedFileName: string }> {
-    const validated = await validateUploadedFile(
+    const validated = await validateUploadedFileFromPath(
         args.fileName,
         args.mimeType,
-        args.buffer,
+        args.tempPath,
         {
             maxBytes: Math.max(1, config.fileSecurity.maxUploadSizeMb) * 1024 * 1024,
             allowZip: config.fileSecurity.allowZipUploads,
@@ -243,7 +228,7 @@ async function saveUploadVersion(db: any, args: {
     );
 
     const storageKey = buildStorageKey(args.tenantId, 'quarantine', validated.sanitizedFileName);
-    await saveToStorage(storageKey, args.buffer);
+    await saveTempFileToStorage(storageKey, args.tempPath);
 
     const existingItem = await db('dtx_items')
         .where({ id: args.itemId, tenant_id: args.tenantId, customer_id: args.customerId })
@@ -310,12 +295,11 @@ async function saveUploadVersion(db: any, args: {
 async function processVersionMalwareScan(
     fastify: FastifyInstance,
     db: any,
-    args: { tenantId: number; itemId: number; versionId: number; storageKey: string; fileName: string },
+    args: { tenantId: number; itemId: number; versionId: number; storageKey: string },
 ): Promise<void> {
     try {
         const absPath = buildSafeStoragePath(STORAGE_ROOT, args.storageKey);
-        const buffer = await fs.readFile(absPath);
-        const scanResult = await scanBufferForMalware(buffer, args.fileName);
+        const scanResult = await scanStoredFileForMalware(absPath);
 
         let nextScanStatus: 'clean' | 'infected' | 'error' | 'skipped' = scanResult.status;
         if (scanResult.status === 'error' && config.fileSecurity.clamav.failClosed) {
@@ -380,6 +364,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     await fs.mkdir(STORAGE_ROOT, { recursive: true, mode: 0o700 });
     await fs.chmod(STORAGE_ROOT, 0o700).catch(() => undefined);
     const hasCrmCustomersTable = await db.schema.hasTable('crm_customers').catch(() => false);
+    let scanQueue: Promise<void> = Promise.resolve();
 
     fastify.get('/public/files', {
         exposeHeadRoute: false,
@@ -437,7 +422,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         const sessionToken = resolvePublicSessionToken(request, filePart.fields);
         const folderPath = normalizeFolderPath(String(getFieldValue(filePart.fields, 'folderPath') || ''));
-        const comment = String(getFieldValue(filePart.fields, 'comment') || '').trim();
         const rawItemId = Number(getFieldValue(filePart.fields, 'itemId') || 0);
 
         if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
@@ -447,7 +431,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const uploadBuffer = await filePart.toBuffer();
+        const maxUploadBytes = Math.max(1, config.fileSecurity.maxUploadSizeMb) * 1024 * 1024;
+        const tempUpload = await streamUploadPartToTempFile(filePart, maxUploadBytes);
         const actor: UploadActor = {
             type: 'customer',
             userId: null,
@@ -480,27 +465,20 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 itemId,
                 fileName: String(filePart.filename || 'upload'),
                 mimeType: String(filePart.mimetype || '').toLowerCase(),
-                buffer: uploadBuffer,
+                tempPath: tempUpload.tempPath,
                 folderPath,
                 actor,
             });
-            void processVersionMalwareScan(fastify, db, {
-                tenantId: Number(session.tenant_id),
-                itemId,
-                versionId: result.versionId,
-                storageKey: result.storageKey,
-                fileName: result.storedFileName,
-            });
-
-            if (comment) {
-                await createComment(db, {
+            scanQueue = scanQueue
+                .then(() => processVersionMalwareScan(fastify, db, {
                     tenantId: Number(session.tenant_id),
                     itemId,
                     versionId: result.versionId,
-                    actor,
-                    message: comment,
+                    storageKey: result.storageKey,
+                }))
+                .catch((queueError) => {
+                    fastify.log.error({ queueError }, 'dateiaustausch scan queue failed');
                 });
-            }
 
             try {
                 const users = await getTenantUserIds(db, Number(session.tenant_id));
@@ -540,58 +518,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             return reply.status(201).send({
                 success: true,
                 itemId,
-                versionId: result.versionId,
-                versionNo: result.versionNo,
                 workflowStatus: result.workflowStatus,
                 scanStatus: result.scanStatus,
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Upload fehlgeschlagen.';
             return reply.status(400).send({ error: message });
+        } finally {
+            await fs.rm(tempUpload.tempDir, { recursive: true, force: true }).catch(() => undefined);
         }
-    });
-
-    fastify.post('/public/files/:itemId/comments', {
-        config: { policy: { public: true }, rateLimit: { max: 12, timeWindow: '1 minute' } },
-        policy: { public: true },
-    }, async (request, reply) => {
-        const itemId = Number((request.params as any)?.itemId || 0);
-        const sessionToken = resolvePublicSessionToken(request);
-        const message = String((request.body as any)?.message || '').trim();
-
-        if (!Number.isInteger(itemId) || itemId <= 0) return reply.status(400).send({ error: 'Ungültige Datei-ID.' });
-        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
-        if (!message) return reply.status(400).send({ error: 'Kommentar ist erforderlich.' });
-
-        const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
-
-        const item = await db('dtx_items')
-            .where({ id: itemId, tenant_id: Number(session.tenant_id), customer_id: Number(session.customer_id) })
-            .first();
-
-        if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
-
-        await createComment(db, {
-            tenantId: Number(session.tenant_id),
-            itemId,
-            versionId: null,
-            actor: {
-                type: 'customer',
-                userId: null,
-                email: String(session.email_normalized || ''),
-                display: String(session.email_normalized || ''),
-                ip: String(request.ip || ''),
-                userAgent: String(request.headers['user-agent'] || ''),
-            },
-            message,
-        });
-
-        await db('dtx_items')
-            .where({ id: itemId, tenant_id: Number(session.tenant_id) })
-            .update({ last_activity_at: new Date(), updated_at: new Date() });
-
-        return { success: true };
     });
 
     fastify.delete('/public/files/:itemId', {
@@ -749,83 +684,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const item = await loadItemWithDetails(db, tenantId, itemId);
         if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
         return item;
-    });
-
-    fastify.patch('/items/:itemId/status', { preHandler: [requirePermission('dateiaustausch.review')] }, async (request, reply) => {
-        const tenantId = request.user.tenantId;
-        const itemId = Number((request.params as any)?.itemId || 0);
-        const status = normalizeWorkflowStatus((request.body as any)?.status);
-
-        if (!Number.isInteger(itemId) || itemId <= 0) return reply.status(400).send({ error: 'Ungültige Datei-ID.' });
-        if (!status) return reply.status(400).send({ error: 'Ungültiger Status.' });
-
-        const item = await db('dtx_items').where({ id: itemId, tenant_id: tenantId }).first();
-        if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
-
-        if ((status === 'clean' || status === 'reviewed') && item.current_version_id) {
-            const currentVersion = await db('dtx_versions')
-                .where({ id: item.current_version_id, tenant_id: tenantId, item_id: itemId })
-                .first('scan_status');
-            if (String(currentVersion?.scan_status || '') !== 'clean') {
-                return reply.status(409).send({ error: 'Freigabe erst nach erfolgreichem Malware-Scan möglich.' });
-            }
-        }
-
-        await db('dtx_items')
-            .where({ id: itemId, tenant_id: tenantId })
-            .update({ workflow_status: status, last_activity_at: new Date(), updated_at: new Date() });
-
-        if (item.current_version_id) {
-            let zone: 'quarantine' | 'clean' | 'rejected' = 'quarantine';
-            if (status === 'clean' || status === 'reviewed') zone = 'clean';
-            if (status === 'rejected') zone = 'rejected';
-            await db('dtx_versions')
-                .where({ id: item.current_version_id, tenant_id: tenantId })
-                .update({ storage_zone: zone });
-        }
-
-        await fastify.audit.log({
-            action: 'dateiaustausch.item.status_changed',
-            category: 'plugin',
-            pluginId: PLUGIN_ID,
-            entityType: 'dtx_item',
-            entityId: String(itemId),
-            previousState: { workflowStatus: item.workflow_status },
-            newState: { workflowStatus: status },
-        }, request);
-
-        return { success: true };
-    });
-
-    fastify.post('/items/:itemId/comments', { preHandler: [requirePermission('dateiaustausch.comment')] }, async (request, reply) => {
-        const tenantId = request.user.tenantId;
-        const itemId = Number((request.params as any)?.itemId || 0);
-        const message = String((request.body as any)?.message || '').trim();
-
-        if (!Number.isInteger(itemId) || itemId <= 0) return reply.status(400).send({ error: 'Ungültige Datei-ID.' });
-        if (!message) return reply.status(400).send({ error: 'Kommentar ist erforderlich.' });
-
-        const item = await db('dtx_items').where({ id: itemId, tenant_id: tenantId }).first();
-        if (!item) return reply.status(404).send({ error: 'Datei nicht gefunden.' });
-
-        await createComment(db, {
-            tenantId,
-            itemId,
-            versionId: null,
-            actor: {
-                type: 'admin',
-                userId: request.user.userId,
-                email: request.user.username,
-                display: request.user.username,
-                ip: String(request.ip || ''),
-                userAgent: String(request.headers['user-agent'] || ''),
-            },
-            message,
-        });
-
-        await db('dtx_items').where({ id: itemId, tenant_id: tenantId }).update({ last_activity_at: new Date(), updated_at: new Date() });
-
-        return { success: true };
     });
 
     fastify.get('/items/:itemId/versions/:versionId/download', { preHandler: [requirePermission('dateiaustausch.review')] }, async (request, reply) => {

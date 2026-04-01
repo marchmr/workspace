@@ -140,14 +140,14 @@ ensure_upload_mount_hardening() {
     rsync -a "$APP_DIR/uploads/" "$UPLOADS_DATA_DIR/" 2>/dev/null || true
   fi
 
-  if ! mountpoint -q "$APP_DIR/uploads"; then
-    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
-  fi
+  # WICHTIG: /etc/fstab wird bewusst NICHT angefasst.
+  # Der Mount gilt nur fuer die laufende Session (Runtime-Hardening).
 
   if ! mountpoint -q "$APP_DIR/uploads"; then
-    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+    mount "$APP_DIR/uploads" >/dev/null 2>&1 || mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
   fi
-  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" 2>/dev/null || true
+
+  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" >/dev/null 2>&1 || true
 
   print_ok "Upload-Pfad isoliert: $APP_DIR/uploads"
 }

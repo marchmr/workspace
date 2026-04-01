@@ -46,6 +46,16 @@ REQUIRED_APT_PACKAGES=(
   clamav-daemon
 )
 
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --preserve-status "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
+
 upsert_env_file() {
   local env_file="$1"
   local key="$2"
@@ -175,14 +185,14 @@ ensure_upload_mount_hardening() {
     rsync -a "$APP_DIR/uploads/" "$UPLOADS_DATA_DIR/" 2>/dev/null || true
   fi
 
-  if ! mountpoint -q "$APP_DIR/uploads"; then
-    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
-  fi
+  # WICHTIG: /etc/fstab wird bewusst NICHT angefasst.
+  # Der Mount gilt nur fuer die laufende Session (Runtime-Hardening).
 
   if ! mountpoint -q "$APP_DIR/uploads"; then
-    mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
+    mount "$APP_DIR/uploads" >/dev/null 2>&1 || mount --bind "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
   fi
-  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" 2>/dev/null || true
+
+  mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" >/dev/null 2>&1 || true
 }
 
 configure_clamav_isolation() {
@@ -403,9 +413,33 @@ ensure_required_apt_packages() {
 ensure_clamav_services() {
   if dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed"; then
     systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-    systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
+    # freshclam kann je nach Mirror langsam/blockierend sein -> nur try-restart
+    run_with_timeout 20s systemctl try-restart clamav-daemon >/dev/null 2>&1 || true
+    run_with_timeout 20s systemctl try-restart clamav-freshclam >/dev/null 2>&1 || true
     echo -e "  ${GREEN}[OK]${NC} ClamAV-Dienste aktiv"
   fi
+}
+
+attempt_service_restart_with_recovery() {
+  local service_name="$1"
+  local dropin_dir="/etc/systemd/system/${service_name}.service.d"
+  local emergency_dropin="${dropin_dir}/zz-emergency-recovery.conf"
+
+  systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
+  if run_with_timeout 35s systemctl restart "$service_name"; then
+    return 0
+  fi
+
+  echo -e "  ${YELLOW}[!!]${NC} Restart fehlgeschlagen, starte Auto-Recovery..."
+  mkdir -p "$dropin_dir"
+  cat > "$emergency_dropin" <<EOF
+[Service]
+MemoryDenyWriteExecute=false
+NoNewPrivileges=false
+EOF
+  systemctl daemon-reload
+  systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
+  run_with_timeout 35s systemctl restart "$service_name"
 }
 
 echo -e "\n${CYAN}> System-Abhaengigkeiten pruefen...${NC}"
@@ -749,7 +783,7 @@ ensure_clamav_services
 # Service neu starten
 # ============================================
 echo -e "\n${CYAN}> Service neu starten...${NC}"
-systemctl restart "$SERVICE"
+attempt_service_restart_with_recovery "$SERVICE"
 sleep 2
 
 if systemctl is-active --quiet "$SERVICE"; then
