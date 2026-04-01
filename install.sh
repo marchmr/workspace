@@ -161,6 +161,27 @@ ensure_zip_runtime_tool() {
   exit 1
 }
 
+ensure_backend_archiver_dependency() {
+  local backend_dir="$APP_DIR/backend"
+  if [ ! -d "$backend_dir" ]; then
+    print_warn "Backend-Verzeichnis nicht gefunden, archiver-Check uebersprungen"
+    return 0
+  fi
+
+  if sudo -u "$APP_USER" sh -lc "cd \"$backend_dir\" && node -e \"require.resolve('archiver')\" >/dev/null 2>&1"; then
+    print_ok "archiver im Backend verfuegbar"
+    return 0
+  fi
+
+  print_warn "archiver fehlt im Backend, installiere Nachruestung..."
+  if sudo -u "$APP_USER" sh -lc "cd \"$backend_dir\" && npm install archiver@^7.0.1 --silent --no-audit --save"; then
+    print_ok "archiver nachinstalliert"
+  else
+    print_error "archiver konnte nicht installiert werden."
+    exit 1
+  fi
+}
+
 ensure_upload_mount_hardening() {
   print_step "Upload-Mount hardening (noexec,nodev,nosuid)..."
   mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
@@ -568,6 +589,7 @@ print_ok "Backup-Verzeichnisse vorbereitet"
 print_step "Backend Dependencies installieren..."
 cd "$APP_DIR/backend"
 npm ci --include=dev --silent --no-audit 2>/dev/null || npm install --include=dev --silent --no-audit 2>/dev/null
+ensure_backend_archiver_dependency
 print_ok "Backend Dependencies installiert"
 
 # Sicherstellen, dass lokale Bin-Skripte ausfuehrbar sind

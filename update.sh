@@ -445,6 +445,27 @@ ensure_zip_runtime_tool() {
   echo -e "  ${GREEN}[OK]${NC} zip ist verfuegbar"
 }
 
+ensure_backend_archiver_dependency() {
+  local backend_dir="$APP_DIR/backend"
+  if [ ! -d "$backend_dir" ]; then
+    echo -e "  ${YELLOW}[!!]${NC} Backend-Verzeichnis nicht gefunden, archiver-Check uebersprungen"
+    return 0
+  fi
+
+  if sudo -u "$APP_USER" sh -lc "cd \"$backend_dir\" && node -e \"require.resolve('archiver')\" >/dev/null 2>&1"; then
+    echo -e "  ${GREEN}[OK]${NC} archiver im Backend verfuegbar"
+    return 0
+  fi
+
+  echo -e "  ${YELLOW}[!!]${NC} archiver fehlt im Backend, installiere Nachruestung..."
+  if sudo -u "$APP_USER" sh -lc "cd \"$backend_dir\" && npm install archiver@^7.0.1 --silent --no-audit --save"; then
+    echo -e "  ${GREEN}[OK]${NC} archiver nachinstalliert"
+  else
+    echo -e "  ${RED}[FAIL]${NC} archiver konnte nicht installiert werden."
+    exit 1
+  fi
+}
+
 ensure_clamav_services() {
   if dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed"; then
     systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
@@ -748,6 +769,7 @@ fi
 echo -e "\n${CYAN}> Backend Dependencies...${NC}"
 cd "$APP_DIR/backend"
 sudo -u "$APP_USER" npm ci --include=dev --silent --no-audit 2>/dev/null || sudo -u "$APP_USER" npm install --include=dev --silent --no-audit 2>/dev/null
+ensure_backend_archiver_dependency
 if [ -d "$APP_DIR/backend/node_modules/.bin" ]; then
   find "$APP_DIR/backend/node_modules/.bin" -type f -exec chmod u+x {} \; 2>/dev/null || true
 fi
