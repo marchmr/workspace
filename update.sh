@@ -117,6 +117,75 @@ ensure_subdomain_automation_defaults() {
   fi
 }
 
+resolve_workspace_host_from_nginx() {
+  local nginx_site="/etc/nginx/sites-available/mike-workspace"
+  if [ ! -f "$nginx_site" ]; then
+    echo ""
+    return 0
+  fi
+
+  local server_name_line
+  server_name_line="$(grep -E '^[[:space:]]*server_name[[:space:]]+' "$nginx_site" | head -n1 || true)"
+  server_name_line="${server_name_line#*server_name }"
+  server_name_line="${server_name_line%;*}"
+  for host in $server_name_line; do
+    if [ -n "$host" ] && [ "$host" != "_" ]; then
+      echo "$host"
+      return 0
+    fi
+  done
+  echo ""
+}
+
+resolve_public_host_from_settings() {
+  local env_file="$APP_DIR/backend/.env"
+  if [ ! -f "$env_file" ]; then
+    echo ""
+    return 0
+  fi
+
+  local db_name db_user db_pass db_host db_port
+  db_name="$(grep '^DB_NAME=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  db_user="$(grep '^DB_USER=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  db_pass="$(grep '^DB_PASSWORD=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  db_host="$(grep '^DB_HOST=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+  db_port="$(grep '^DB_PORT=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
+
+  if [ -z "$db_name" ] || [ -z "$db_user" ]; then
+    echo ""
+    return 0
+  fi
+
+  local mysql_host="${db_host:-localhost}"
+  local mysql_port="${db_port:-3306}"
+
+  local public_host
+  public_host="$(mysql -u "$db_user" -p"$db_pass" -h "$mysql_host" -P "$mysql_port" "$db_name" -N -e \
+    "SELECT value_encrypted FROM settings WHERE tenant_id IS NULL AND \`key\` IN ('kundenportal.public_subdomain','videoplattform.public_subdomain') AND value_encrypted IS NOT NULL AND value_encrypted <> '' ORDER BY FIELD(\`key\`,'kundenportal.public_subdomain','videoplattform.public_subdomain') LIMIT 1;" 2>/dev/null || true)"
+
+  echo "${public_host:-}" | tr '[:upper:]' '[:lower:]' | sed 's#^https\?://##; s#/.*$##; s/[[:space:]]//g'
+}
+
+write_frontend_host_routing_env() {
+  local workspace_host public_host
+  workspace_host="$(resolve_workspace_host_from_nginx)"
+  public_host="$(resolve_public_host_from_settings)"
+
+  local env_prod="$APP_DIR/frontend/.env.production"
+  local env_tmp="${env_prod}.tmp.$$"
+  {
+    echo "VITE_WORKSPACE_HOSTS=${workspace_host}"
+    echo "VITE_PUBLIC_HOSTS=${public_host}"
+  } > "$env_tmp"
+  mv "$env_tmp" "$env_prod"
+  chown "$APP_USER":"$APP_USER" "$env_prod" 2>/dev/null || true
+  chmod 640 "$env_prod" 2>/dev/null || true
+
+  echo -e "  ${GREEN}[OK]${NC} frontend/.env.production aktualisiert"
+  echo -e "      VITE_WORKSPACE_HOSTS=${workspace_host:-<leer>}"
+  echo -e "      VITE_PUBLIC_HOSTS=${public_host:-<leer>}"
+}
+
 echo ""
 echo -e "${BOLD}MIKE WorkSpace - Update${NC}"
 echo -e "================================================"
@@ -428,6 +497,11 @@ echo -e "  ${GREEN}[OK]${NC} Dependencies installiert"
 if [ -f "$APP_DIR/frontend/package.json" ] && grep -q '"build"' "$APP_DIR/frontend/package.json" 2>/dev/null; then
   if [ -d "$APP_DIR/frontend/node_modules" ] || [ -f "$APP_DIR/frontend/package-lock.json" ]; then
     echo -e "\n${CYAN}> Frontend Build...${NC}"
+    write_frontend_host_routing_env
+    mkdir -p "$APP_DIR/frontend/dist"
+    chown -R "$APP_USER":"$APP_USER" "$APP_DIR/frontend/dist" "$APP_DIR/frontend/src" 2>/dev/null || true
+    find "$APP_DIR/frontend/dist" -type f -exec chmod u+rw {} \; 2>/dev/null || true
+    find "$APP_DIR/frontend/dist" -type d -exec chmod u+rwx {} \; 2>/dev/null || true
     cd "$APP_DIR/frontend"
     sudo -u "$APP_USER" npm ci --silent 2>/dev/null || sudo -u "$APP_USER" npm install --silent 2>/dev/null
     if ! sudo -u "$APP_USER" npm run build --silent; then
