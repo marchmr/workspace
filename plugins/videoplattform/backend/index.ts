@@ -242,12 +242,23 @@ type StoredUploadResult = {
     sizeBytes: number;
     transcoded: boolean;
 };
+const streamTranscodeLocks = new Map<number, Promise<void>>();
+
+function isLikelyBrowserPlayableFormat(fileName: string, mimeType: string): boolean {
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    const mime = String(mimeType || '').toLowerCase();
+    if (mime === 'video/mp4' || ext === '.mp4') return true;
+    if (mime === 'video/webm' || ext === '.webm') return true;
+    if (mime === 'video/ogg' || ext === '.ogv' || ext === '.ogg') return true;
+    return false;
+}
 
 async function storeUploadedVideoWithFallback(args: {
     tenantId: number;
     originalFileName: string;
     originalMimeType: string;
     uploadBuffer: Buffer;
+    requireTranscodeForCompatibility: boolean;
     logWarn: (message: string) => void;
 }): Promise<StoredUploadResult> {
     const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(args.tenantId));
@@ -277,6 +288,10 @@ async function storeUploadedVideoWithFallback(args: {
         };
     } catch (error: any) {
         args.logWarn(`Video-Konvertierung fehlgeschlagen, speichere Originaldatei. ${error?.message || 'Unbekannter Fehler'}`);
+        if (args.requireTranscodeForCompatibility) {
+            await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
+            throw new Error('Die Datei wurde hochgeladen, kann aber ohne ffmpeg-Konvertierung nicht zuverlässig abgespielt werden. Bitte ffmpeg installieren und erneut hochladen.');
+        }
         const fallbackName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(args.originalFileName || 'video')}`;
         const fallbackRelPath = path.join(String(args.tenantId), fallbackName);
         const fallbackAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, fallbackRelPath);
@@ -295,6 +310,64 @@ async function storeUploadedVideoWithFallback(args: {
     } finally {
         await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
     }
+}
+
+async function ensurePlayableUploadForStreaming(db: any, video: VideoRecord, logWarn: (msg: string) => void): Promise<VideoRecord> {
+    if (video.source_type !== 'upload' || !video.file_path) return video;
+
+    const currentPath = String(video.file_path || '');
+    const currentExt = path.extname(currentPath).toLowerCase();
+    const currentMime = String(video.mime_type || '').toLowerCase();
+    const alreadyPlayable = currentExt === '.mp4' && currentMime === 'video/mp4';
+    if (alreadyPlayable) return video;
+
+    const lockKey = Number(video.id);
+    let job = streamTranscodeLocks.get(lockKey);
+
+    if (!job) {
+        job = (async () => {
+            const normalizedPath = normalizeLocalVideoPath(currentPath);
+            const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, normalizedPath);
+            const uploadsRoot = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, String(video.tenant_id));
+            const playableName = toPlayableMp4Name(video.file_name || path.basename(currentPath) || `video-${video.id}.mp4`);
+            const convertedName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(playableName)}`;
+            const convertedRelPath = path.join(String(video.tenant_id), convertedName);
+            const convertedAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, convertedRelPath);
+
+            try {
+                await fs.mkdir(uploadsRoot, { recursive: true });
+                await fs.access(absPath);
+                await transcodeToMp4(absPath, convertedAbsPath);
+                const convertedStat = await fs.stat(convertedAbsPath);
+
+                await db('vp_videos')
+                    .where({ id: video.id, tenant_id: video.tenant_id })
+                    .update({
+                        file_name: sanitizeFileName(playableName),
+                        file_path: convertedRelPath,
+                        mime_type: 'video/mp4',
+                        size_bytes: convertedStat.size,
+                        updated_at: db.fn.now(),
+                    });
+
+                await fs.rm(absPath, { force: true }).catch(() => undefined);
+            } catch (error: any) {
+                await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
+                logWarn(`Automatische Stream-Konvertierung fehlgeschlagen (Video ${video.id}). ${error?.message || 'Unbekannter Fehler'}`);
+            }
+        })().finally(() => {
+            streamTranscodeLocks.delete(lockKey);
+        });
+
+        streamTranscodeLocks.set(lockKey, job);
+    }
+
+    await job;
+    const refreshed = await db('vp_videos')
+        .where({ id: video.id, tenant_id: video.tenant_id })
+        .first();
+
+    return (refreshed as VideoRecord) || video;
 }
 
 function sanitizeCode(input: unknown): string {
@@ -803,6 +876,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 originalFileName: String(uploadFile.filename || 'video'),
                 originalMimeType: safeMime || 'video/mp4',
                 uploadBuffer,
+                requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
                 logWarn: (message) => fastify.log.warn(message),
             });
 
@@ -906,6 +980,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             originalFileName: String(uploadFile.filename || 'video'),
             originalMimeType: safeMime || 'video/mp4',
             uploadBuffer,
+            requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
             logWarn: (message) => fastify.log.warn(message),
         });
 
@@ -1381,27 +1456,29 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             return reply.status(403).send({ error: 'Keine Berechtigung für dieses Video' });
         }
 
+        const streamVideo = await ensurePlayableUploadForStreaming(db, video as VideoRecord, (msg) => request.log.warn(msg));
+
         await logActivity(db, {
             tenantId: codeRow.tenant_id,
             eventType: 'video_stream',
             request,
             code,
             videoId,
-            customerId: video.customer_id,
+            customerId: streamVideo.customer_id,
             success: true,
             detail: 'Video-Stream gestartet',
         });
 
-        if (video.source_type === 'url') {
-            if (!video.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
-            return reply.redirect(video.video_url);
+        if (streamVideo.source_type === 'url') {
+            if (!streamVideo.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
+            return reply.redirect(streamVideo.video_url);
         }
 
-        if (!video.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });
+        if (!streamVideo.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });
 
-        const normalizedPath = normalizeLocalVideoPath(video.file_path);
+        const normalizedPath = normalizeLocalVideoPath(streamVideo.file_path);
         const absPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, normalizedPath);
-        sendVideoFile(request, reply, absPath, video.mime_type || 'video/mp4');
+        sendVideoFile(request, reply, absPath, streamVideo.mime_type || 'video/mp4');
     });
 
     fastify.get('/public/health', {
