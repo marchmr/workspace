@@ -583,50 +583,59 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
 
                         <div className="kp-od-commandbar">
                             <div className="kp-od-command-left">
-                                <button className="btn btn-secondary" type="button" onClick={() => loadData()} disabled={loading}>
+                                <button
+                                    className="btn btn-secondary kp-icon-btn"
+                                    type="button"
+                                    onClick={() => {
+                                        setCreatingFolder(true);
+                                        setCreateOpen(false);
+                                    }}
+                                    title="Neuer Ordner"
+                                    aria-label="Neuer Ordner"
+                                >
+                                    <ActionIcon path="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm14 7h-2v-2h-2v2h-2v2h2v2h2v-2h2v-2z" />
+                                </button>
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => loadData()} disabled={loading} title="Aktualisieren" aria-label="Aktualisieren">
                                     <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
-                                    Aktualisieren
                                 </button>
-                                <button className="btn btn-secondary" type="button" onClick={() => hiddenUploadInputRef.current?.click()}>
-                                    <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
-                                    Upload
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => hiddenUploadInputRef.current?.click()} title="Hochladen" aria-label="Hochladen">
+                                    <ActionIcon path="M12 21V10m0 0l4 4m-4-4l-4 4M5 3h14" />
                                 </button>
-                                <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
-                                    <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
-                                    ↓ Download
+                                <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} title="Download" aria-label="Download">
+                                    <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
                                 </button>
                                 <button
-                                    className="btn btn-secondary"
+                                    className="btn btn-secondary kp-icon-btn"
                                     type="button"
                                     onClick={() => setCurrentPath(getParentPath(currentPath))}
                                     disabled={!currentPath}
+                                    title="Eine Ebene nach oben"
+                                    aria-label="Eine Ebene nach oben"
                                 >
                                     <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
-                                    Nach oben
                                 </button>
                             </div>
                             <div className="kp-od-command-right">
                                 {selectedEntry ? (
                                     <>
                                         <button
-                                            className="btn btn-secondary"
+                                            className="btn btn-secondary kp-icon-btn"
                                             type="button"
                                             disabled={selectedEntry.kind === 'folder' || !selectedEntry.file.currentVersionId}
                                             onClick={() => {
                                                 if (selectedEntry.kind === 'folder') return;
                                                 openEntry(selectedEntry);
                                             }}
+                                            title="Vorschau"
+                                            aria-label="Vorschau"
                                         >
                                             <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-                                            Vorschau
                                         </button>
-                                        <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)}>
-                                            <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
-                                            Download
+                                        <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} title="Download" aria-label="Download">
+                                            <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
                                         </button>
-                                        <button className="btn btn-danger" type="button" onClick={() => requestDelete(selectedEntry)}>
+                                        <button className="btn btn-danger kp-icon-btn" type="button" onClick={() => requestDelete(selectedEntry)} title="Löschen" aria-label="Löschen">
                                             <ActionIcon path="M6 7h12M9 7V5h6v2m-8 0l1 12h6l1-12" />
-                                            Löschen
                                         </button>
                                     </>
                                 ) : (

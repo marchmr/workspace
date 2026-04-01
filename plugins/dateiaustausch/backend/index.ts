@@ -587,6 +587,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     await fs.mkdir(STORAGE_ROOT, { recursive: true, mode: 0o700 });
     await fs.chmod(STORAGE_ROOT, 0o700).catch(() => undefined);
     const hasCrmCustomersTable = await db.schema.hasTable('crm_customers').catch(() => false);
+    const crmCustomerHasNumber = hasCrmCustomersTable
+        ? await db.schema.hasColumn('crm_customers', 'customer_number').catch(() => false)
+        : false;
+    const crmCustomerHasCompany = hasCrmCustomersTable
+        ? await db.schema.hasColumn('crm_customers', 'company_name').catch(() => false)
+        : false;
+    const crmCustomerHasFirst = hasCrmCustomersTable
+        ? await db.schema.hasColumn('crm_customers', 'first_name').catch(() => false)
+        : false;
+    const crmCustomerHasLast = hasCrmCustomersTable
+        ? await db.schema.hasColumn('crm_customers', 'last_name').catch(() => false)
+        : false;
     let scanQueue: Promise<void> = Promise.resolve();
     let scanQueuePending = 0;
 
@@ -1072,13 +1084,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 'i.workflow_status',
                 'i.updated_at',
                 'i.current_version_id',
-                hasCrmCustomersTable
+                hasCrmCustomersTable && crmCustomerHasCompany
                     ? db.raw("COALESCE(NULLIF(cc.company_name, ''), c.name) as customer_name")
                     : db.raw('c.name as customer_name'),
-                hasCrmCustomersTable ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
-                hasCrmCustomersTable ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
-                hasCrmCustomersTable ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
-                hasCrmCustomersTable ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
+                hasCrmCustomersTable && crmCustomerHasNumber ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
+                hasCrmCustomersTable && crmCustomerHasCompany ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
+                hasCrmCustomersTable && crmCustomerHasFirst ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
+                hasCrmCustomersTable && crmCustomerHasLast ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
                 'v.version_no as current_version_no',
                 'v.scan_status as current_scan_status',
                 'v.scan_signature as current_scan_signature',
@@ -1132,13 +1144,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 'f.customer_id',
                 'f.folder_path',
                 'f.updated_at',
-                hasCrmCustomersTable
+                hasCrmCustomersTable && crmCustomerHasCompany
                     ? db.raw("COALESCE(NULLIF(cc.company_name, ''), c.name) as customer_name")
                     : db.raw('c.name as customer_name'),
-                hasCrmCustomersTable ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
-                hasCrmCustomersTable ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
-                hasCrmCustomersTable ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
-                hasCrmCustomersTable ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
+                hasCrmCustomersTable && crmCustomerHasNumber ? db.raw('cc.customer_number as customer_number') : db.raw('NULL as customer_number'),
+                hasCrmCustomersTable && crmCustomerHasCompany ? db.raw('cc.company_name as customer_company_name') : db.raw('NULL as customer_company_name'),
+                hasCrmCustomersTable && crmCustomerHasFirst ? db.raw('cc.first_name as customer_first_name') : db.raw('NULL as customer_first_name'),
+                hasCrmCustomersTable && crmCustomerHasLast ? db.raw('cc.last_name as customer_last_name') : db.raw('NULL as customer_last_name'),
             )
             .orderBy('f.customer_id', 'asc')
             .orderBy('f.folder_path', 'asc');

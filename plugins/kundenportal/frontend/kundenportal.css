@@ -738,6 +738,20 @@
     stroke-linejoin: round;
 }
 
+.kp-page .kp-icon-btn {
+    width: 40px;
+    min-width: 40px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+}
+
+.kp-page .kp-icon-btn.kp-od-create {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+}
+
 .kp-page .kp-od-table-wrap {
     border: 1px solid #d6e1ef;
     border-radius: 12px;

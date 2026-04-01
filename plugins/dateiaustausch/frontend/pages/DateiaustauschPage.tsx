@@ -368,9 +368,8 @@ export default function DateiaustauschPage() {
                                 <strong>Dateicloud Workspace</strong>
                             </div>
 
-                            <button className="btn btn-secondary kp-od-create" type="button" onClick={() => loadRows()} disabled={loading}>
+                            <button className="btn btn-secondary kp-od-create kp-icon-btn" type="button" onClick={() => loadRows()} disabled={loading} title="Aktualisieren" aria-label="Aktualisieren">
                                 <ActionIcon path="M12 5v4m0 6v4m-7-7h4m6 0h4" />
-                                Aktualisieren
                             </button>
 
                             <div className="kp-od-folder-tree">
@@ -423,22 +422,22 @@ export default function DateiaustauschPage() {
                             <div className="kp-od-commandbar">
                                 <div className="kp-od-command-left">
                                     <button
-                                        className="btn btn-secondary"
+                                        className="btn btn-secondary kp-icon-btn"
                                         type="button"
                                         onClick={() => setCurrentPath(getParentPath(currentPath))}
                                         disabled={!currentPath}
+                                        title="Eine Ebene nach oben"
+                                        aria-label="Eine Ebene nach oben"
                                     >
                                         <ActionIcon path="M9 6l-6 6 6 6M4 12h16" />
-                                        Nach oben
                                     </button>
-                                    <button className="btn btn-secondary" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId}>
-                                        <ActionIcon path="M12 3v11m0 0l4-4m-4 4l-4-4M5 21h14" />
-                                        ↓ Download
+                                    <button className="btn btn-secondary kp-icon-btn" type="button" onClick={() => downloadEntry(selectedEntry)} disabled={!selectedCustomerId} title="Download" aria-label="Download">
+                                        <ActionIcon path="M12 4v14m0 0l-3-3m3 3l3-3" />
                                     </button>
                                 </div>
                                 <div className="kp-od-command-right">
                                     <button
-                                        className="btn btn-secondary"
+                                        className="btn btn-secondary kp-icon-btn"
                                         type="button"
                                         disabled={selectedEntry?.kind !== 'file' || !selectedEntry.file.currentVersionId}
                                         onClick={() => {
@@ -449,9 +448,10 @@ export default function DateiaustauschPage() {
                                                 setPreviewOpen(true);
                                             }
                                         }}
+                                        title="Vorschau"
+                                        aria-label="Vorschau"
                                     >
                                         <ActionIcon path="M1.5 12s3.8-6 10.5-6 10.5 6 10.5 6-3.8 6-10.5 6S1.5 12 1.5 12zm10.5 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-                                        Vorschau
                                     </button>
                                     {selectedEntry ? <span className="kp-od-selection">1 ausgewählt</span> : <span className="kp-od-selection">Keine Auswahl</span>}
                                 </div>
