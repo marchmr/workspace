@@ -97,25 +97,35 @@ async function getDefaultAccount(): Promise<EmailAccount | null> {
     return sanitizeAccount(first as EmailAccount);
 }
 
-async function refreshM365AccessToken(account: EmailAccount): Promise<string> {
+type M365AuthMode = 'delegated' | 'application';
+
+async function requestM365AccessToken(account: EmailAccount): Promise<{ accessToken: string; mode: M365AuthMode }> {
     const tenantId = String(account.oauth_tenant_id || 'common').trim();
     const clientId = String(account.oauth_client_id || '').trim();
     const clientSecret = String(account.oauth_client_secret || '').trim();
     const refreshToken = String(account.oauth_refresh_token || '').trim();
-    const scope = String(account.oauth_scope || 'offline_access https://graph.microsoft.com/Mail.Send').trim();
+    const delegatedScope = String(account.oauth_scope || 'offline_access https://graph.microsoft.com/Mail.Send').trim();
+    const appScope = 'https://graph.microsoft.com/.default';
 
-    if (!clientId || !clientSecret || !refreshToken) {
-        throw new Error('M365 OAuth ist unvollständig konfiguriert (client_id/client_secret/refresh_token).');
+    if (!clientId || !clientSecret) {
+        throw new Error('M365 OAuth ist unvollständig konfiguriert (client_id/client_secret).');
     }
 
     const tokenUrl = `https://login.microsoftonline.com/${encodeURIComponent(tenantId)}/oauth2/v2.0/token`;
-    const payload = new URLSearchParams({
-        grant_type: 'refresh_token',
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        scope,
-    });
+    const payload = refreshToken
+        ? new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            scope: delegatedScope,
+        })
+        : new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: clientId,
+            client_secret: clientSecret,
+            scope: appScope,
+        });
 
     const res = await fetch(tokenUrl, {
         method: 'POST',
@@ -138,10 +148,13 @@ async function refreshM365AccessToken(account: EmailAccount): Promise<string> {
         updated_at: new Date(),
     });
 
-    return String(data.access_token);
+    return {
+        accessToken: String(data.access_token),
+        mode: refreshToken ? 'delegated' : 'application',
+    };
 }
 
-async function getM365AccessToken(account: EmailAccount): Promise<string> {
+async function getM365AccessToken(account: EmailAccount): Promise<{ accessToken: string; mode: M365AuthMode }> {
     const existingToken = String(account.oauth_access_token || '').trim();
     const existingExpiry = account.oauth_access_expires_at ? new Date(account.oauth_access_expires_at) : null;
     const stillValid = existingToken
@@ -149,8 +162,14 @@ async function getM365AccessToken(account: EmailAccount): Promise<string> {
         && Number.isFinite(existingExpiry.getTime())
         && existingExpiry.getTime() > Date.now() + 30_000;
 
-    if (stillValid) return existingToken;
-    return refreshM365AccessToken(account);
+    if (stillValid) {
+        return {
+            accessToken: existingToken,
+            mode: String(account.oauth_refresh_token || '').trim() ? 'delegated' : 'application',
+        };
+    }
+
+    return requestM365AccessToken(account);
 }
 
 function toEmailAddressList(value: string | string[]): Array<{ emailAddress: { address: string } }> {
@@ -167,7 +186,7 @@ function toEmailAddressList(value: string | string[]): Array<{ emailAddress: { a
 }
 
 async function sendViaM365Graph(account: EmailAccount, opts: SendMailOptions): Promise<void> {
-    const accessToken = await getM365AccessToken(account);
+    const { accessToken, mode } = await getM365AccessToken(account);
     const fromAddress = normalizeEmail(account.from_address || account.smtp_user || '');
     const fromName = String(account.from_name || '').trim();
     if (!fromAddress) throw new Error('Absender-Adresse fehlt (from_address).');
@@ -190,7 +209,11 @@ async function sendViaM365Graph(account: EmailAccount, opts: SendMailOptions): P
         saveToSentItems: true,
     };
 
-    const response = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    const endpoint = mode === 'application'
+        ? `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromAddress)}/sendMail`
+        : 'https://graph.microsoft.com/v1.0/me/sendMail';
+
+    const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
             Authorization: `Bearer ${accessToken}`,

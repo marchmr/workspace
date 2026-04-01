@@ -42,7 +42,7 @@ const emptyAccount: Omit<EmailAccount, 'id' | 'created_at' | 'updated_at'> = {
     oauth_refresh_token: '',
     oauth_access_token: '',
     oauth_access_expires_at: '',
-    oauth_scope: 'offline_access https://graph.microsoft.com/Mail.Send',
+    oauth_scope: 'https://graph.microsoft.com/.default',
 };
 
 export default function EmailAccounts() {
@@ -91,7 +91,7 @@ export default function EmailAccounts() {
             oauth_refresh_token: account.oauth_refresh_token || '',
             oauth_access_token: account.oauth_access_token || '',
             oauth_access_expires_at: account.oauth_access_expires_at || '',
-            oauth_scope: account.oauth_scope || 'offline_access https://graph.microsoft.com/Mail.Send',
+            oauth_scope: account.oauth_scope || 'https://graph.microsoft.com/.default',
         });
         setMessage(null);
     };
@@ -281,16 +281,6 @@ export default function EmailAccounts() {
                                         <label className="form-label">Client Secret</label>
                                         <input className="form-input" type="password" value={form.oauth_client_secret} onChange={(e) => setForm({ ...form, oauth_client_secret: e.target.value })} placeholder="••••••" />
                                     </div>
-                                </div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 'var(--space-md)' }}>
-                                    <div className="form-group">
-                                        <label className="form-label">Refresh Token</label>
-                                        <input className="form-input" value={form.oauth_refresh_token} onChange={(e) => setForm({ ...form, oauth_refresh_token: e.target.value })} placeholder="0.AAA..." />
-                                    </div>
-                                </div>
-                                <div className="form-group">
-                                    <label className="form-label">OAuth Scope</label>
-                                    <input className="form-input" value={form.oauth_scope} onChange={(e) => setForm({ ...form, oauth_scope: e.target.value })} placeholder="offline_access https://graph.microsoft.com/Mail.Send" />
                                 </div>
                             </>
                         )}
