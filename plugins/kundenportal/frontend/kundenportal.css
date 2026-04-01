@@ -251,6 +251,139 @@
     grid-template-columns: minmax(0, 1fr);
 }
 
+/* Globale UI-Regeln fuer Kundenportal-Module (videos, dateiaustausch, weitere) */
+.kp-page .kp-module-shell {
+    border: 1px dashed #c5d3e5;
+    border-radius: 14px;
+    padding: var(--space-lg);
+    background: #f7fbff;
+}
+
+.kp-page .kp-module-title {
+    margin: 0;
+    color: var(--color-text);
+}
+
+.kp-page .kp-module-subtitle {
+    margin: 0;
+    color: var(--color-text-secondary);
+}
+
+.kp-page .kp-module-block {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    padding: var(--space-sm);
+}
+
+.kp-page .kp-module-table-wrap {
+    margin-top: 14px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+}
+
+.kp-page .kp-module-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.kp-page .kp-cloud-layout {
+    margin-top: 12px;
+    display: grid;
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+}
+
+.kp-page .kp-cloud-sidebar {
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    position: sticky;
+    top: 12px;
+}
+
+.kp-page .kp-cloud-sidebar-head h4 {
+    margin: 0;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #6a7e99;
+}
+
+.kp-page .kp-cloud-main {
+    display: grid;
+    gap: 12px;
+}
+
+.kp-page .kp-cloud-dropzone {
+    border: 2px dashed #c8d6e8;
+    border-radius: 14px;
+    padding: 16px;
+    background: linear-gradient(180deg, #f9fcff 0%, #f3f8ff 100%);
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.kp-page .kp-cloud-dropzone.is-dragover {
+    border-color: var(--primary);
+    background: rgba(45, 102, 228, 0.08);
+}
+
+.kp-page .kp-cloud-dropzone-title {
+    margin: 0;
+    font-weight: 700;
+    color: #1d2a3c;
+}
+
+.kp-page .kp-cloud-dropzone-subtitle {
+    margin: 4px 0 10px 0;
+}
+
+.kp-page .kp-cloud-selected-count {
+    margin: 8px 0 0 0;
+}
+
+.kp-page .kp-cloud-toolbar {
+    margin-top: 2px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.kp-page .kp-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    border: 1px solid transparent;
+}
+
+.kp-page .kp-status-badge.is-pending {
+    color: #8a5a00;
+    background: #fff7e6;
+    border-color: #f1d08b;
+}
+
+.kp-page .kp-status-badge.is-clean,
+.kp-page .kp-status-badge.is-reviewed {
+    color: #17603a;
+    background: #eaf9ef;
+    border-color: #b7e7c7;
+}
+
+.kp-page .kp-status-badge.is-rejected {
+    color: #8e1831;
+    background: #fff0f3;
+    border-color: #efbdc8;
+}
+
 .kp-page .kp-video-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -679,6 +812,18 @@
     .kp-page .kp-sidebar-name {
         font-size: 1.05rem;
         line-height: 1.25;
+    }
+
+    .kp-page .kp-cloud-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .kp-page .kp-cloud-sidebar {
+        position: static;
+    }
+
+    .kp-page .kp-cloud-toolbar {
+        grid-template-columns: 1fr;
     }
 
     .vp-inline-form {

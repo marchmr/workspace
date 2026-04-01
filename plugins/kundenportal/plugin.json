@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Zentrales Kundenportal mit modularen Bereichen (Videos, Dateiaustausch)",
   "author": "Hammer Team",
-  "dependencies": ["videoplattform"],
+  "dependencies": [],
   "backend_entry": "backend/index.ts",
   "frontend_entry": "frontend/index.tsx",
   "nav_icon": "layout",

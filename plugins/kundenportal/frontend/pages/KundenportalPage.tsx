@@ -1,4 +1,6 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
+import PublicVideosModule from '../../../videoplattform/frontend/components/PublicVideosModule';
+import PublicFileExchangeModule from '../../../dateiaustausch/frontend/components/PublicFileExchangeModule';
 import '../../../videoplattform/frontend/videoplattform.css';
 import '../kundenportal.css';
 
@@ -525,26 +527,6 @@ export default function KundenportalPage() {
         setMobileNavOpen(false);
     }
 
-    function renderFolderTree(nodes: FolderTreeNode[], depth: number = 0): ReactNode[] {
-        return nodes.flatMap((node) => {
-            const isActive = filesFolderFilter === node.path;
-            const row = (
-                <button
-                    key={node.path}
-                    type="button"
-                    className={`btn ${isActive ? 'btn-primary' : 'btn-secondary'}`}
-                    style={{ justifyContent: 'space-between', paddingLeft: `${12 + depth * 16}px` }}
-                    onClick={() => setFilesFolderFilter(node.path)}
-                >
-                    <span>{node.name}</span>
-                    <span className="text-muted" style={{ fontSize: 12 }}>{node.count}</span>
-                </button>
-            );
-            if (!node.childList.length) return [row];
-            return [row, ...renderFolderTree(node.childList, depth + 1)];
-        });
-    }
-
     return (
         <div className="vp-public-page kp-page">
             <div className={`vp-public-shell${access ? '' : ' vp-public-shell-login'}`}>
@@ -690,201 +672,44 @@ export default function KundenportalPage() {
                                 </header>
 
                                 {activeTab === 'videos' && (
-                                    <>
-                                        <div className="kp-searchbar">
-                                            <input className="input" value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Suchen nach Titel, Beschreibung oder Kategorie" />
-                                        </div>
-
-                                        <div className="kp-video-grid">
-                                            {visibleVideos.length === 0 && (
-                                                <div className="kp-empty-state">
-                                                    <div className="kp-empty-icon">
-                                                        <NavIcon nav="videos" />
-                                                    </div>
-                                                    <h3>Keine Videos gefunden</h3>
-                                                    <p className="text-muted">
-                                                        {keyword.trim()
-                                                            ? 'Versuchen Sie einen anderen Suchbegriff oder löschen Sie den Filter.'
-                                                            : 'Sobald neue Videos freigegeben sind, erscheinen sie hier automatisch.'}
-                                                    </p>
-                                                    {keyword.trim() ? (
-                                                        <button className="btn btn-secondary" type="button" onClick={() => setKeyword('')}>
-                                                            Suche zurücksetzen
-                                                        </button>
-                                                    ) : null}
-                                                </div>
-                                            )}
-                                            {visibleVideos.map((video) => {
-                                                const streamUrl = `${video.streamUrl}?sessionToken=${encodeURIComponent(access.sessionToken)}`;
-                                                return (
-                                                    <article key={video.id} className="kp-video-card">
-                                                        <div className="kp-video-preview">
-                                                            {video.sourceType === 'upload' ? (
-                                                                <video className="kp-video-player" controls playsInline controlsList="nodownload" src={streamUrl} />
-                                                            ) : (
-                                                                <a className="btn btn-primary" href={streamUrl} target="_blank" rel="noreferrer">Externes Video öffnen</a>
-                                                            )}
-                                                        </div>
-                                                        <div className="kp-video-body">
-                                                            <h3>{video.title}</h3>
-                                                            <p className="text-muted">{video.category} • {formatDate(video.createdAt)}</p>
-                                                            {video.description ? <p>{video.description}</p> : null}
-                                                        </div>
-                                                    </article>
-                                                );
-                                            })}
-                                        </div>
-                                    </>
+                                    <PublicVideosModule
+                                        videos={visibleVideos}
+                                        keyword={keyword}
+                                        onKeywordChange={setKeyword}
+                                        sessionToken={access.sessionToken}
+                                        formatDate={formatDate}
+                                    />
                                 )}
 
                                 {activeTab === 'files' && (
-                                    <div className="kp-coming-soon">
-                                        <h3>Dateiaustausch</h3>
-                                        {fileExchangeAvailable === false ? (
-                                            <p className="text-muted" style={{ marginTop: 0 }}>
-                                                Das Plugin <strong>Dateiaustausch</strong> ist derzeit deaktiviert. Aktivieren Sie es in der Regie/Plugin-Verwaltung.
-                                            </p>
-                                        ) : null}
-                                        <p className="text-muted" style={{ marginTop: 0 }}>Sicherer Dateiaustausch wie eine private Cloud, mit Ordnerstruktur und Versionen.</p>
-
-                                        <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-                                            <aside style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 10, display: 'grid', gap: 8, alignContent: 'start' }}>
-                                                <button
-                                                    type="button"
-                                                    className={`btn ${filesFolderFilter ? 'btn-secondary' : 'btn-primary'}`}
-                                                    onClick={() => setFilesFolderFilter('')}
-                                                >
-                                                    Alle Ordner
-                                                </button>
-                                                {renderFolderTree(folderTreeNodes)}
-                                            </aside>
-
-                                            <div>
-                                                <form onSubmit={uploadFile} className="vp-stack">
-                                                    <div
-                                                        style={{
-                                                            border: dragOverUpload ? '2px solid var(--primary)' : '2px dashed var(--line)',
-                                                            borderRadius: 12,
-                                                            padding: 14,
-                                                            background: dragOverUpload ? 'rgba(45,102,228,0.08)' : 'var(--panel-muted)',
-                                                        }}
-                                                        onDragOver={(event) => {
-                                                            event.preventDefault();
-                                                            setDragOverUpload(true);
-                                                        }}
-                                                        onDragLeave={() => setDragOverUpload(false)}
-                                                        onDrop={(event) => {
-                                                            event.preventDefault();
-                                                            onDropFiles(event.dataTransfer?.files || null);
-                                                        }}
-                                                    >
-                                                        <p style={{ margin: 0, fontWeight: 600 }}>Dateien hier hineinziehen oder auswählen</p>
-                                                        <p className="text-muted" style={{ margin: '4px 0 10px 0' }}>Mehrere Dateien gleichzeitig möglich.</p>
-                                                        <input
-                                                            className="input"
-                                                            type="file"
-                                                            multiple
-                                                            onChange={(event) => onFileInputChange(event.target.files)}
-                                                            accept=".jpg,.jpeg,.png,.webp,.mp4,.mov,.webm,.pdf,.doc,.docx,.xlsx,.pptx,.txt,.zip"
-                                                            disabled={fileExchangeAvailable === false}
-                                                            required
-                                                        />
-                                                        {selectedFiles.length > 0 && (
-                                                            <p className="text-muted" style={{ margin: '8px 0 0 0' }}>
-                                                                {selectedFiles.length} Datei(en) ausgewählt
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                    <select className="input" value={uploadFolderPath} onChange={(event) => setUploadFolderPath(event.target.value)}>
-                                                        <option value="">Ordner auswählen (optional)</option>
-                                                        {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-                                                    </select>
-                                                    <input
-                                                        className="input"
-                                                        value={newFolderName}
-                                                        onChange={(event) => setNewFolderName(event.target.value)}
-                                                        disabled={fileExchangeAvailable === false}
-                                                        placeholder="Oder neuen Ordner anlegen, z. B. Fotos/April"
-                                                    />
-                                                    <textarea
-                                                        className="input"
-                                                        rows={3}
-                                                        value={uploadComment}
-                                                        onChange={(event) => setUploadComment(event.target.value)}
-                                                        disabled={fileExchangeAvailable === false}
-                                                        placeholder="Kommentar zur Datei (optional)"
-                                                    />
-                                                    <button className="btn btn-primary" type="submit" disabled={filesLoading || fileExchangeAvailable === false}>
-                                                        {filesLoading ? (uploadProgress ? `Lade hoch... (${uploadProgress.done}/${uploadProgress.total})` : 'Lade hoch...') : 'Dateien sicher hochladen'}
-                                                    </button>
-                                                </form>
-
-                                                {filesError && <p className="text-danger" style={{ marginTop: 10 }}>{filesError}</p>}
-
-                                                <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                                                    <select className="input" value={filesFolderFilter} onChange={(event) => setFilesFolderFilter(event.target.value)}>
-                                                        <option value="">Alle Ordner</option>
-                                                        {folderOptions.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
-                                                    </select>
-                                                    <select className="input" value={filesSort} onChange={(event) => setFilesSort(event.target.value as 'newest' | 'name' | 'folder')}>
-                                                        <option value="newest">Sortierung: Neueste</option>
-                                                        <option value="name">Sortierung: Dateiname</option>
-                                                        <option value="folder">Sortierung: Ordner</option>
-                                                    </select>
-                                                </div>
-
-                                                <div style={{ marginTop: 14, border: '1px solid var(--line)', borderRadius: 12, overflow: 'hidden' }}>
-                                                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                                        <thead>
-                                                            <tr style={{ textAlign: 'left', background: 'var(--panel-muted)' }}>
-                                                                <th style={{ padding: '10px 12px' }}>Datei</th>
-                                                                <th style={{ padding: '10px 12px' }}>Ordner</th>
-                                                                <th style={{ padding: '10px 12px' }}>Status</th>
-                                                                <th style={{ padding: '10px 12px' }}>Version</th>
-                                                                <th style={{ padding: '10px 12px' }}>Aktualisiert</th>
-                                                                <th style={{ padding: '10px 12px' }}>Download</th>
-                                                                <th style={{ padding: '10px 12px' }}>Aktion</th>
-                                                            </tr>
-                                                        </thead>
-                                                        <tbody>
-                                                            {visibleFiles.map((entry) => (
-                                                                <tr key={entry.id} style={{ borderTop: '1px solid var(--line)' }}>
-                                                                    <td style={{ padding: '10px 12px' }}>{entry.displayName}</td>
-                                                                    <td style={{ padding: '10px 12px' }}>{entry.folderPath || 'Root'}</td>
-                                                                    <td style={{ padding: '10px 12px' }}>{entry.workflowStatus}</td>
-                                                                    <td style={{ padding: '10px 12px' }}>V{entry.currentVersionNo || 0}</td>
-                                                                    <td style={{ padding: '10px 12px' }}>{formatDate(entry.updatedAt)}</td>
-                                                                    <td style={{ padding: '10px 12px' }}>
-                                                                        {entry.currentVersionId && (entry.workflowStatus === 'clean' || entry.workflowStatus === 'reviewed') ? (
-                                                                            <a
-                                                                                href={`/api/plugins/dateiaustausch/public/files/${entry.id}/versions/${entry.currentVersionId}/download?sessionToken=${encodeURIComponent(access.sessionToken)}`}
-                                                                                target="_blank"
-                                                                                rel="noreferrer"
-                                                                            >
-                                                                                Laden
-                                                                            </a>
-                                                                        ) : <span className="text-muted">Gesperrt</span>}
-                                                                    </td>
-                                                                    <td style={{ padding: '10px 12px' }}>
-                                                                        <button className="btn btn-danger" type="button" onClick={() => deleteFile(entry.id)} disabled={filesLoading}>
-                                                                            Löschen
-                                                                        </button>
-                                                                    </td>
-                                                                </tr>
-                                                            ))}
-                                                            {!filesLoading && visibleFiles.length === 0 && (
-                                                                <tr>
-                                                                    <td colSpan={7} style={{ padding: '12px' }} className="text-muted">
-                                                                        Keine Dateien im gewählten Ordner.
-                                                                    </td>
-                                                                </tr>
-                                                            )}
-                                                        </tbody>
-                                                    </table>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+                                    <PublicFileExchangeModule
+                                        available={fileExchangeAvailable !== false}
+                                        filesError={filesError}
+                                        filesLoading={filesLoading}
+                                        filesSort={filesSort}
+                                        filesFolderFilter={filesFolderFilter}
+                                        folderOptions={folderOptions}
+                                        folderTreeNodes={folderTreeNodes}
+                                        visibleFiles={visibleFiles}
+                                        selectedFilesCount={selectedFiles.length}
+                                        uploadFolderPath={uploadFolderPath}
+                                        newFolderName={newFolderName}
+                                        uploadComment={uploadComment}
+                                        uploadProgress={uploadProgress}
+                                        dragOverUpload={dragOverUpload}
+                                        sessionToken={access.sessionToken}
+                                        onUploadSubmit={uploadFile}
+                                        onFileInputChange={onFileInputChange}
+                                        onDropFiles={onDropFiles}
+                                        onFolderSelectChange={setUploadFolderPath}
+                                        onNewFolderChange={setNewFolderName}
+                                        onCommentChange={setUploadComment}
+                                        onFolderFilterChange={setFilesFolderFilter}
+                                        onSortChange={setFilesSort}
+                                        onDeleteFile={deleteFile}
+                                        onDragOverUploadChange={setDragOverUpload}
+                                        formatDate={formatDate}
+                                    />
                                 )}
                             </main>
                         </div>

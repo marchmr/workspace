@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Kunden-Videoplattform mit Freigabecodes und öffentlichem Portal auf Subdomain",
   "author": "Hammer Team",
-  "dependencies": [],
+  "dependencies": ["kundenportal"],
   "backend_entry": "backend/index.ts",
   "frontend_entry": "frontend/index.tsx",
   "nav_icon": "video",

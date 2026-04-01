@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Sicherer Kunden-Dateiaustausch mit Quarantäne, Versionierung und Moderation",
   "author": "Hammer Team",
-  "dependencies": ["videoplattform"],
+  "dependencies": ["kundenportal", "videoplattform"],
   "backend_entry": "backend/index.ts",
   "frontend_entry": "frontend/index.tsx",
   "nav_icon": "folder",
