@@ -469,7 +469,7 @@ export default function PublicGoogleDriveModule() {
                         onClick={() => openPath([])}
                     >
                         <Icon path={ICONS.root} />
-                        <span>Root</span>
+                        <span>{baseFolderName || folderName || 'Root'}</span>
                     </button>
                     {pathParts.map((part, index) => {
                         const targetPath = pathParts.slice(0, index + 1).join('/');
