@@ -200,10 +200,6 @@ export default function PublicGoogleDriveModule() {
         () => visibleEntries.filter((entry) => entry.isFolder).slice(0, 10),
         [visibleEntries],
     );
-    const previewEntries = useMemo(
-        () => visibleEntries.filter((entry) => isPreviewableEntry(entry)).slice(0, 24),
-        [visibleEntries],
-    );
     const queuedFilesTotalBytes = useMemo(
         () => selectedFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
         [selectedFiles],
@@ -493,36 +489,6 @@ export default function PublicGoogleDriveModule() {
                     {success ? <p className="text-success">{success}</p> : null}
                     {uploadProgress !== null ? <p className="text-muted">Upload-Fortschritt: {uploadProgress}%</p> : null}
 
-                    {previewEntries.length > 0 ? (
-                        <div className="dtxd-preview-grid">
-                            {previewEntries.map((entry) => (
-                                <button
-                                    key={`preview-${entry.id}`}
-                                    type="button"
-                                    className="dtxd-preview-card"
-                                    onClick={() => setPreviewEntry(entry)}
-                                    title={`${entry.name} öffnen`}
-                                >
-                                    <div className="dtxd-preview-media">
-                                        {isImageEntry(entry) ? (
-                                            <img
-                                                src={buildFileUrl(entry.id, 'preview')}
-                                                loading="lazy"
-                                                alt={entry.name}
-                                            />
-                                        ) : (
-                                            <div className="dtxd-preview-pdf">PDF</div>
-                                        )}
-                                    </div>
-                                    <div className="dtxd-preview-meta">
-                                        <div className="dtxd-preview-name">{entry.name}</div>
-                                        <div className="text-muted">{formatDate(entry.modifiedTime)}</div>
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-                    ) : null}
-
                     <div className="dtxd-table-wrap">
                         <table className="dtxd-table">
                             <thead>
@@ -570,10 +536,33 @@ export default function PublicGoogleDriveModule() {
                                         </td>
                                         <td>
                                             <div className="dtxd-name-cell">
-                                                <span className={`dtxd-type-icon ${entry.isFolder ? 'is-folder' : 'is-file'}`}>
-                                                    <Icon path={entry.isFolder ? ICONS.folder : ICONS.file} />
-                                                </span>
-                                                <span>{entry.name}</span>
+                                                {entry.isFolder ? (
+                                                    <span className="dtxd-type-icon is-folder">
+                                                        <Icon path={ICONS.folder} />
+                                                    </span>
+                                                ) : isPreviewableEntry(entry) ? (
+                                                    <button
+                                                        type="button"
+                                                        className="dtxd-inline-thumb"
+                                                        onClick={() => setPreviewEntry(entry)}
+                                                        title={`${entry.name} Vorschau`}
+                                                    >
+                                                        {isImageEntry(entry) ? (
+                                                            <img
+                                                                src={buildFileUrl(entry.id, 'preview')}
+                                                                loading="lazy"
+                                                                alt={entry.name}
+                                                            />
+                                                        ) : (
+                                                            <span className="dtxd-inline-pdf">PDF</span>
+                                                        )}
+                                                    </button>
+                                                ) : (
+                                                    <span className="dtxd-type-icon is-file">
+                                                        <Icon path={ICONS.file} />
+                                                    </span>
+                                                )}
+                                                <span className="dtxd-name-text">{entry.name}</span>
                                                 {entry.isFolder && isDateFolderName(entry.name) && entry.name === todayIso ? (
                                                     <span className="dtxd-tag-today">Heute</span>
                                                 ) : null}
