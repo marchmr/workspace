@@ -65,6 +65,25 @@ function getTodayIsoDate(): string {
     return `${y}-${m}-${d}`;
 }
 
+function Icon({ path }: { path: string }) {
+    return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" className="dtxd-icon">
+            <path d={path} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+    );
+}
+
+const ICONS = {
+    root: 'M3 12l9-8 9 8M5 10v10h14V10',
+    up: 'M18 15l-6-6-6 6M12 9v11',
+    refresh: 'M20 11a8 8 0 10.8 3.5M20 5v6h-6',
+    upload: 'M12 16V6M8 10l4-4 4 4M4 18h16',
+    download: 'M12 4v10M8 10l4 4 4-4M4 20h16',
+    folder: 'M3 7h7l2 2h9v10a2 2 0 01-2 2H5a2 2 0 01-2-2z',
+    file: 'M7 3h7l5 5v13H7zM14 3v5h5',
+    open: 'M15 9l6-6M16 3h5v5M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5',
+};
+
 export default function PublicGoogleDriveModule() {
     const sessionToken = useMemo(() => localStorage.getItem(STORAGE_SESSION_KEY) || '', []);
     const [entries, setEntries] = useState<Entry[]>([]);
@@ -74,6 +93,7 @@ export default function PublicGoogleDriveModule() {
     const [uploadFolderName, setUploadFolderName] = useState('');
     const [provider, setProvider] = useState<'google_drive' | 'sharepoint'>('google_drive');
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [searchTerm, setSearchTerm] = useState('');
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -128,6 +148,23 @@ export default function PublicGoogleDriveModule() {
     useEffect(() => {
         load();
     }, [load]);
+
+    const visibleEntries = useMemo(() => {
+        const needle = searchTerm.trim().toLowerCase();
+        const filtered = needle
+            ? entries.filter((entry) => entry.name.toLowerCase().includes(needle))
+            : entries;
+
+        return [...filtered].sort((a, b) => {
+            if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+            return a.name.localeCompare(b.name, 'de');
+        });
+    }, [entries, searchTerm]);
+
+    const quickFolders = useMemo(
+        () => visibleEntries.filter((entry) => entry.isFolder).slice(0, 10),
+        [visibleEntries],
+    );
 
     async function onUpload(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -227,109 +264,161 @@ export default function PublicGoogleDriveModule() {
         URL.revokeObjectURL(objectUrl);
     }
 
+    const isConnectorNotConfigured = Boolean(error && /nicht\s+konfiguriert/i.test(error));
+
     return (
-        <div className="card dtxd-stack">
-            <div>
-                <h2 className="section-title">Dateiaustausch Cloud</h2>
-                <p className="text-muted">
-                    Provider: <strong>{provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}</strong>
-                    {' '}· Aktueller Ordner: <strong>{folderName}</strong>
-                    {uploadFolderName ? (
-                        <>
-                            {' '}· Upload-Ziel heute: <strong>{baseFolderName}/{uploadFolderName}</strong>
-                        </>
-                    ) : null}
-                </p>
-                <div className="dtxd-toolbar">
-                    <button className="btn btn-secondary" type="button" onClick={() => openPath([])}>
-                        Root
-                    </button>
-                    {pathParts.map((part, index) => (
-                        <button
-                            key={`${part}-${index}`}
-                            className="btn btn-secondary"
-                            type="button"
-                            onClick={() => openPath(pathParts.slice(0, index + 1))}
-                        >
-                            {part}
-                        </button>
-                    ))}
-                    <button
-                        className="btn btn-secondary"
-                        type="button"
-                        onClick={() => openPath(pathParts.slice(0, -1))}
-                        disabled={pathParts.length === 0}
-                    >
-                        Nach oben
-                    </button>
+        <div className="card dtxd-shell">
+            <div className="dtxd-header">
+                <div>
+                    <h2 className="section-title">Dateiaustausch Cloud</h2>
+                    <p className="text-muted dtxd-subtitle">
+                        <span className="dtxd-badge">{provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}</span>
+                        <span>Aktueller Ordner: <strong>{folderName}</strong></span>
+                        {uploadFolderName ? <span>Upload-Ziel heute: <strong>{baseFolderName}/{uploadFolderName}</strong></span> : null}
+                    </p>
                 </div>
+
+                <form className="dtxd-upload-inline" onSubmit={onUpload}>
+                    <label className="dtxd-upload-pick">
+                        <Icon path={ICONS.upload} />
+                        <span>Datei auswählen</span>
+                        <input
+                            type="file"
+                            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                            required
+                        />
+                    </label>
+                    <button className="btn btn-primary" type="submit" disabled={uploading || !selectedFile}>
+                        {uploading ? 'Lädt hoch...' : 'Hochladen'}
+                    </button>
+                </form>
             </div>
 
-            <form className="dtxd-toolbar" onSubmit={onUpload}>
-                <input
-                    className="input"
-                    type="file"
-                    onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
-                    required
-                />
-                <button className="btn btn-primary" type="submit" disabled={uploading || !selectedFile}>
-                    {uploading ? 'Lädt hoch...' : 'Datei hochladen'}
-                </button>
-                <button className="btn btn-secondary" type="button" onClick={load} disabled={loading}>
-                    Aktualisieren
-                </button>
-            </form>
+            <div className="dtxd-main">
+                <aside className="dtxd-sidebar">
+                    <div className="dtxd-side-title">Schnellzugriff</div>
+                    <button className="dtxd-side-item" type="button" onClick={() => openPath([])}>
+                        <Icon path={ICONS.root} />
+                        <span>Root</span>
+                    </button>
+                    {quickFolders.map((entry) => (
+                        <button
+                            key={entry.id}
+                            className="dtxd-side-item"
+                            type="button"
+                            onClick={() => openPath([...pathParts, entry.name])}
+                        >
+                            <Icon path={ICONS.folder} />
+                            <span>{entry.name}</span>
+                        </button>
+                    ))}
+                    {quickFolders.length === 0 ? <div className="dtxd-side-empty">Keine Ordner in dieser Ansicht.</div> : null}
+                </aside>
 
-            {error ? <p className="text-danger">{error}</p> : null}
-            {success ? <p className="text-success">{success}</p> : null}
-            {uploadProgress !== null ? <p className="text-muted">Upload-Fortschritt: {uploadProgress}%</p> : null}
-
-            <div className="dtxd-table-wrap">
-                <table className="dtxd-table">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Typ</th>
-                            <th>Größe</th>
-                            <th>Geändert</th>
-                            <th>Aktion</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading ? (
-                            <tr><td colSpan={5} className="text-muted">Lade Dateien...</td></tr>
-                        ) : entries.length === 0 ? (
-                            <tr><td colSpan={5} className="text-muted">Keine Dateien vorhanden.</td></tr>
-                        ) : entries.map((entry) => (
-                            <tr key={entry.id}>
-                                <td>
-                                    {entry.name}
-                                    {entry.isFolder && isDateFolderName(entry.name) && entry.name === todayIso ? (
-                                        <span className="dtxd-tag-today">Heute</span>
-                                    ) : null}
-                                </td>
-                                <td><span className="dtxd-pill">{entry.isFolder ? 'Ordner' : 'Datei'}</span></td>
-                                <td>{entry.isFolder ? '-' : formatBytes(entry.size)}</td>
-                                <td>{formatDate(entry.modifiedTime)}</td>
-                                <td>
-                                    {entry.isFolder ? (
-                                        <button
-                                            className="btn btn-secondary"
-                                            type="button"
-                                            onClick={() => openPath([...pathParts, entry.name])}
-                                        >
-                                            Öffnen
-                                        </button>
-                                    ) : (
-                                        <button className="btn btn-secondary" type="button" onClick={() => download(entry.id, entry.name)}>
-                                            Download
-                                        </button>
-                                    )}
-                                </td>
-                            </tr>
+                <section className="dtxd-content">
+                    <div className="dtxd-breadcrumb-row">
+                        <button className="dtxd-crumb" type="button" onClick={() => openPath([])}>Eigene Dateien</button>
+                        {pathParts.map((part, index) => (
+                            <button
+                                key={`${part}-${index}`}
+                                className="dtxd-crumb"
+                                type="button"
+                                onClick={() => openPath(pathParts.slice(0, index + 1))}
+                            >
+                                {part}
+                            </button>
                         ))}
-                    </tbody>
-                </table>
+                    </div>
+
+                    <div className="dtxd-controls">
+                        <input
+                            className="input dtxd-search"
+                            type="search"
+                            placeholder="Dateien oder Ordner suchen"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <div className="dtxd-actions">
+                            <button className="dtxd-icon-btn" type="button" onClick={load} disabled={loading} title="Aktualisieren">
+                                <Icon path={ICONS.refresh} />
+                            </button>
+                            <button
+                                className="dtxd-icon-btn"
+                                type="button"
+                                onClick={() => openPath(pathParts.slice(0, -1))}
+                                disabled={pathParts.length === 0}
+                                title="Nach oben"
+                            >
+                                <Icon path={ICONS.up} />
+                            </button>
+                        </div>
+                    </div>
+
+                    {isConnectorNotConfigured ? <div className="dtxd-info">Cloud-Connector ist noch nicht konfiguriert. Bitte in den Plugin-Einstellungen verbinden.</div> : null}
+                    {error && !isConnectorNotConfigured ? <p className="text-danger">{error}</p> : null}
+                    {success ? <p className="text-success">{success}</p> : null}
+                    {uploadProgress !== null ? <p className="text-muted">Upload-Fortschritt: {uploadProgress}%</p> : null}
+
+                    <div className="dtxd-table-wrap">
+                        <table className="dtxd-table">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Typ</th>
+                                    <th>Größe</th>
+                                    <th>Geändert</th>
+                                    <th>Aktion</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {loading ? (
+                                    <tr><td colSpan={5} className="text-muted">Lade Dateien...</td></tr>
+                                ) : visibleEntries.length === 0 ? (
+                                    <tr>
+                                        <td colSpan={5} className="dtxd-empty-state">
+                                            <div className="dtxd-empty-title">Dieser Ordner ist leer</div>
+                                            <div className="text-muted">Zieh Dateien hier hinein oder lade oben eine Datei hoch.</div>
+                                        </td>
+                                    </tr>
+                                ) : visibleEntries.map((entry) => (
+                                    <tr key={entry.id}>
+                                        <td>
+                                            <div className="dtxd-name-cell">
+                                                <span className={`dtxd-type-icon ${entry.isFolder ? 'is-folder' : 'is-file'}`}>
+                                                    <Icon path={entry.isFolder ? ICONS.folder : ICONS.file} />
+                                                </span>
+                                                <span>{entry.name}</span>
+                                                {entry.isFolder && isDateFolderName(entry.name) && entry.name === todayIso ? (
+                                                    <span className="dtxd-tag-today">Heute</span>
+                                                ) : null}
+                                            </div>
+                                        </td>
+                                        <td><span className="dtxd-pill">{entry.isFolder ? 'Ordner' : 'Datei'}</span></td>
+                                        <td>{entry.isFolder ? '-' : formatBytes(entry.size)}</td>
+                                        <td>{formatDate(entry.modifiedTime)}</td>
+                                        <td>
+                                            {entry.isFolder ? (
+                                                <button
+                                                    className="dtxd-inline-action"
+                                                    type="button"
+                                                    onClick={() => openPath([...pathParts, entry.name])}
+                                                >
+                                                    <Icon path={ICONS.open} />
+                                                    <span>Öffnen</span>
+                                                </button>
+                                            ) : (
+                                                <button className="dtxd-inline-action" type="button" onClick={() => download(entry.id, entry.name)}>
+                                                    <Icon path={ICONS.download} />
+                                                    <span>Download</span>
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
             </div>
         </div>
     );
