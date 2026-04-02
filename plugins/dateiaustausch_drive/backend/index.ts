@@ -3,6 +3,8 @@ import { randomUUID } from 'crypto';
 import { createWriteStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
+import archiver from 'archiver';
+import { Readable } from 'stream';
 import type { FastifyInstance } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -28,6 +30,7 @@ const SUPPORTED_EXTENSIONS_SET = new Set(SUPPORTED_EXTENSIONS);
 const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']);
 const PREVIEWABLE_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
 const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
+const MAX_BULK_DOWNLOAD_ENTRIES = 2000;
 const ALLOWED_MIME_BY_EXTENSION: Record<string, string[]> = {
     '.jpg': ['image/jpeg'],
     '.jpeg': ['image/jpeg'],
@@ -1211,6 +1214,96 @@ async function streamProviderDownload(
     reply.raw.end();
 }
 
+function sanitizeZipPathPart(value: string): string {
+    const normalized = sanitizeUploadFileName(String(value || '').trim());
+    return normalized.replace(/[\\/]/g, '-').trim() || 'unnamed';
+}
+
+async function getProviderFileStream(
+    settings: ConnectorSettings,
+    ctx: ProviderContext,
+    fileId: string,
+    fallbackName: string,
+    fallbackMime: string,
+): Promise<{ stream: NodeJS.ReadableStream; fileName: string; mimeType: string }> {
+    if (ctx.provider === 'sharepoint') {
+        const itemMetaUrl = graphUrl(`/v1.0/sites/${encodeURIComponent(settings.sharepoint.siteId)}/drives/${encodeURIComponent(settings.sharepoint.driveId)}/items/${encodeURIComponent(fileId)}`, {
+            $select: 'id,name,@microsoft.graph.downloadUrl',
+        });
+        const itemMeta = await graphJson<Record<string, any>>(ctx.accessToken, itemMetaUrl);
+        const downloadUrl = String(itemMeta['@microsoft.graph.downloadUrl'] || '');
+        if (!downloadUrl) throw new Error('Download-URL konnte nicht ermittelt werden.');
+
+        const mediaRes = await fetch(downloadUrl);
+        if (!mediaRes.ok || !mediaRes.body) {
+            const payload = await mediaRes.text().catch(() => '');
+            throw new Error(`Download fehlgeschlagen (${mediaRes.status}). ${payload}`);
+        }
+        return {
+            stream: Readable.fromWeb(mediaRes.body as any),
+            fileName: sanitizeUploadFileName(String(itemMeta.name || fallbackName || 'download')),
+            mimeType: mediaRes.headers.get('content-type') || fallbackMime || 'application/octet-stream',
+        };
+    }
+
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
+
+    const metaUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
+        fields: 'id,name,mimeType',
+        supportsAllDrives: 'true',
+    });
+    const fileMeta = await googleJson<{ id: string; name: string; mimeType: string }>(ctx.accessToken, metaUrl);
+
+    const mediaUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
+        alt: 'media',
+        supportsAllDrives: 'true',
+    });
+    const mediaRes = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${ctx.accessToken}` } });
+    if (!mediaRes.ok || !mediaRes.body) {
+        const payload = await mediaRes.text().catch(() => '');
+        throw new Error(`Download fehlgeschlagen (${mediaRes.status}). ${payload}`);
+    }
+    return {
+        stream: Readable.fromWeb(mediaRes.body as any),
+        fileName: sanitizeUploadFileName(fileMeta.name || fallbackName || 'download'),
+        mimeType: fileMeta.mimeType || fallbackMime || 'application/octet-stream',
+    };
+}
+
+async function appendProviderEntryToArchive(
+    settings: ConnectorSettings,
+    ctx: ProviderContext,
+    entry: DriveEntry,
+    archive: archiver.Archiver,
+    basePath: string,
+    counters: { files: number },
+): Promise<void> {
+    const safeName = sanitizeZipPathPart(entry.name);
+    const zipEntryPath = basePath ? `${basePath}/${safeName}` : safeName;
+
+    if (entry.isFolder) {
+        archive.append('', { name: `${zipEntryPath}/` });
+        const children = await listProviderEntries(settings, ctx, entry.id);
+        for (const child of children) {
+            await appendProviderEntryToArchive(settings, ctx, child, archive, zipEntryPath, counters);
+        }
+        return;
+    }
+
+    counters.files += 1;
+    if (counters.files > MAX_BULK_DOWNLOAD_ENTRIES) {
+        throw new Error(`Zu viele Dateien für ZIP-Download (max. ${MAX_BULK_DOWNLOAD_ENTRIES}).`);
+    }
+
+    const fileStream = await getProviderFileStream(settings, ctx, entry.id, entry.name, entry.mimeType);
+    archive.append(fileStream.stream as any, {
+        name: zipEntryPath,
+        date: entry.modifiedTime ? new Date(entry.modifiedTime) : new Date(),
+    });
+}
+
 async function streamProviderPreview(
     settings: ConnectorSettings,
     ctx: ProviderContext,
@@ -1588,6 +1681,72 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         } catch (error: any) {
             const statusCode = resolveErrorStatusCode(error);
             return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'Löschen fehlgeschlagen.' });
+        }
+    });
+
+    fastify.post('/public/items/download', {
+        config: { policy: { public: true }, rateLimit: { max: 10, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const settings = await loadConnectorSettings(db);
+        const status = connectorStatus(settings);
+        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+
+        const body = (request.body || {}) as { ids?: unknown };
+        const ids = Array.isArray(body.ids)
+            ? body.ids.map((id) => String(id || '').trim()).filter(Boolean)
+            : [];
+        if (ids.length === 0) {
+            return reply.status(400).send({ error: 'Mindestens ein Eintrag muss ausgewählt sein.' });
+        }
+        if (ids.length > 200) {
+            return reply.status(400).send({ error: 'Zu viele Einträge auf einmal (max. 200).' });
+        }
+
+        try {
+            const ctx = await resolveProviderContext(db, settings, session);
+            const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
+            const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            const currentEntries = await listProviderEntries(settings, ctx, folder.id);
+            const allowedMap = new Map(currentEntries.map((entry) => [entry.id, entry]));
+
+            const validEntries = ids
+                .map((id) => allowedMap.get(id))
+                .filter((entry): entry is DriveEntry => Boolean(entry));
+            if (validEntries.length === 0) {
+                return reply.status(400).send({ error: 'Keine gültigen Einträge im aktuellen Ordner ausgewählt.' });
+            }
+
+            const zipBaseName = sanitizeZipPathPart(relativeParts.length
+                ? relativeParts[relativeParts.length - 1]
+                : ctx.companyFolderName);
+            const zipName = `dateiaustausch-${zipBaseName}-${new Date().toISOString().slice(0, 10)}.zip`;
+
+            reply.header('Content-Type', 'application/zip');
+            reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
+            reply.raw.writeHead(200);
+
+            const archive = archiver('zip', { zlib: { level: 6 } });
+            archive.on('error', (err) => {
+                if (!reply.raw.destroyed) reply.raw.destroy(err);
+            });
+            archive.pipe(reply.raw);
+
+            const counters = { files: 0 };
+            for (const entry of validEntries) {
+                await appendProviderEntryToArchive(settings, ctx, entry, archive, '', counters);
+            }
+            await archive.finalize();
+            return reply;
+        } catch (error: any) {
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'ZIP-Download fehlgeschlagen.' });
         }
     });
 

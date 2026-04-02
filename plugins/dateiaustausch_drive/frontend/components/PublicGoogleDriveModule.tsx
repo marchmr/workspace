@@ -286,6 +286,54 @@ export default function PublicGoogleDriveModule() {
         URL.revokeObjectURL(objectUrl);
     }
 
+    async function downloadSelected() {
+        if (!sessionToken || selectedIds.size === 0) return;
+        const selectedEntries = entries.filter((entry) => selectedIds.has(entry.id));
+        if (selectedEntries.length === 0) return;
+
+        if (selectedEntries.length === 1 && !selectedEntries[0].isFolder) {
+            await download(selectedEntries[0].id, selectedEntries[0].name);
+            return;
+        }
+
+        setError(null);
+        try {
+            const params = new URLSearchParams();
+            if (currentPath) params.set('folderPath', currentPath);
+            const query = params.toString();
+            const url = query
+                ? `/api/plugins/dateiaustausch_drive/public/items/download?${query}`
+                : '/api/plugins/dateiaustausch_drive/public/items/download';
+
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-public-session-token': sessionToken,
+                },
+                body: JSON.stringify({ ids: Array.from(selectedIds) }),
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                throw new Error(payload?.error || 'ZIP-Download fehlgeschlagen.');
+            }
+
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const disposition = res.headers.get('content-disposition') || '';
+            const fileNameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/i);
+            const encodedName = fileNameMatch?.[1] || fileNameMatch?.[2] || 'dateiaustausch-download.zip';
+            const suggestedName = decodeURIComponent(encodedName);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = suggestedName;
+            a.click();
+            URL.revokeObjectURL(objectUrl);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'ZIP-Download fehlgeschlagen.');
+        }
+    }
+
     function toggleSelect(id: string) {
         setSelectedIds((prev) => {
             const next = new Set(prev);
@@ -459,6 +507,15 @@ export default function PublicGoogleDriveModule() {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                         <div className="dtxd-actions">
+                            <button
+                                className="dtxd-icon-btn"
+                                type="button"
+                                onClick={downloadSelected}
+                                disabled={selectedIds.size === 0}
+                                title={selectedIds.size > 1 ? 'Auswahl als ZIP herunterladen' : 'Auswahl herunterladen'}
+                            >
+                                <Icon path={ICONS.download} />
+                            </button>
                             <button
                                 className="dtxd-icon-btn danger"
                                 type="button"
