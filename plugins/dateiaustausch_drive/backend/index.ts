@@ -1750,15 +1750,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 : ctx.companyFolderName);
             const zipName = `dateiaustausch-${zipBaseName}-${new Date().toISOString().slice(0, 10)}.zip`;
 
-            reply.header('Content-Type', 'application/zip');
-            reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
-            reply.raw.writeHead(200);
-
             if (!createZipArchiver) {
                 return reply.status(503).send({
                     error: `ZIP-Download aktuell nicht verfügbar (archiver fehlt: ${archiverResolution.reason || 'unbekannt'}).`,
                 });
             }
+
+            reply.header('Content-Type', 'application/zip');
+            reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
+            reply.raw.writeHead(200);
 
             const archive = createZipArchiver('zip', { zlib: { level: 6 } });
             archive.on('error', (err) => {
