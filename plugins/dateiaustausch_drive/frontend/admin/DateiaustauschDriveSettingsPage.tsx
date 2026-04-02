@@ -57,6 +57,20 @@ type ConnectorStatus = {
     };
 };
 
+function tryExtractGoogleServiceAccount(jsonOrKey: string): { clientEmail: string; privateKey: string } | null {
+    const raw = String(jsonOrKey || '').trim();
+    if (!raw.startsWith('{')) return null;
+    try {
+        const parsed = JSON.parse(raw) as { client_email?: unknown; private_key?: unknown };
+        const clientEmail = typeof parsed?.client_email === 'string' ? parsed.client_email.trim() : '';
+        const privateKey = typeof parsed?.private_key === 'string' ? parsed.private_key : '';
+        if (!clientEmail && !privateKey) return null;
+        return { clientEmail, privateKey };
+    } catch {
+        return null;
+    }
+}
+
 export default function DateiaustauschDriveSettingsPage() {
     const toast = useToast();
     const [loading, setLoading] = useState(true);
@@ -66,6 +80,7 @@ export default function DateiaustauschDriveSettingsPage() {
     const [provider, setProvider] = useState<'google_drive' | 'sharepoint'>('google_drive');
     const [googleClientEmail, setGoogleClientEmail] = useState('');
     const [googlePrivateKey, setGooglePrivateKey] = useState('');
+    const [googlePrivateKeyStored, setGooglePrivateKeyStored] = useState(false);
     const [googleRootFolderId, setGoogleRootFolderId] = useState('');
     const [googleSharedDriveId, setGoogleSharedDriveId] = useState('');
     const [spTenantId, setSpTenantId] = useState('');
@@ -90,7 +105,8 @@ export default function DateiaustauschDriveSettingsPage() {
                 const settings = (settingsPayload || {}) as Record<string, string>;
                 setProvider((settings[SETTING_KEYS.provider] as 'google_drive' | 'sharepoint') || 'google_drive');
                 setGoogleClientEmail(String(settings[SETTING_KEYS.googleClientEmail] || ''));
-                setGooglePrivateKey(String(settings[SETTING_KEYS.googlePrivateKey] || ''));
+                // Secret niemals automatisch im Klartext zurück ins Formular schreiben.
+                setGooglePrivateKey('');
                 setGoogleRootFolderId(String(settings[SETTING_KEYS.googleRootFolderId] || ''));
                 setGoogleSharedDriveId(String(settings[SETTING_KEYS.googleSharedDriveId] || ''));
                 setSpTenantId(String(settings[SETTING_KEYS.spTenantId] || ''));
@@ -106,7 +122,11 @@ export default function DateiaustauschDriveSettingsPage() {
                     .map((entry) => entry.trim().toLowerCase())
                     .filter(Boolean);
                 setAllowedExtensions(storedExtensions.length ? storedExtensions : [...EXTENSION_OPTIONS]);
-                if (statusPayload) setStatus(statusPayload as ConnectorStatus);
+                if (statusPayload) {
+                    const typed = statusPayload as ConnectorStatus;
+                    setStatus(typed);
+                    setGooglePrivateKeyStored(Boolean(typed.google?.hasPrivateKey));
+                }
             })
             .finally(() => {
                 if (active) setLoading(false);
@@ -129,12 +149,16 @@ export default function DateiaustauschDriveSettingsPage() {
 
     async function onSave(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
+        const extractedGoogle = tryExtractGoogleServiceAccount(googlePrivateKey);
+        const effectiveGoogleEmail = (googleClientEmail || extractedGoogle?.clientEmail || '').trim();
+        const effectiveGoogleKey = (extractedGoogle?.privateKey || googlePrivateKey || '').trim();
+
         if (provider === 'google_drive') {
-            if (!googleClientEmail.trim()) {
+            if (!effectiveGoogleEmail) {
                 toast.error('Google Client E-Mail fehlt.');
                 return;
             }
-            if (!googlePrivateKey.trim()) {
+            if (!effectiveGoogleKey && !googlePrivateKeyStored) {
                 toast.error('Google Private Key fehlt.');
                 return;
             }
@@ -180,13 +204,12 @@ export default function DateiaustauschDriveSettingsPage() {
 
         setSaving(true);
         try {
-            await Promise.all([
+            const saveTasks: Promise<void>[] = [
                 saveSetting(SETTING_KEYS.provider, provider),
                 saveSetting(SETTING_KEYS.customerFolderPrefix, (customerFolderPrefix || 'KD').trim()),
                 saveSetting(SETTING_KEYS.maxUploadMb, String(parsedUploadMb)),
                 saveSetting(SETTING_KEYS.allowedExtensions, allowedExtensions.join(',')),
-                saveSetting(SETTING_KEYS.googleClientEmail, googleClientEmail.trim()),
-                saveSetting(SETTING_KEYS.googlePrivateKey, googlePrivateKey.trim()),
+                saveSetting(SETTING_KEYS.googleClientEmail, effectiveGoogleEmail),
                 saveSetting(SETTING_KEYS.googleRootFolderId, googleRootFolderId.trim()),
                 saveSetting(SETTING_KEYS.googleSharedDriveId, googleSharedDriveId.trim()),
                 saveSetting(SETTING_KEYS.spTenantId, spTenantId.trim()),
@@ -195,12 +218,25 @@ export default function DateiaustauschDriveSettingsPage() {
                 saveSetting(SETTING_KEYS.spSiteId, spSiteId.trim()),
                 saveSetting(SETTING_KEYS.spDriveId, spDriveId.trim()),
                 saveSetting(SETTING_KEYS.spRootFolderId, spRootFolderId.trim()),
-            ]);
+            ];
+
+            if (effectiveGoogleKey) {
+                saveTasks.push(saveSetting(SETTING_KEYS.googlePrivateKey, effectiveGoogleKey));
+            }
+
+            await Promise.all(saveTasks);
             toast.success('Connector-Einstellungen gespeichert.');
+            if (effectiveGoogleKey) {
+                setGooglePrivateKey('');
+            }
 
             const statusRes = await apiFetch('/api/plugins/dateiaustausch_drive/admin/connector/status');
             const payload = await statusRes.json().catch(() => null);
-            if (statusRes.ok && payload) setStatus(payload as ConnectorStatus);
+            if (statusRes.ok && payload) {
+                const typed = payload as ConnectorStatus;
+                setStatus(typed);
+                setGooglePrivateKeyStored(Boolean(typed.google?.hasPrivateKey));
+            }
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
         } finally {
@@ -341,14 +377,19 @@ export default function DateiaustauschDriveSettingsPage() {
 
                 {provider === 'google_drive' ? (
                     <label className="field">
-                        <span className="label">Google Private Key (Service Account)</span>
+                        <span className="label">Google Private Key oder komplette Service-Account JSON</span>
                         <textarea
                             className="input"
                             rows={8}
                             value={googlePrivateKey}
                             onChange={(e) => setGooglePrivateKey(e.target.value)}
-                            placeholder={'-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----'}
+                            placeholder={'Option A: -----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\n\nOption B: komplette JSON-Datei einfügen'}
                         />
+                        <span className="text-muted" style={{ marginTop: 6, display: 'block' }}>
+                            {googlePrivateKeyStored
+                                ? 'Private Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Nur zum Ersetzen hier neu einfügen.'
+                                : 'Noch kein Private Key gespeichert.'}
+                        </span>
                     </label>
                 ) : null}
 

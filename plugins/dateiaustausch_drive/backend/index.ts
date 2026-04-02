@@ -111,7 +111,22 @@ function escapeDriveQuery(value: string): string {
 }
 
 function normalizePrivateKey(value: string): string {
-    return String(value || '').replace(/\\n/g, '\n').trim();
+    const raw = String(value || '').trim().replace(/^"+|"+$/g, '');
+    return raw.replace(/\\n/g, '\n').replace(/\r/g, '').trim();
+}
+
+function parseGoogleServiceAccountJson(raw: string): { clientEmail: string; privateKey: string } | null {
+    const input = String(raw || '').trim();
+    if (!input.startsWith('{')) return null;
+    try {
+        const parsed = JSON.parse(input) as { client_email?: unknown; private_key?: unknown };
+        const clientEmail = typeof parsed?.client_email === 'string' ? parsed.client_email.trim() : '';
+        const privateKey = typeof parsed?.private_key === 'string' ? parsed.private_key : '';
+        if (!clientEmail && !privateKey) return null;
+        return { clientEmail, privateKey };
+    } catch {
+        return null;
+    }
 }
 
 function parsePositiveInt(value: string, fallback: number, min: number, max: number): number {
@@ -281,6 +296,10 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
     const rawProvider = String(values.get(SETTING_KEYS.provider) || 'google_drive').trim();
     const provider: ConnectorProvider = rawProvider === 'sharepoint' ? 'sharepoint' : 'google_drive';
 
+    const googleClientEmailRaw = String(values.get(SETTING_KEYS.googleClientEmail) || '').trim();
+    const googlePrivateKeyRaw = String(values.get(SETTING_KEYS.googlePrivateKey) || '');
+    const serviceAccountJson = parseGoogleServiceAccountJson(googlePrivateKeyRaw);
+
     return {
         provider,
         customerFolderPrefix: String(values.get(SETTING_KEYS.customerFolderPrefix) || 'KD').trim() || 'KD',
@@ -292,8 +311,8 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
         ),
         allowedExtensions: parseAllowedExtensions(String(values.get(SETTING_KEYS.allowedExtensions) || '')),
         google: {
-            clientEmail: String(values.get(SETTING_KEYS.googleClientEmail) || '').trim(),
-            privateKey: normalizePrivateKey(String(values.get(SETTING_KEYS.googlePrivateKey) || '')),
+            clientEmail: googleClientEmailRaw || serviceAccountJson?.clientEmail || '',
+            privateKey: normalizePrivateKey(serviceAccountJson?.privateKey || googlePrivateKeyRaw),
             rootFolderId: String(values.get(SETTING_KEYS.googleRootFolderId) || '').trim(),
             sharedDriveId: String(values.get(SETTING_KEYS.googleSharedDriveId) || '').trim() || null,
         },
@@ -883,22 +902,26 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 status,
             });
         }
+        try {
+            if (settings.provider === 'sharepoint') {
+                const token = await getSharePointAccessToken(settings.sharepoint);
+                const folder = await graphJson<{ id: string; name: string }>(
+                    token,
+                    graphUrl(`/v1.0/sites/${encodeURIComponent(settings.sharepoint.siteId)}/drives/${encodeURIComponent(settings.sharepoint.driveId)}/items/${encodeURIComponent(settings.sharepoint.rootFolderId)}`, { $select: 'id,name' }),
+                );
+                return { success: true, status, rootFolder: folder };
+            }
 
-        if (settings.provider === 'sharepoint') {
-            const token = await getSharePointAccessToken(settings.sharepoint);
-            const folder = await graphJson<{ id: string; name: string }>(
+            const token = await getGoogleAccessToken(settings.google);
+            const folder = await googleJson<{ id: string; name: string; mimeType: string }>(
                 token,
-                graphUrl(`/v1.0/sites/${encodeURIComponent(settings.sharepoint.siteId)}/drives/${encodeURIComponent(settings.sharepoint.driveId)}/items/${encodeURIComponent(settings.sharepoint.rootFolderId)}`, { $select: 'id,name' }),
+                googleDriveUrl(`/drive/v3/files/${encodeURIComponent(settings.google.rootFolderId)}`, settings.google, { fields: 'id,name,mimeType', supportsAllDrives: 'true' }),
             );
             return { success: true, status, rootFolder: folder };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Verbindungstest fehlgeschlagen.';
+            return reply.status(400).send({ error: message, status });
         }
-
-        const token = await getGoogleAccessToken(settings.google);
-        const folder = await googleJson<{ id: string; name: string; mimeType: string }>(
-            token,
-            googleDriveUrl(`/drive/v3/files/${encodeURIComponent(settings.google.rootFolderId)}`, settings.google, { fields: 'id,name,mimeType', supportsAllDrives: 'true' }),
-        );
-        return { success: true, status, rootFolder: folder };
     });
 
     fastify.get('/public/files', {
