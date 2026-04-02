@@ -16,20 +16,21 @@ const backendRequire = createRequire(new URL('../../../backend/package.json', im
 
 type ArchiverFactory = typeof import('archiver').default;
 
-function resolveArchiverFactory(): ArchiverFactory {
+function resolveArchiverFactory(): { factory: ArchiverFactory | null; reason: string | null } {
     try {
-        return pluginRequire('archiver');
+        return { factory: pluginRequire('archiver'), reason: null };
     } catch {
         try {
-            return backendRequire('archiver');
+            return { factory: backendRequire('archiver'), reason: null };
         } catch (error: any) {
             const reason = error instanceof Error ? error.message : String(error || 'unknown error');
-            throw new Error(`Archiver konnte nicht geladen werden. Bitte Backend-Dependencies installieren. Grund: ${reason}`);
+            return { factory: null, reason };
         }
     }
 }
 
-const createZipArchiver = resolveArchiverFactory();
+const archiverResolution = resolveArchiverFactory();
+const createZipArchiver = archiverResolution.factory;
 
 const PLUGIN_ID = 'dateiaustausch_drive';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
@@ -1752,6 +1753,12 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             reply.header('Content-Type', 'application/zip');
             reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
             reply.raw.writeHead(200);
+
+            if (!createZipArchiver) {
+                return reply.status(503).send({
+                    error: `ZIP-Download aktuell nicht verfügbar (archiver fehlt: ${archiverResolution.reason || 'unbekannt'}).`,
+                });
+            }
 
             const archive = createZipArchiver('zip', { zlib: { level: 6 } });
             archive.on('error', (err) => {

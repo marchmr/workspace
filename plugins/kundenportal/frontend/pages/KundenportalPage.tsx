@@ -305,6 +305,15 @@ export default function KundenportalPage() {
                                             maxLength={1}
                                             value={code[i] || ''}
                                             autoFocus={i === 0}
+                                            onPaste={(e) => {
+                                                e.preventDefault();
+                                                const pasted = (e.clipboardData.getData('text') || '').replace(/\D/g, '').slice(0, 6);
+                                                if (!pasted) return;
+                                                setCode(pasted.padEnd(6, '').slice(0, 6));
+                                                const boxes = e.currentTarget.parentElement?.querySelectorAll('.vp-code-digit') as NodeListOf<HTMLInputElement>;
+                                                const focusIdx = Math.min(pasted.length, 5);
+                                                setTimeout(() => boxes?.[focusIdx]?.focus(), 0);
+                                            }}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Backspace' && !code[i] && i > 0) {
                                                     const prev = e.currentTarget.previousElementSibling as HTMLInputElement | null;
@@ -315,14 +324,6 @@ export default function KundenportalPage() {
                                                 const val = (e.target as HTMLInputElement).value.replace(/\D/g, '');
                                                 if (!val) {
                                                     setCode((prev: string) => { const a = prev.split(''); a[i] = ''; return a.join(''); });
-                                                    return;
-                                                }
-                                                if (val.length > 1) {
-                                                    const pasted = val.slice(0, 6);
-                                                    setCode(pasted);
-                                                    const boxes = e.currentTarget.parentElement?.querySelectorAll('.vp-code-digit') as NodeListOf<HTMLInputElement>;
-                                                    const focusIdx = Math.min(pasted.length, 5);
-                                                    boxes?.[focusIdx]?.focus();
                                                     return;
                                                 }
                                                 setCode((prev: string) => {

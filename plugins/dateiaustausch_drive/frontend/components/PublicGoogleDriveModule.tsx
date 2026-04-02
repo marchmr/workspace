@@ -213,10 +213,12 @@ export default function PublicGoogleDriveModule() {
         });
     }, [entries, searchTerm]);
 
-    const quickFolders = useMemo(
-        () => visibleEntries.filter((entry) => entry.isFolder).slice(0, 10),
-        [visibleEntries],
-    );
+    const quickFolders = useMemo(() => {
+        // While a path switch is loading, avoid rendering stale folder entries from the
+        // previous path to prevent temporary duplicate labels in the sidebar.
+        if (loading) return [];
+        return visibleEntries.filter((entry) => entry.isFolder).slice(0, 10);
+    }, [visibleEntries, loading]);
     const queuedFilesTotalBytes = useMemo(
         () => selectedFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
         [selectedFiles],
