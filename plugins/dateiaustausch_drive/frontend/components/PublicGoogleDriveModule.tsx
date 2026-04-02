@@ -20,6 +20,26 @@ type ListResponse = {
     uploadFolderName?: string;
 };
 
+function getExt(name: string): string {
+    const dot = String(name || '').lastIndexOf('.');
+    if (dot < 0) return '';
+    return String(name || '').slice(dot).toLowerCase();
+}
+
+function isImageEntry(entry: Entry): boolean {
+    if (String(entry.mimeType || '').toLowerCase().startsWith('image/')) return true;
+    return new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']).has(getExt(entry.name));
+}
+
+function isPdfEntry(entry: Entry): boolean {
+    if (String(entry.mimeType || '').toLowerCase().includes('pdf')) return true;
+    return getExt(entry.name) === '.pdf';
+}
+
+function isPreviewableEntry(entry: Entry): boolean {
+    return !entry.isFolder && (isImageEntry(entry) || isPdfEntry(entry));
+}
+
 function formatDate(value: string | null): string {
     if (!value) return '-';
     const date = new Date(value);
@@ -106,6 +126,7 @@ export default function PublicGoogleDriveModule() {
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
+    const [previewEntry, setPreviewEntry] = useState<Entry | null>(null);
 
     const pathParts = useMemo(
         () => String(currentPath || '').split('/').map((part) => part.trim()).filter(Boolean),
@@ -179,6 +200,10 @@ export default function PublicGoogleDriveModule() {
         () => visibleEntries.filter((entry) => entry.isFolder).slice(0, 10),
         [visibleEntries],
     );
+    const previewEntries = useMemo(
+        () => visibleEntries.filter((entry) => isPreviewableEntry(entry)).slice(0, 24),
+        [visibleEntries],
+    );
     const queuedFilesTotalBytes = useMemo(
         () => selectedFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
         [selectedFiles],
@@ -229,6 +254,14 @@ export default function PublicGoogleDriveModule() {
     function clearQueuedFiles() {
         setSelectedFiles([]);
         if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+
+    function buildFileUrl(fileId: string, mode: 'download' | 'preview'): string {
+        const params = new URLSearchParams();
+        if (currentPath) params.set('folderPath', currentPath);
+        params.set('sessionToken', sessionToken);
+        const qs = params.toString();
+        return `/api/plugins/dateiaustausch_drive/public/files/${encodeURIComponent(fileId)}/${mode}?${qs}`;
     }
 
     async function download(fileId: string, fileName: string) {
@@ -460,6 +493,36 @@ export default function PublicGoogleDriveModule() {
                     {success ? <p className="text-success">{success}</p> : null}
                     {uploadProgress !== null ? <p className="text-muted">Upload-Fortschritt: {uploadProgress}%</p> : null}
 
+                    {previewEntries.length > 0 ? (
+                        <div className="dtxd-preview-grid">
+                            {previewEntries.map((entry) => (
+                                <button
+                                    key={`preview-${entry.id}`}
+                                    type="button"
+                                    className="dtxd-preview-card"
+                                    onClick={() => setPreviewEntry(entry)}
+                                    title={`${entry.name} öffnen`}
+                                >
+                                    <div className="dtxd-preview-media">
+                                        {isImageEntry(entry) ? (
+                                            <img
+                                                src={buildFileUrl(entry.id, 'preview')}
+                                                loading="lazy"
+                                                alt={entry.name}
+                                            />
+                                        ) : (
+                                            <div className="dtxd-preview-pdf">PDF</div>
+                                        )}
+                                    </div>
+                                    <div className="dtxd-preview-meta">
+                                        <div className="dtxd-preview-name">{entry.name}</div>
+                                        <div className="text-muted">{formatDate(entry.modifiedTime)}</div>
+                                    </div>
+                                </button>
+                            ))}
+                        </div>
+                    ) : null}
+
                     <div className="dtxd-table-wrap">
                         <table className="dtxd-table">
                             <thead>
@@ -530,10 +593,18 @@ export default function PublicGoogleDriveModule() {
                                                     <span>Öffnen</span>
                                                 </button>
                                             ) : (
-                                                <button className="dtxd-inline-action" type="button" onClick={() => download(entry.id, entry.name)}>
-                                                    <Icon path={ICONS.download} />
-                                                    <span>Download</span>
-                                                </button>
+                                                <div className="dtxd-row-actions">
+                                                    {isPreviewableEntry(entry) ? (
+                                                        <button className="dtxd-inline-action" type="button" onClick={() => setPreviewEntry(entry)}>
+                                                            <Icon path={ICONS.open} />
+                                                            <span>Vorschau</span>
+                                                        </button>
+                                                    ) : null}
+                                                    <button className="dtxd-inline-action" type="button" onClick={() => download(entry.id, entry.name)}>
+                                                        <Icon path={ICONS.download} />
+                                                        <span>Download</span>
+                                                    </button>
+                                                </div>
                                             )}
                                         </td>
                                     </tr>
@@ -543,6 +614,31 @@ export default function PublicGoogleDriveModule() {
                     </div>
                 </section>
             </div>
+
+            {previewEntry ? (
+                <div className="dtxd-preview-modal-overlay" onClick={() => setPreviewEntry(null)}>
+                    <div className="dtxd-preview-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="dtxd-preview-modal-head">
+                            <strong>{previewEntry.name}</strong>
+                            <div className="dtxd-row-actions">
+                                <button className="btn btn-secondary" type="button" onClick={() => download(previewEntry.id, previewEntry.name)}>
+                                    Download
+                                </button>
+                                <button className="btn btn-secondary" type="button" onClick={() => setPreviewEntry(null)}>
+                                    Schließen
+                                </button>
+                            </div>
+                        </div>
+                        <div className="dtxd-preview-modal-body">
+                            {isImageEntry(previewEntry) ? (
+                                <img src={buildFileUrl(previewEntry.id, 'preview')} alt={previewEntry.name} />
+                            ) : (
+                                <iframe src={buildFileUrl(previewEntry.id, 'preview')} title={previewEntry.name} />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }

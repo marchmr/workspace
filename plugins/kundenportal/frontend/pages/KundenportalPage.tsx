@@ -295,10 +295,6 @@ export default function KundenportalPage() {
                             </form>
                         ) : (
                             <form onSubmit={verifyCode} className="vp-stack vp-access-form vp-access-form-code">
-                                <button className="vp-back-circle" type="button" onClick={() => { setCodeRequested(false); setCode(''); setError(null); }} title="Zurück zur E-Mail Eingabe">
-                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-                                    <span>Zurück zur E-Mail Eingabe</span>
-                                </button>
                                 <div className="vp-code-boxes">
                                     {[0, 1, 2, 3, 4, 5].map((i) => (
                                         <input
@@ -344,6 +340,10 @@ export default function KundenportalPage() {
                                     ))}
                                 </div>
                                 <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading || code.replace(/\D/g, '').length < 6}>{loading ? 'Prüfe Code...' : 'Anmelden'}</button>
+                                <button className="vp-back-circle" type="button" onClick={() => { setCodeRequested(false); setCode(''); setError(null); }} title="Zurück zur E-Mail Eingabe">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                                    <span>Zurück zur E-Mail Eingabe</span>
+                                </button>
                             </form>
                         )}
 

@@ -25,6 +25,9 @@ const SUPPORTED_EXTENSIONS = [
     '.zip',
 ];
 const SUPPORTED_EXTENSIONS_SET = new Set(SUPPORTED_EXTENSIONS);
+const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.svg']);
+const PREVIEWABLE_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
+const MAX_PREVIEW_BYTES = 25 * 1024 * 1024;
 const ALLOWED_MIME_BY_EXTENSION: Record<string, string[]> = {
     '.jpg': ['image/jpeg'],
     '.jpeg': ['image/jpeg'],
@@ -246,6 +249,23 @@ function isAllowedMimeForFile(fileName: string, mimeTypeRaw: string): boolean {
     const allowed = ALLOWED_MIME_BY_EXTENSION[ext];
     if (!allowed || allowed.length === 0) return false;
     return allowed.includes(normalizedMime);
+}
+
+function getFileExtension(fileName: string): string {
+    return path.extname(String(fileName || '')).toLowerCase();
+}
+
+function isPreviewableByExtension(fileName: string): boolean {
+    const ext = getFileExtension(fileName);
+    return PREVIEWABLE_IMAGE_EXTENSIONS.has(ext) || PREVIEWABLE_DOCUMENT_EXTENSIONS.has(ext);
+}
+
+function isPdfByExtension(fileName: string): boolean {
+    return PREVIEWABLE_DOCUMENT_EXTENSIONS.has(getFileExtension(fileName));
+}
+
+function isImageByExtension(fileName: string): boolean {
+    return PREVIEWABLE_IMAGE_EXTENSIONS.has(getFileExtension(fileName));
 }
 
 function normalizeProviderErrorMessage(error: unknown): string {
@@ -1191,6 +1211,90 @@ async function streamProviderDownload(
     reply.raw.end();
 }
 
+async function streamProviderPreview(
+    settings: ConnectorSettings,
+    ctx: ProviderContext,
+    parentFolderId: string,
+    fileId: string,
+    reply: any,
+): Promise<void> {
+    if (ctx.provider === 'sharepoint') {
+        const children = await listProviderEntries(settings, ctx, parentFolderId);
+        const selected = children.find((entry) => !entry.isFolder && entry.id === fileId);
+        if (!selected) throw new Error('Datei nicht gefunden.');
+        if (!isPreviewableByExtension(selected.name)) {
+            throw new Error('Für diesen Dateityp ist keine Vorschau verfügbar.');
+        }
+
+        const itemMetaUrl = graphUrl(`/v1.0/sites/${encodeURIComponent(settings.sharepoint.siteId)}/drives/${encodeURIComponent(settings.sharepoint.driveId)}/items/${encodeURIComponent(fileId)}`, {
+            $select: 'id,name,size,@microsoft.graph.downloadUrl',
+        });
+        const itemMeta = await graphJson<Record<string, any>>(ctx.accessToken, itemMetaUrl);
+        const downloadUrl = String(itemMeta['@microsoft.graph.downloadUrl'] || '');
+        if (!downloadUrl) throw new Error('Download-URL konnte nicht ermittelt werden.');
+        const size = Number(itemMeta.size || 0);
+        if (Number.isFinite(size) && size > MAX_PREVIEW_BYTES) {
+            throw new Error(`Vorschau ist auf ${Math.round(MAX_PREVIEW_BYTES / (1024 * 1024))} MB begrenzt.`);
+        }
+
+        const mediaRes = await fetch(downloadUrl);
+        if (!mediaRes.ok || !mediaRes.body) {
+            const payload = await mediaRes.text().catch(() => '');
+            throw new Error(`Vorschau fehlgeschlagen (${mediaRes.status}). ${payload}`);
+        }
+
+        const fileName = sanitizeUploadFileName(String(itemMeta.name || selected.name || 'preview'));
+        const contentType = mediaRes.headers.get('content-type')
+            || (isPdfByExtension(fileName) ? 'application/pdf' : 'image/*');
+        reply.header('Content-Type', contentType);
+        reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        reply.header('Cache-Control', 'private, max-age=60');
+        reply.raw.writeHead(200);
+        for await (const chunk of mediaRes.body as any) reply.raw.write(chunk);
+        reply.raw.end();
+        return;
+    }
+
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
+    const listUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
+        fields: 'id,name,mimeType,parents,size',
+        supportsAllDrives: 'true',
+    });
+    const fileMeta = await googleJson<{ id: string; name: string; mimeType: string; parents?: string[]; size?: string }>(ctx.accessToken, listUrl);
+    if (!Array.isArray(fileMeta.parents) || !fileMeta.parents.includes(parentFolderId)) {
+        throw new Error('Datei nicht gefunden.');
+    }
+    if (!isPreviewableByExtension(fileMeta.name || '')) {
+        throw new Error('Für diesen Dateityp ist keine Vorschau verfügbar.');
+    }
+    const size = Number(fileMeta.size || 0);
+    if (Number.isFinite(size) && size > MAX_PREVIEW_BYTES) {
+        throw new Error(`Vorschau ist auf ${Math.round(MAX_PREVIEW_BYTES / (1024 * 1024))} MB begrenzt.`);
+    }
+
+    const mediaUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
+        alt: 'media',
+        supportsAllDrives: 'true',
+    });
+    const mediaRes = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${ctx.accessToken}` } });
+    if (!mediaRes.ok || !mediaRes.body) {
+        const payload = await mediaRes.text().catch(() => '');
+        throw new Error(`Vorschau fehlgeschlagen (${mediaRes.status}). ${payload}`);
+    }
+
+    const fileName = sanitizeUploadFileName(fileMeta.name || 'preview');
+    const contentType = fileMeta.mimeType
+        || (isPdfByExtension(fileName) ? 'application/pdf' : 'image/*');
+    reply.header('Content-Type', contentType);
+    reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+    reply.header('Cache-Control', 'private, max-age=60');
+    reply.raw.writeHead(200);
+    for await (const chunk of mediaRes.body as any) reply.raw.write(chunk);
+    reply.raw.end();
+}
+
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
 
@@ -1514,6 +1618,36 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         } catch (error: any) {
             const statusCode = resolveErrorStatusCode(error);
             return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'Download fehlgeschlagen.' });
+        }
+    });
+
+    fastify.get('/public/files/:fileId/preview', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true }, rateLimit: { max: 90, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
+        const fileId = String((request.params as any)?.fileId || '').trim();
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        if (!fileId) return reply.status(400).send({ error: 'Datei-ID ist erforderlich.' });
+
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const settings = await loadConnectorSettings(db);
+        const status = connectorStatus(settings);
+        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+
+        try {
+            const ctx = await resolveProviderContext(db, settings, session);
+            const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            await streamProviderPreview(settings, ctx, folder.id, fileId, reply);
+            return reply;
+        } catch (error: any) {
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'Vorschau fehlgeschlagen.' });
         }
     });
 }
