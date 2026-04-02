@@ -1,6 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_SESSION_KEY = 'kundenportal.session';
+const API_BASE_PRIMARY = '/api/plugins/dateiaustausch_drive';
+const API_BASE_FALLBACK = '/api/plugins/dateiaustausch';
 
 type Entry = {
     id: string;
@@ -118,6 +120,7 @@ export default function PublicGoogleDriveModule() {
     const [currentPath, setCurrentPath] = useState('');
     const [uploadFolderName, setUploadFolderName] = useState('');
     const [provider, setProvider] = useState<'google_drive' | 'sharepoint'>('google_drive');
+    const [apiBase, setApiBase] = useState(API_BASE_PRIMARY);
     const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
@@ -138,6 +141,22 @@ export default function PublicGoogleDriveModule() {
         setCurrentPath(parts.join('/'));
     }, []);
 
+    const requestPluginApi = useCallback(async (pathName: string, init?: RequestInit): Promise<Response> => {
+        const run = async (base: string): Promise<Response> => fetch(`${base}${pathName}`, init);
+
+        const primary = await run(apiBase);
+        if (primary.status !== 404) return primary;
+
+        const altBase = apiBase === API_BASE_PRIMARY ? API_BASE_FALLBACK : API_BASE_PRIMARY;
+        const fallback = await run(altBase);
+        if (fallback.ok || fallback.status !== 404) {
+            setApiBase(altBase);
+            return fallback;
+        }
+
+        return primary;
+    }, [apiBase]);
+
     const load = useCallback(async () => {
         const requestId = ++loadRequestIdRef.current;
         if (!sessionToken) {
@@ -151,11 +170,9 @@ export default function PublicGoogleDriveModule() {
             const params = new URLSearchParams();
             if (currentPath) params.set('folderPath', currentPath);
             const query = params.toString();
-            const url = query
-                ? `/api/plugins/dateiaustausch_drive/public/files?${query}`
-                : '/api/plugins/dateiaustausch_drive/public/files';
+            const pathName = query ? `/public/files?${query}` : '/public/files';
 
-            const res = await fetch(url, {
+            const res = await requestPluginApi(pathName, {
                 headers: { 'x-public-session-token': sessionToken },
             });
             const payload = await res.json().catch(() => ({}));
@@ -174,7 +191,7 @@ export default function PublicGoogleDriveModule() {
         } finally {
             if (requestId === loadRequestIdRef.current) setLoading(false);
         }
-    }, [sessionToken, currentPath]);
+    }, [sessionToken, currentPath, requestPluginApi]);
 
     useEffect(() => {
         load();
@@ -218,7 +235,7 @@ export default function PublicGoogleDriveModule() {
             selectedFiles.forEach((file) => {
                 formData.append('file', file, file.name);
             });
-            const uploadRes = await fetch('/api/plugins/dateiaustausch_drive/public/files/upload', {
+            const uploadRes = await requestPluginApi('/public/files/upload', {
                 method: 'POST',
                 headers: {
                     'x-public-session-token': sessionToken,
@@ -257,7 +274,7 @@ export default function PublicGoogleDriveModule() {
         if (currentPath) params.set('folderPath', currentPath);
         params.set('sessionToken', sessionToken);
         const qs = params.toString();
-        return `/api/plugins/dateiaustausch_drive/public/files/${encodeURIComponent(fileId)}/${mode}?${qs}`;
+        return `${apiBase}/public/files/${encodeURIComponent(fileId)}/${mode}?${qs}`;
     }
 
     async function download(fileId: string, fileName: string) {
@@ -265,11 +282,11 @@ export default function PublicGoogleDriveModule() {
         const params = new URLSearchParams();
         if (currentPath) params.set('folderPath', currentPath);
         const query = params.toString();
-        const url = query
-            ? `/api/plugins/dateiaustausch_drive/public/files/${encodeURIComponent(fileId)}/download?${query}`
-            : `/api/plugins/dateiaustausch_drive/public/files/${encodeURIComponent(fileId)}/download`;
+        const pathName = query
+            ? `/public/files/${encodeURIComponent(fileId)}/download?${query}`
+            : `/public/files/${encodeURIComponent(fileId)}/download`;
 
-        const res = await fetch(url, {
+        const res = await requestPluginApi(pathName, {
             headers: { 'x-public-session-token': sessionToken },
         });
         if (!res.ok) {
@@ -301,11 +318,11 @@ export default function PublicGoogleDriveModule() {
             const params = new URLSearchParams();
             if (currentPath) params.set('folderPath', currentPath);
             const query = params.toString();
-            const url = query
-                ? `/api/plugins/dateiaustausch_drive/public/items/download?${query}`
-                : '/api/plugins/dateiaustausch_drive/public/items/download';
+            const pathName = query
+                ? `/public/items/download?${query}`
+                : '/public/items/download';
 
-            const res = await fetch(url, {
+            const res = await requestPluginApi(pathName, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -360,11 +377,11 @@ export default function PublicGoogleDriveModule() {
             const params = new URLSearchParams();
             if (currentPath) params.set('folderPath', currentPath);
             const query = params.toString();
-            const url = query
-                ? `/api/plugins/dateiaustausch_drive/public/items/delete?${query}`
-                : '/api/plugins/dateiaustausch_drive/public/items/delete';
+            const pathName = query
+                ? `/public/items/delete?${query}`
+                : '/public/items/delete';
 
-            const res = await fetch(url, {
+            const res = await requestPluginApi(pathName, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
