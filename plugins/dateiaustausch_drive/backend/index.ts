@@ -258,6 +258,22 @@ function normalizeProviderErrorMessage(error: unknown): string {
     return raw || 'Cloud-Anfrage fehlgeschlagen.';
 }
 
+function resolveErrorStatusCode(error: unknown): number {
+    const explicit = Number((error as any)?.statusCode || (error as any)?.status || 0);
+    if (Number.isFinite(explicit) && explicit >= 400 && explicit < 600) return explicit;
+    const message = String((error as any)?.message || '').toLowerCase();
+    if (message.includes('zu viele anfragen') || message.includes('rate limit') || message.includes('too many requests')) {
+        return 429;
+    }
+    if (message.includes('ungültig') || message.includes('ist erforderlich') || message.includes('nicht erlaubt')) {
+        return 400;
+    }
+    if (message.includes('abgelaufen') || message.includes('unauthorized')) {
+        return 401;
+    }
+    return 502;
+}
+
 function resolvePublicSessionToken(request: any): string {
     const fromHeader = request.headers['x-public-session-token'];
     if (typeof fromHeader === 'string' && fromHeader.trim()) return fromHeader.trim();
@@ -1217,91 +1233,101 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true }, rateLimit: { max: 30, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
-        const sessionToken = resolvePublicSessionToken(request);
-        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
-        const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
-        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+        try {
+            const sessionToken = resolvePublicSessionToken(request);
+            if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+            await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const settings = await loadConnectorSettings(db);
-        const status = connectorStatus(settings);
-        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+            const settings = await loadConnectorSettings(db);
+            const status = connectorStatus(settings);
+            if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
 
-        const ctx = await resolveProviderContext(db, settings, session);
-        const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
-        const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
-        const entries = await listProviderEntries(settings, ctx, folder.id);
-        return {
-            provider: ctx.provider,
-            folderId: folder.id,
-            folderName: relativeParts.length ? relativeParts[relativeParts.length - 1] : ctx.companyFolderName,
-            baseFolderName: ctx.companyFolderName,
-            currentPath: joinRelativeFolderPath(relativeParts),
-            uploadFolderName: ctx.uploadFolderName,
-            entries,
-        };
+            const ctx = await resolveProviderContext(db, settings, session);
+            const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
+            const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            const entries = await listProviderEntries(settings, ctx, folder.id);
+            return {
+                provider: ctx.provider,
+                folderId: folder.id,
+                folderName: relativeParts.length ? relativeParts[relativeParts.length - 1] : ctx.companyFolderName,
+                baseFolderName: ctx.companyFolderName,
+                currentPath: joinRelativeFolderPath(relativeParts),
+                uploadFolderName: ctx.uploadFolderName,
+                entries,
+            };
+        } catch (error: any) {
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) });
+        }
     });
 
     fastify.post('/public/files/upload/session', {
         config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
-        const sessionToken = resolvePublicSessionToken(request);
-        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
-        const session = await verifyPublicSessionByToken(db, sessionToken);
-        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
-        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+        try {
+            const sessionToken = resolvePublicSessionToken(request);
+            if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+            await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
 
-        const settings = await loadConnectorSettings(db);
-        const status = connectorStatus(settings);
-        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+            const settings = await loadConnectorSettings(db);
+            const status = connectorStatus(settings);
+            if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
 
-        const body = (request.body || {}) as {
-            fileName?: string;
-            mimeType?: string;
-            sizeBytes?: number;
-        };
-        const fileName = String(body.fileName || '').trim();
-        const mimeType = String(body.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
-        const sizeBytes = Number(body.sizeBytes || 0);
+            const body = (request.body || {}) as {
+                fileName?: string;
+                mimeType?: string;
+                sizeBytes?: number;
+            };
+            const fileName = String(body.fileName || '').trim();
+            const mimeType = String(body.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+            const sizeBytes = Number(body.sizeBytes || 0);
 
-        if (!fileName) return reply.status(400).send({ error: 'Dateiname ist erforderlich.' });
-        if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
-            return reply.status(400).send({ error: 'Dateigröße ist ungültig.' });
-        }
-        const allowedExtensions = new Set(settings.allowedExtensions);
-        if (!isAllowedFileName(fileName, allowedExtensions)) {
-            return reply.status(400).send({ error: `Dateityp nicht erlaubt. Erlaubt: ${settings.allowedExtensions.join(', ')}` });
-        }
-        if (!isAllowedMimeForFile(fileName, mimeType)) {
-            return reply.status(400).send({ error: 'MIME-Typ passt nicht zur Dateiendung.' });
-        }
+            if (!fileName) return reply.status(400).send({ error: 'Dateiname ist erforderlich.' });
+            if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+                return reply.status(400).send({ error: 'Dateigröße ist ungültig.' });
+            }
+            const allowedExtensions = new Set(settings.allowedExtensions);
+            if (!isAllowedFileName(fileName, allowedExtensions)) {
+                return reply.status(400).send({ error: `Dateityp nicht erlaubt. Erlaubt: ${settings.allowedExtensions.join(', ')}` });
+            }
+            if (!isAllowedMimeForFile(fileName, mimeType)) {
+                return reply.status(400).send({ error: 'MIME-Typ passt nicht zur Dateiendung.' });
+            }
 
-        const maxUploadBytes = Math.max(1, settings.maxUploadMb) * 1024 * 1024;
-        if (sizeBytes > maxUploadBytes) {
-            return reply.status(400).send({ error: `Datei ist zu groß (max. ${settings.maxUploadMb} MB).` });
-        }
+            const maxUploadBytes = Math.max(1, settings.maxUploadMb) * 1024 * 1024;
+            if (sizeBytes > maxUploadBytes) {
+                return reply.status(400).send({ error: `Datei ist zu groß (max. ${settings.maxUploadMb} MB).` });
+            }
 
-        const ctx = await resolveProviderContext(db, settings, session);
-        const uploadSession = await createProviderUploadSession(
-            settings,
-            ctx,
-            fileName,
-            mimeType,
-            sizeBytes,
-        );
-
-        return reply.status(201).send({
-            success: true,
-            provider: ctx.provider,
-            folderName: `${ctx.companyFolderName}/${ctx.uploadFolderName}`,
-            session: uploadSession,
-            file: {
-                name: sanitizeUploadFileName(fileName),
+            const ctx = await resolveProviderContext(db, settings, session);
+            const uploadSession = await createProviderUploadSession(
+                settings,
+                ctx,
+                fileName,
                 mimeType,
-                size: sizeBytes,
-            },
-        });
+                sizeBytes,
+            );
+
+            return reply.status(201).send({
+                success: true,
+                provider: ctx.provider,
+                folderName: `${ctx.companyFolderName}/${ctx.uploadFolderName}`,
+                session: uploadSession,
+                file: {
+                    name: sanitizeUploadFileName(fileName),
+                    mimeType,
+                    size: sizeBytes,
+                },
+            });
+        } catch (error: any) {
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) });
+        }
     });
 
     fastify.post('/public/files/upload', {

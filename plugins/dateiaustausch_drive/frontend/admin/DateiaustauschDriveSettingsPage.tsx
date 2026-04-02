@@ -107,6 +107,9 @@ export default function DateiaustauschDriveSettingsPage() {
     const [maxUploadMb, setMaxUploadMb] = useState('1024');
     const [allowedExtensions, setAllowedExtensions] = useState<string[]>([...EXTENSION_OPTIONS]);
     const [status, setStatus] = useState<ConnectorStatus | null>(null);
+    const [wizardOpen, setWizardOpen] = useState(false);
+    const [wizardStep, setWizardStep] = useState(1);
+    const [showAdvanced, setShowAdvanced] = useState(false);
 
     useEffect(() => {
         let active = true;
@@ -168,8 +171,7 @@ export default function DateiaustauschDriveSettingsPage() {
         }
     }
 
-    async function onSave(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
+    function validateForSave(): string | null {
         const extractedGoogle = tryExtractGoogleServiceAccount(googlePrivateKey);
         const effectiveGoogleEmail = (googleClientEmail || extractedGoogle?.clientEmail || '').trim();
         const effectiveGoogleKey = (extractedGoogle?.privateKey || googlePrivateKey || '').trim();
@@ -177,66 +179,66 @@ export default function DateiaustauschDriveSettingsPage() {
         if (provider === 'google_drive') {
             if (googleAuthMode === 'oauth_refresh') {
                 if (!googleOAuthClientId.trim()) {
-                    toast.error('Google OAuth Client ID fehlt.');
-                    return;
+                    return 'Google OAuth Client ID fehlt.';
                 }
                 if (!googleOAuthClientSecret.trim() && !googleOAuthClientSecretStored) {
-                    toast.error('Google OAuth Client Secret fehlt.');
-                    return;
+                    return 'Google OAuth Client Secret fehlt.';
                 }
                 if (!googleOAuthRefreshToken.trim() && !googleOAuthRefreshTokenStored) {
-                    toast.error('Google OAuth Refresh Token fehlt.');
-                    return;
+                    return 'Google OAuth Refresh Token fehlt.';
                 }
             } else {
                 if (!effectiveGoogleEmail) {
-                    toast.error('Google Client E-Mail fehlt.');
-                    return;
+                    return 'Google Client E-Mail fehlt.';
                 }
                 if (!effectiveGoogleKey && !googlePrivateKeyStored) {
-                    toast.error('Google Private Key fehlt.');
-                    return;
+                    return 'Google Private Key fehlt.';
                 }
             }
             if (!googleRootFolderId.trim()) {
-                toast.error('Google Root Folder ID fehlt.');
-                return;
+                return 'Google Root Folder ID fehlt.';
             }
         } else {
             if (!spTenantId.trim()) {
-                toast.error('SharePoint Tenant ID fehlt.');
-                return;
+                return 'SharePoint Tenant ID fehlt.';
             }
             if (!spClientId.trim()) {
-                toast.error('SharePoint Client ID fehlt.');
-                return;
+                return 'SharePoint Client ID fehlt.';
             }
             if (!spClientSecret.trim()) {
-                toast.error('SharePoint Client Secret fehlt.');
-                return;
+                return 'SharePoint Client Secret fehlt.';
             }
             if (!spSiteId.trim()) {
-                toast.error('SharePoint Site ID fehlt.');
-                return;
+                return 'SharePoint Site ID fehlt.';
             }
             if (!spDriveId.trim()) {
-                toast.error('SharePoint Drive ID fehlt.');
-                return;
+                return 'SharePoint Drive ID fehlt.';
             }
             if (!spRootFolderId.trim()) {
-                toast.error('SharePoint Root Folder ID fehlt.');
-                return;
+                return 'SharePoint Root Folder ID fehlt.';
             }
         }
         const parsedUploadMb = Number.parseInt(maxUploadMb, 10);
         if (!Number.isFinite(parsedUploadMb) || parsedUploadMb < 1 || parsedUploadMb > 1024) {
-            toast.error('Max Upload muss zwischen 1 und 1024 MB liegen.');
-            return;
+            return 'Max Upload muss zwischen 1 und 1024 MB liegen.';
         }
         if (allowedExtensions.length === 0) {
-            toast.error('Bitte mindestens eine Dateiendung erlauben.');
-            return;
+            return 'Bitte mindestens eine Dateiendung erlauben.';
         }
+        return null;
+    }
+
+    async function persistSettings(showSuccessToast = true): Promise<boolean> {
+        const validationError = validateForSave();
+        if (validationError) {
+            toast.error(validationError);
+            return false;
+        }
+
+        const extractedGoogle = tryExtractGoogleServiceAccount(googlePrivateKey);
+        const effectiveGoogleEmail = (googleClientEmail || extractedGoogle?.clientEmail || '').trim();
+        const effectiveGoogleKey = (extractedGoogle?.privateKey || googlePrivateKey || '').trim();
+        const parsedUploadMb = Number.parseInt(maxUploadMb, 10);
 
         setSaving(true);
         try {
@@ -269,7 +271,7 @@ export default function DateiaustauschDriveSettingsPage() {
             }
 
             await Promise.all(saveTasks);
-            toast.success('Connector-Einstellungen gespeichert.');
+            if (showSuccessToast) toast.success('Connector-Einstellungen gespeichert.');
             if (effectiveGoogleKey) {
                 setGooglePrivateKey('');
             }
@@ -290,11 +292,18 @@ export default function DateiaustauschDriveSettingsPage() {
                 setGoogleOAuthClientSecretStored(Boolean(typed.google?.hasOAuthClientSecret));
                 setGoogleOAuthRefreshTokenStored(Boolean(typed.google?.hasOAuthRefreshToken));
             }
+            return true;
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
+            return false;
         } finally {
             setSaving(false);
         }
+    }
+
+    async function onSave(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        await persistSettings(true);
     }
 
     function toggleExtension(extension: string) {
@@ -317,6 +326,33 @@ export default function DateiaustauschDriveSettingsPage() {
         } finally {
             setTesting(false);
         }
+    }
+
+    function openWizard() {
+        setWizardStep(1);
+        setWizardOpen(true);
+    }
+
+    function nextWizardStep() {
+        if (wizardStep === 1) {
+            const parsedUploadMb = Number.parseInt(maxUploadMb, 10);
+            if (!Number.isFinite(parsedUploadMb) || parsedUploadMb < 1 || parsedUploadMb > 1024) {
+                toast.error('Max Upload muss zwischen 1 und 1024 MB liegen.');
+                return;
+            }
+            if (allowedExtensions.length === 0) {
+                toast.error('Bitte mindestens eine Dateiendung erlauben.');
+                return;
+            }
+        }
+        if (wizardStep === 2) {
+            const validationError = validateForSave();
+            if (validationError) {
+                toast.error(validationError);
+                return;
+            }
+        }
+        setWizardStep((prev) => Math.min(3, prev + 1));
     }
 
     if (loading) {
@@ -346,7 +382,22 @@ export default function DateiaustauschDriveSettingsPage() {
                 </div>
             ) : null}
 
-            <form className="dtxd-stack" onSubmit={onSave}>
+            <div className="card dtxd-setup-card">
+                <div>
+                    <h3 style={{ marginBottom: 6 }}>Setup-Assistent</h3>
+                    <p className="text-muted" style={{ margin: 0 }}>
+                        Geführte Einrichtung in 3 Schritten: Basis, Cloud-Anbindung, Abschluss.
+                    </p>
+                </div>
+                <div className="dtxd-toolbar">
+                    <button className="btn btn-primary" type="button" onClick={openWizard}>Assistent starten</button>
+                    <button className="btn btn-secondary" type="button" onClick={() => setShowAdvanced((prev) => !prev)}>
+                        {showAdvanced ? 'Erweiterte Felder ausblenden' : 'Erweiterte Felder anzeigen'}
+                    </button>
+                </div>
+            </div>
+
+            {showAdvanced ? <form className="dtxd-stack" onSubmit={onSave}>
                 <div className="dtxd-grid">
                     <label className="field">
                         <span className="label">Provider</span>
@@ -511,7 +562,191 @@ export default function DateiaustauschDriveSettingsPage() {
                         {testing ? 'Teste...' : 'Verbindung testen'}
                     </button>
                 </div>
-            </form>
+            </form> : null}
+
+            {wizardOpen ? (
+                <div className="modal-overlay" onClick={() => !saving && setWizardOpen(false)}>
+                    <div className="modal-card dtxd-wizard-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Dateiaustausch Drive einrichten</h3>
+                            <button className="modal-close" onClick={() => setWizardOpen(false)} disabled={saving}>×</button>
+                        </div>
+
+                        <div className="dtxd-wizard-steps">
+                            <span className={`dtxd-wizard-step ${wizardStep >= 1 ? 'is-active' : ''}`}>1. Basis</span>
+                            <span className={`dtxd-wizard-step ${wizardStep >= 2 ? 'is-active' : ''}`}>2. Verbindung</span>
+                            <span className={`dtxd-wizard-step ${wizardStep >= 3 ? 'is-active' : ''}`}>3. Abschluss</span>
+                        </div>
+
+                        {wizardStep === 1 ? (
+                            <div className="dtxd-stack">
+                                <p className="text-muted">Wähle Provider und Upload-Regeln.</p>
+                                <div className="dtxd-grid">
+                                    <label className="field">
+                                        <span className="label">Provider</span>
+                                        <select className="input" value={provider} onChange={(e) => setProvider(e.target.value as 'google_drive' | 'sharepoint')}>
+                                            <option value="google_drive">Google Drive</option>
+                                            <option value="sharepoint">SharePoint</option>
+                                        </select>
+                                    </label>
+                                    <label className="field">
+                                        <span className="label">Kundenordner Prefix</span>
+                                        <input className="input" value={customerFolderPrefix} onChange={(e) => setCustomerFolderPrefix(e.target.value)} placeholder="KD" />
+                                    </label>
+                                    <label className="field">
+                                        <span className="label">Max Upload pro Datei (MB)</span>
+                                        <input className="input" type="number" min={1} max={1024} value={maxUploadMb} onChange={(e) => setMaxUploadMb(e.target.value)} />
+                                    </label>
+                                </div>
+                                <div className="field">
+                                    <span className="label">Erlaubte Dateiendungen</span>
+                                    <div className="dtxd-toolbar">
+                                        {EXTENSION_OPTIONS.map((extension) => {
+                                            const checked = allowedExtensions.includes(extension);
+                                            return (
+                                                <label key={extension} className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                    <input type="checkbox" checked={checked} onChange={() => toggleExtension(extension)} />
+                                                    <span>{extension}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        {wizardStep === 2 ? (
+                            <div className="dtxd-stack">
+                                <p className="text-muted">Trage deine Zugangsdaten für den gewählten Provider ein.</p>
+                                {provider === 'google_drive' ? (
+                                    <>
+                                        <div className="dtxd-grid">
+                                            <label className="field">
+                                                <span className="label">Google Auth Modus</span>
+                                                <select className="input" value={googleAuthMode} onChange={(e) => setGoogleAuthMode(e.target.value as 'service_account' | 'oauth_refresh')}>
+                                                    <option value="oauth_refresh">Persönliches Drive (OAuth Refresh Token)</option>
+                                                    <option value="service_account">Service Account (Shared Drive)</option>
+                                                </select>
+                                            </label>
+                                            <label className="field">
+                                                <span className="label">Google Root Folder ID</span>
+                                                <input className="input" value={googleRootFolderId} onChange={(e) => setGoogleRootFolderId(e.target.value)} />
+                                            </label>
+                                            <label className="field">
+                                                <span className="label">Google Shared Drive ID (optional)</span>
+                                                <input className="input" value={googleSharedDriveId} onChange={(e) => setGoogleSharedDriveId(e.target.value)} />
+                                            </label>
+                                        </div>
+
+                                        {googleAuthMode === 'oauth_refresh' ? (
+                                            <div className="dtxd-grid">
+                                                <label className="field">
+                                                    <span className="label">Google OAuth Client ID</span>
+                                                    <input className="input" value={googleOAuthClientId} onChange={(e) => setGoogleOAuthClientId(e.target.value)} />
+                                                </label>
+                                                <label className="field">
+                                                    <span className="label">Google OAuth Client Secret</span>
+                                                    <input className="input" type="password" value={googleOAuthClientSecret} onChange={(e) => setGoogleOAuthClientSecret(e.target.value)} placeholder={googleOAuthClientSecretStored ? 'Bereits gespeichert' : ''} />
+                                                </label>
+                                                <label className="field">
+                                                    <span className="label">Google OAuth Refresh Token</span>
+                                                    <textarea className="input" rows={3} value={googleOAuthRefreshToken} onChange={(e) => setGoogleOAuthRefreshToken(e.target.value)} placeholder={googleOAuthRefreshTokenStored ? 'Bereits gespeichert' : ''} />
+                                                </label>
+                                            </div>
+                                        ) : (
+                                            <div className="dtxd-grid">
+                                                <label className="field">
+                                                    <span className="label">Google Client E-Mail</span>
+                                                    <input className="input" value={googleClientEmail} onChange={(e) => setGoogleClientEmail(e.target.value)} />
+                                                </label>
+                                                <label className="field">
+                                                    <span className="label">Google Private Key / Service-Account JSON</span>
+                                                    <textarea className="input" rows={5} value={googlePrivateKey} onChange={(e) => setGooglePrivateKey(e.target.value)} placeholder={googlePrivateKeyStored ? 'Bereits gespeichert' : ''} />
+                                                </label>
+                                            </div>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="dtxd-grid">
+                                        <label className="field">
+                                            <span className="label">SharePoint Tenant ID</span>
+                                            <input className="input" value={spTenantId} onChange={(e) => setSpTenantId(e.target.value)} />
+                                        </label>
+                                        <label className="field">
+                                            <span className="label">SharePoint Client ID</span>
+                                            <input className="input" value={spClientId} onChange={(e) => setSpClientId(e.target.value)} />
+                                        </label>
+                                        <label className="field">
+                                            <span className="label">SharePoint Client Secret</span>
+                                            <input className="input" type="password" value={spClientSecret} onChange={(e) => setSpClientSecret(e.target.value)} />
+                                        </label>
+                                        <label className="field">
+                                            <span className="label">SharePoint Site ID</span>
+                                            <input className="input" value={spSiteId} onChange={(e) => setSpSiteId(e.target.value)} />
+                                        </label>
+                                        <label className="field">
+                                            <span className="label">SharePoint Drive ID</span>
+                                            <input className="input" value={spDriveId} onChange={(e) => setSpDriveId(e.target.value)} />
+                                        </label>
+                                        <label className="field">
+                                            <span className="label">SharePoint Root Folder ID</span>
+                                            <input className="input" value={spRootFolderId} onChange={(e) => setSpRootFolderId(e.target.value)} />
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
+                        ) : null}
+
+                        {wizardStep === 3 ? (
+                            <div className="dtxd-stack">
+                                <p className="text-muted">
+                                    Prüfe die Zusammenfassung und speichere. Danach kannst du direkt die Verbindung testen.
+                                </p>
+                                <div className="card">
+                                    <p style={{ margin: 0 }}>
+                                        <strong>Provider:</strong> {provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}<br />
+                                        <strong>Prefix:</strong> {customerFolderPrefix || 'KD'}<br />
+                                        <strong>Max Upload:</strong> {maxUploadMb} MB<br />
+                                        <strong>Erlaubte Typen:</strong> {allowedExtensions.join(', ')}
+                                    </p>
+                                </div>
+                            </div>
+                        ) : null}
+
+                        <div className="modal-actions">
+                            <button className="btn btn-secondary" type="button" onClick={() => setWizardOpen(false)} disabled={saving}>Abbrechen</button>
+                            {wizardStep > 1 ? (
+                                <button className="btn btn-secondary" type="button" onClick={() => setWizardStep((s) => Math.max(1, s - 1))}>Zurück</button>
+                            ) : null}
+                            {wizardStep < 3 ? (
+                                <button className="btn btn-primary" type="button" onClick={nextWizardStep}>Weiter</button>
+                            ) : (
+                                <>
+                                    <button
+                                        className="btn btn-secondary"
+                                        type="button"
+                                        onClick={onTest}
+                                        disabled={testing || saving}
+                                    >
+                                        {testing ? 'Teste...' : 'Verbindung testen'}
+                                    </button>
+                                    <button
+                                        className="btn btn-primary"
+                                        type="button"
+                                        onClick={async () => {
+                                            const ok = await persistSettings(true);
+                                            if (ok) setWizardOpen(false);
+                                        }}
+                                        disabled={saving}
+                                    >
+                                        {saving ? 'Speichert...' : 'Jetzt speichern'}
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            ) : null}
         </div>
     );
 }
