@@ -148,10 +148,10 @@ export const config = {
             maxCompressionRatio: optionalIntEnv('FILE_SECURITY_ZIP_MAX_RATIO', 60),
         },
         clamav: {
-            enabled: optionalBoolEnv('FILE_SECURITY_CLAMAV_ENABLED', true),
+            enabled: optionalBoolEnv('FILE_SECURITY_CLAMAV_ENABLED', false),
             binary: optionalEnv('FILE_SECURITY_CLAMAV_BINARY', 'clamdscan'),
             timeoutMs: optionalIntEnv('FILE_SECURITY_CLAMAV_TIMEOUT_MS', 120000),
-            failClosed: optionalBoolEnv('FILE_SECURITY_CLAMAV_FAIL_CLOSED', true),
+            failClosed: optionalBoolEnv('FILE_SECURITY_CLAMAV_FAIL_CLOSED', false),
         },
     },
 

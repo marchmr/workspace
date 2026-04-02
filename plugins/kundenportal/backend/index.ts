@@ -436,12 +436,17 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (_request, reply) => {
-        const fileExchangePlugin = await db('plugins')
-            .where({ plugin_id: 'dateiaustausch' })
-            .first();
+        const fileExchangePlugins = await db('plugins')
+            .whereIn('plugin_id', ['dateiaustausch', 'dateiaustausch_drive'])
+            .select('plugin_id', 'is_active');
+
+        const isLegacyEnabled = fileExchangePlugins.some((row: any) => row.plugin_id === 'dateiaustausch' && Boolean(row.is_active));
+        const isDriveEnabled = fileExchangePlugins.some((row: any) => row.plugin_id === 'dateiaustausch_drive' && Boolean(row.is_active));
+        const isAnyEnabled = isLegacyEnabled || isDriveEnabled;
 
         return reply.send({
-            dateiaustauschEnabled: Boolean(fileExchangePlugin?.is_active),
+            dateiaustauschEnabled: isAnyEnabled,
+            dateiaustauschDriveEnabled: isDriveEnabled,
         });
     });
 

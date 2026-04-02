@@ -105,7 +105,6 @@ ask_password() {
 # ============================================
 APP_DIR="/opt/mike-workspace"
 APP_USER="mike"
-SCAN_USER="workspace-scan"
 GIT_REPO="https://github.com/marchmr/workspace.git"
 NODE_VERSION="20"
 SERVICE_NAME="mike-workspace"
@@ -129,16 +128,6 @@ resolve_nologin_shell() {
     echo "/sbin/nologin"
   else
     echo "/bin/false"
-  fi
-}
-
-resolve_clamav_binary() {
-  if command -v clamdscan >/dev/null 2>&1; then
-    echo "clamdscan"
-  elif command -v clamscan >/dev/null 2>&1; then
-    echo "clamscan"
-  else
-    echo "clamdscan"
   fi
 }
 
@@ -182,6 +171,22 @@ ensure_backend_archiver_dependency() {
   fi
 }
 
+remove_clamav_packages() {
+  print_step "ClamAV deinstallieren (nicht mehr benoetigt)..."
+  systemctl stop clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+  systemctl disable clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+
+  if dpkg-query -W -f='${Status}' clamav 2>/dev/null | grep -q "install ok installed" \
+    || dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed" \
+    || dpkg-query -W -f='${Status}' clamav-freshclam 2>/dev/null | grep -q "install ok installed"; then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq clamav clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq >/dev/null 2>&1 || true
+    print_ok "ClamAV entfernt"
+  else
+    print_ok "ClamAV war nicht installiert"
+  fi
+}
+
 ensure_upload_mount_hardening() {
   print_step "Upload-Mount hardening (noexec,nodev,nosuid)..."
   mkdir -p "$UPLOADS_DATA_DIR" "$APP_DIR/uploads"
@@ -200,38 +205,6 @@ ensure_upload_mount_hardening() {
   mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" >/dev/null 2>&1 || true
 
   print_ok "Upload-Pfad isoliert: $APP_DIR/uploads"
-}
-
-configure_clamav_isolation() {
-  print_step "ClamAV-Service isolieren..."
-  local dropin_dir="/etc/systemd/system/clamav-daemon.service.d"
-  local dropin_file="${dropin_dir}/workspace-isolation.conf"
-  mkdir -p "$dropin_dir"
-
-  cat > "$dropin_file" <<EOF
-[Service]
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictSUIDSGID=true
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-ReadWritePaths=/var/lib/clamav
-ReadWritePaths=/run/clamav
-ReadWritePaths=/var/log/clamav
-ReadOnlyPaths=$APP_DIR/uploads
-EOF
-
-  systemctl daemon-reload
-  systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-  systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-  print_ok "ClamAV Isolation aktiv"
 }
 
 configure_app_runtime_hardening() {
@@ -473,14 +446,13 @@ print_step "Basis-Pakete installieren..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   nginx mariadb-server curl zip unzip ufw gnupg2 git rsync \
   ca-certificates lsb-release software-properties-common ffmpeg acl \
-  build-essential python3 pkg-config clamav clamav-daemon clamav-freshclam > /dev/null 2>&1
-print_ok "Basis-Pakete inkl. Build-Toolchain und ClamAV installiert"
+  build-essential python3 pkg-config > /dev/null 2>&1
+print_ok "Basis-Pakete inkl. Build-Toolchain installiert"
 ensure_zip_runtime_tool
+remove_clamav_packages
 
-print_step "ClamAV-Dienste initialisieren..."
-systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-systemctl restart clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-print_ok "ClamAV bereit (soweit auf dem System verfuegbar)"
+print_step "Scanner-Initialisierung uebersprungen (Drive-Connector aktiv)"
+print_ok "Kein lokaler ClamAV-Dienst erforderlich"
 
 # Certbot fuer SSL
 if [ "$SETUP_SSL" = true ]; then
@@ -553,14 +525,6 @@ else
   print_ok "User '$APP_USER' existiert bereits"
 fi
 
-if ! id "$SCAN_USER" &>/dev/null; then
-  useradd --system --home-dir /nonexistent --shell "$NOLOGIN_SHELL" "$SCAN_USER"
-  print_ok "Scan-User '$SCAN_USER' erstellt"
-else
-  usermod -s "$NOLOGIN_SHELL" "$SCAN_USER" >/dev/null 2>&1 || true
-  print_ok "Scan-User '$SCAN_USER' existiert bereits"
-fi
-
 # Repository klonen
 print_step "Repository von GitHub klonen..."
 mkdir -p "$APP_DIR"
@@ -627,7 +591,6 @@ print_header "Schritt 6/8: Konfiguration"
 
 JWT_SECRET=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
-CLAMAV_BINARY_DEFAULT="$(resolve_clamav_binary)"
 
 print_step ".env-Datei erstellen..."
 cat > "$APP_DIR/backend/.env" <<EOF
@@ -670,18 +633,18 @@ SUBDOMAIN_SSL_EMAIL=${SSL_EMAIL:-}
 
 # File Security / Dateiaustausch
 FILE_SECURITY_MAX_UPLOAD_MB=500
-FILE_SECURITY_STRICT_SIGNATURE=true
+FILE_SECURITY_STRICT_SIGNATURE=false
 FILE_SECURITY_ALLOW_ZIP_UPLOADS=false
 FILE_SECURITY_ZIP_MAX_ENTRIES=500
 FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB=1000
 FILE_SECURITY_ZIP_MAX_RATIO=60
-FILE_SECURITY_CLAMAV_ENABLED=true
-FILE_SECURITY_CLAMAV_BINARY=$CLAMAV_BINARY_DEFAULT
+FILE_SECURITY_CLAMAV_ENABLED=false
+FILE_SECURITY_CLAMAV_BINARY=clamscan
 FILE_SECURITY_CLAMAV_TIMEOUT_MS=120000
-FILE_SECURITY_CLAMAV_FAIL_CLOSED=true
+FILE_SECURITY_CLAMAV_FAIL_CLOSED=false
 EOF
 print_ok ".env erstellt"
-print_ok "ClamAV Scanner gesetzt: $CLAMAV_BINARY_DEFAULT"
+print_ok "Lokaler Malware-Scanner deaktiviert (Cloud-Connector)"
 
 # Datenbank-Migrationen (tsx fuer TypeScript-Migrationen)
 print_step "Datenbank-Schema aufsetzen..."
@@ -974,7 +937,6 @@ EOF
 configure_subdomain_provisioning_prereqs
 configure_app_runtime_hardening
 ensure_upload_mount_hardening
-configure_clamav_isolation
 ensure_node_jit_compatibility
 
 systemctl daemon-reload

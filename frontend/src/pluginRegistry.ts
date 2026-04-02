@@ -3,12 +3,11 @@
 
 import type { ComponentType, LazyExoticComponent } from 'react';
 import * as plugin_crm_0 from '../../plugins/crm/frontend/index';
-import * as plugin_dateiaustausch_1 from '../../plugins/dateiaustausch/frontend/index';
-import * as plugin_dateiaustausch_drive_2 from '../../plugins/dateiaustausch_drive/frontend/index';
-import * as plugin_kundenportal_3 from '../../plugins/kundenportal/frontend/index';
-import * as plugin_quicklinks_4 from '../../plugins/quicklinks/frontend/index';
-import * as plugin_todo_5 from '../../plugins/todo/frontend/index';
-import * as plugin_videoplattform_6 from '../../plugins/videoplattform/frontend/index';
+import * as plugin_dateiaustausch_drive_1 from '../../plugins/dateiaustausch_drive/frontend/index';
+import * as plugin_kundenportal_2 from '../../plugins/kundenportal/frontend/index';
+import * as plugin_quicklinks_3 from '../../plugins/quicklinks/frontend/index';
+import * as plugin_todo_4 from '../../plugins/todo/frontend/index';
+import * as plugin_videoplattform_5 from '../../plugins/videoplattform/frontend/index';
 
 export interface PluginRoute {
     path: string;
@@ -124,75 +123,63 @@ export const pluginRegistry: PluginRegistryEntry[] = [
         portalTabs: (Array.isArray((plugin_crm_0 as any).portalTabs) ? (plugin_crm_0 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
-        id: 'dateiaustausch',
-        name: 'Dateiaustausch',
-        routes: (Array.isArray((plugin_dateiaustausch_1 as any).routes) ? (plugin_dateiaustausch_1 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_dateiaustausch_1 as any).navItems) ? (plugin_dateiaustausch_1 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_dateiaustausch_1 as any).dashboardTiles) ? (plugin_dateiaustausch_1 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_dateiaustausch_1 as any).extensionTiles) ? (plugin_dateiaustausch_1 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_dateiaustausch_1 as any).settingsPanel && typeof (plugin_dateiaustausch_1 as any).settingsPanel === 'object' ? (plugin_dateiaustausch_1 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_dateiaustausch_1 as any).searchProvider && typeof (plugin_dateiaustausch_1 as any).searchProvider === 'object' ? (plugin_dateiaustausch_1 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_dateiaustausch_1 as any).quickActions) ? (plugin_dateiaustausch_1 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_dateiaustausch_1 as any).portalTabs) ? (plugin_dateiaustausch_1 as any).portalTabs : []) as PluginPortalTab[],
-    },
-    {
         id: 'dateiaustausch_drive',
         name: 'Dateiaustausch Drive',
-        routes: (Array.isArray((plugin_dateiaustausch_drive_2 as any).routes) ? (plugin_dateiaustausch_drive_2 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_dateiaustausch_drive_2 as any).navItems) ? (plugin_dateiaustausch_drive_2 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_dateiaustausch_drive_2 as any).dashboardTiles) ? (plugin_dateiaustausch_drive_2 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_dateiaustausch_drive_2 as any).extensionTiles) ? (plugin_dateiaustausch_drive_2 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_dateiaustausch_drive_2 as any).settingsPanel && typeof (plugin_dateiaustausch_drive_2 as any).settingsPanel === 'object' ? (plugin_dateiaustausch_drive_2 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_dateiaustausch_drive_2 as any).searchProvider && typeof (plugin_dateiaustausch_drive_2 as any).searchProvider === 'object' ? (plugin_dateiaustausch_drive_2 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_dateiaustausch_drive_2 as any).quickActions) ? (plugin_dateiaustausch_drive_2 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_dateiaustausch_drive_2 as any).portalTabs) ? (plugin_dateiaustausch_drive_2 as any).portalTabs : []) as PluginPortalTab[],
+        routes: (Array.isArray((plugin_dateiaustausch_drive_1 as any).routes) ? (plugin_dateiaustausch_drive_1 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_dateiaustausch_drive_1 as any).navItems) ? (plugin_dateiaustausch_drive_1 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_dateiaustausch_drive_1 as any).dashboardTiles) ? (plugin_dateiaustausch_drive_1 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_dateiaustausch_drive_1 as any).extensionTiles) ? (plugin_dateiaustausch_drive_1 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_dateiaustausch_drive_1 as any).settingsPanel && typeof (plugin_dateiaustausch_drive_1 as any).settingsPanel === 'object' ? (plugin_dateiaustausch_drive_1 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_dateiaustausch_drive_1 as any).searchProvider && typeof (plugin_dateiaustausch_drive_1 as any).searchProvider === 'object' ? (plugin_dateiaustausch_drive_1 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_dateiaustausch_drive_1 as any).quickActions) ? (plugin_dateiaustausch_drive_1 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_dateiaustausch_drive_1 as any).portalTabs) ? (plugin_dateiaustausch_drive_1 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'kundenportal',
         name: 'Kundenportal',
-        routes: (Array.isArray((plugin_kundenportal_3 as any).routes) ? (plugin_kundenportal_3 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_kundenportal_3 as any).navItems) ? (plugin_kundenportal_3 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_kundenportal_3 as any).dashboardTiles) ? (plugin_kundenportal_3 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_kundenportal_3 as any).extensionTiles) ? (plugin_kundenportal_3 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_kundenportal_3 as any).settingsPanel && typeof (plugin_kundenportal_3 as any).settingsPanel === 'object' ? (plugin_kundenportal_3 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_kundenportal_3 as any).searchProvider && typeof (plugin_kundenportal_3 as any).searchProvider === 'object' ? (plugin_kundenportal_3 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_kundenportal_3 as any).quickActions) ? (plugin_kundenportal_3 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_kundenportal_3 as any).portalTabs) ? (plugin_kundenportal_3 as any).portalTabs : []) as PluginPortalTab[],
+        routes: (Array.isArray((plugin_kundenportal_2 as any).routes) ? (plugin_kundenportal_2 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_kundenportal_2 as any).navItems) ? (plugin_kundenportal_2 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_kundenportal_2 as any).dashboardTiles) ? (plugin_kundenportal_2 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_kundenportal_2 as any).extensionTiles) ? (plugin_kundenportal_2 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_kundenportal_2 as any).settingsPanel && typeof (plugin_kundenportal_2 as any).settingsPanel === 'object' ? (plugin_kundenportal_2 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_kundenportal_2 as any).searchProvider && typeof (plugin_kundenportal_2 as any).searchProvider === 'object' ? (plugin_kundenportal_2 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_kundenportal_2 as any).quickActions) ? (plugin_kundenportal_2 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_kundenportal_2 as any).portalTabs) ? (plugin_kundenportal_2 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'quicklinks',
         name: 'Schnellzugriff',
-        routes: (Array.isArray((plugin_quicklinks_4 as any).routes) ? (plugin_quicklinks_4 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_quicklinks_4 as any).navItems) ? (plugin_quicklinks_4 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_quicklinks_4 as any).dashboardTiles) ? (plugin_quicklinks_4 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_quicklinks_4 as any).extensionTiles) ? (plugin_quicklinks_4 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_quicklinks_4 as any).settingsPanel && typeof (plugin_quicklinks_4 as any).settingsPanel === 'object' ? (plugin_quicklinks_4 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_quicklinks_4 as any).searchProvider && typeof (plugin_quicklinks_4 as any).searchProvider === 'object' ? (plugin_quicklinks_4 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_quicklinks_4 as any).quickActions) ? (plugin_quicklinks_4 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_quicklinks_4 as any).portalTabs) ? (plugin_quicklinks_4 as any).portalTabs : []) as PluginPortalTab[],
+        routes: (Array.isArray((plugin_quicklinks_3 as any).routes) ? (plugin_quicklinks_3 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_quicklinks_3 as any).navItems) ? (plugin_quicklinks_3 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_quicklinks_3 as any).dashboardTiles) ? (plugin_quicklinks_3 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_quicklinks_3 as any).extensionTiles) ? (plugin_quicklinks_3 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_quicklinks_3 as any).settingsPanel && typeof (plugin_quicklinks_3 as any).settingsPanel === 'object' ? (plugin_quicklinks_3 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_quicklinks_3 as any).searchProvider && typeof (plugin_quicklinks_3 as any).searchProvider === 'object' ? (plugin_quicklinks_3 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_quicklinks_3 as any).quickActions) ? (plugin_quicklinks_3 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_quicklinks_3 as any).portalTabs) ? (plugin_quicklinks_3 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'todo',
         name: 'Aufgaben',
-        routes: (Array.isArray((plugin_todo_5 as any).routes) ? (plugin_todo_5 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_todo_5 as any).navItems) ? (plugin_todo_5 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_todo_5 as any).dashboardTiles) ? (plugin_todo_5 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_todo_5 as any).extensionTiles) ? (plugin_todo_5 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_todo_5 as any).settingsPanel && typeof (plugin_todo_5 as any).settingsPanel === 'object' ? (plugin_todo_5 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_todo_5 as any).searchProvider && typeof (plugin_todo_5 as any).searchProvider === 'object' ? (plugin_todo_5 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_todo_5 as any).quickActions) ? (plugin_todo_5 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_todo_5 as any).portalTabs) ? (plugin_todo_5 as any).portalTabs : []) as PluginPortalTab[],
+        routes: (Array.isArray((plugin_todo_4 as any).routes) ? (plugin_todo_4 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_todo_4 as any).navItems) ? (plugin_todo_4 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_todo_4 as any).dashboardTiles) ? (plugin_todo_4 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_todo_4 as any).extensionTiles) ? (plugin_todo_4 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_todo_4 as any).settingsPanel && typeof (plugin_todo_4 as any).settingsPanel === 'object' ? (plugin_todo_4 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_todo_4 as any).searchProvider && typeof (plugin_todo_4 as any).searchProvider === 'object' ? (plugin_todo_4 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_todo_4 as any).quickActions) ? (plugin_todo_4 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_todo_4 as any).portalTabs) ? (plugin_todo_4 as any).portalTabs : []) as PluginPortalTab[],
     },
     {
         id: 'videoplattform',
         name: 'Videoplattform',
-        routes: (Array.isArray((plugin_videoplattform_6 as any).routes) ? (plugin_videoplattform_6 as any).routes : []) as PluginRoute[],
-        navItems: (Array.isArray((plugin_videoplattform_6 as any).navItems) ? (plugin_videoplattform_6 as any).navItems : []) as PluginNavItem[],
-        dashboardTiles: (Array.isArray((plugin_videoplattform_6 as any).dashboardTiles) ? (plugin_videoplattform_6 as any).dashboardTiles : []) as PluginDashboardTile[],
-        extensionTiles: (Array.isArray((plugin_videoplattform_6 as any).extensionTiles) ? (plugin_videoplattform_6 as any).extensionTiles : []) as PluginExtensionTile[],
-        settingsPanel: ((plugin_videoplattform_6 as any).settingsPanel && typeof (plugin_videoplattform_6 as any).settingsPanel === 'object' ? (plugin_videoplattform_6 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
-        searchProvider: ((plugin_videoplattform_6 as any).searchProvider && typeof (plugin_videoplattform_6 as any).searchProvider === 'object' ? (plugin_videoplattform_6 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
-        quickActions: (Array.isArray((plugin_videoplattform_6 as any).quickActions) ? (plugin_videoplattform_6 as any).quickActions : []) as PluginQuickAction[],
-        portalTabs: (Array.isArray((plugin_videoplattform_6 as any).portalTabs) ? (plugin_videoplattform_6 as any).portalTabs : []) as PluginPortalTab[],
+        routes: (Array.isArray((plugin_videoplattform_5 as any).routes) ? (plugin_videoplattform_5 as any).routes : []) as PluginRoute[],
+        navItems: (Array.isArray((plugin_videoplattform_5 as any).navItems) ? (plugin_videoplattform_5 as any).navItems : []) as PluginNavItem[],
+        dashboardTiles: (Array.isArray((plugin_videoplattform_5 as any).dashboardTiles) ? (plugin_videoplattform_5 as any).dashboardTiles : []) as PluginDashboardTile[],
+        extensionTiles: (Array.isArray((plugin_videoplattform_5 as any).extensionTiles) ? (plugin_videoplattform_5 as any).extensionTiles : []) as PluginExtensionTile[],
+        settingsPanel: ((plugin_videoplattform_5 as any).settingsPanel && typeof (plugin_videoplattform_5 as any).settingsPanel === 'object' ? (plugin_videoplattform_5 as any).settingsPanel : undefined) as PluginSettingsPanel | undefined,
+        searchProvider: ((plugin_videoplattform_5 as any).searchProvider && typeof (plugin_videoplattform_5 as any).searchProvider === 'object' ? (plugin_videoplattform_5 as any).searchProvider : undefined) as PluginSearchProvider | undefined,
+        quickActions: (Array.isArray((plugin_videoplattform_5 as any).quickActions) ? (plugin_videoplattform_5 as any).quickActions : []) as PluginQuickAction[],
+        portalTabs: (Array.isArray((plugin_videoplattform_5 as any).portalTabs) ? (plugin_videoplattform_5 as any).portalTabs : []) as PluginPortalTab[],
     }
 ];

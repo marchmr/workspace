@@ -21,7 +21,6 @@ NC='\033[0m'
 
 APP_DIR="/opt/mike-workspace"
 APP_USER="mike"
-SCAN_USER="workspace-scan"
 SERVICE="mike-workspace"
 BACKUP_BASE_DIR="$APP_DIR/backups/pre-update"
 DEFAULT_GIT_REPO="https://github.com/marchmr/workspace.git"
@@ -42,9 +41,6 @@ REQUIRED_APT_PACKAGES=(
   nginx
   certbot
   python3-certbot-nginx
-  clamav
-  clamav-daemon
-  clamav-freshclam
 )
 
 run_with_timeout() {
@@ -84,16 +80,6 @@ resolve_nologin_shell() {
     echo "/sbin/nologin"
   else
     echo "/bin/false"
-  fi
-}
-
-resolve_clamav_binary() {
-  if command -v clamdscan >/dev/null 2>&1; then
-    echo "clamdscan"
-  elif command -v clamscan >/dev/null 2>&1; then
-    echo "clamscan"
-  else
-    echo "clamdscan"
   fi
 }
 
@@ -161,26 +147,19 @@ ensure_file_security_defaults() {
   if [ ! -f "$env_file" ]; then
     return 0
   fi
-  local detected_clamav_binary
-  detected_clamav_binary="$(resolve_clamav_binary)"
 
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_MAX_UPLOAD_MB" "500"
-  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_STRICT_SIGNATURE" "true"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_STRICT_SIGNATURE" "false"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ALLOW_ZIP_UPLOADS" "false"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_ENTRIES" "500"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_UNCOMPRESSED_MB" "1000"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_ZIP_MAX_RATIO" "60"
-  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_ENABLED" "true"
-  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "$detected_clamav_binary"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_ENABLED" "false"
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "clamscan"
   ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_TIMEOUT_MS" "120000"
-  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_FAIL_CLOSED" "true"
-
-  local configured_binary
-  configured_binary="$(grep '^FILE_SECURITY_CLAMAV_BINARY=' "$env_file" | tail -n1 | cut -d'=' -f2- || true)"
-  if [ -z "$configured_binary" ] || ! command -v "$configured_binary" >/dev/null 2>&1; then
-    upsert_env_file "$env_file" "FILE_SECURITY_CLAMAV_BINARY" "$detected_clamav_binary"
-    echo -e "  ${YELLOW}[!!]${NC} FILE_SECURITY_CLAMAV_BINARY angepasst auf '${detected_clamav_binary}'"
-  fi
+  ensure_env_key_if_missing "$env_file" "FILE_SECURITY_CLAMAV_FAIL_CLOSED" "false"
+  upsert_env_file "$env_file" "FILE_SECURITY_CLAMAV_ENABLED" "false"
+  upsert_env_file "$env_file" "FILE_SECURITY_CLAMAV_FAIL_CLOSED" "false"
 }
 
 ensure_runtime_users_hardening() {
@@ -189,12 +168,6 @@ ensure_runtime_users_hardening() {
 
   if id "$APP_USER" >/dev/null 2>&1; then
     usermod -s "$nologin_shell" "$APP_USER" >/dev/null 2>&1 || true
-  fi
-
-  if ! id "$SCAN_USER" >/dev/null 2>&1; then
-    useradd --system --home-dir /nonexistent --shell "$nologin_shell" "$SCAN_USER" >/dev/null 2>&1 || true
-  else
-    usermod -s "$nologin_shell" "$SCAN_USER" >/dev/null 2>&1 || true
   fi
 }
 
@@ -213,32 +186,6 @@ ensure_upload_mount_hardening() {
   fi
 
   mount -o remount,bind,noexec,nodev,nosuid "$APP_DIR/uploads" >/dev/null 2>&1 || true
-}
-
-configure_clamav_isolation() {
-  local dropin_dir="/etc/systemd/system/clamav-daemon.service.d"
-  local dropin_file="${dropin_dir}/workspace-isolation.conf"
-  mkdir -p "$dropin_dir"
-
-  cat > "$dropin_file" <<EOF
-[Service]
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-RestrictSUIDSGID=true
-RestrictAddressFamilies=AF_UNIX
-IPAddressDeny=any
-ReadWritePaths=/var/lib/clamav
-ReadWritePaths=/run/clamav
-ReadWritePaths=/var/log/clamav
-ReadOnlyPaths=$APP_DIR/uploads
-EOF
 }
 
 configure_app_runtime_hardening() {
@@ -466,13 +413,19 @@ ensure_backend_archiver_dependency() {
   fi
 }
 
-ensure_clamav_services() {
-  if dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed"; then
-    systemctl enable clamav-freshclam clamav-daemon >/dev/null 2>&1 || true
-    # freshclam kann je nach Mirror langsam/blockierend sein -> nur try-restart
-    run_with_timeout 20s systemctl try-restart clamav-daemon >/dev/null 2>&1 || true
-    run_with_timeout 20s systemctl try-restart clamav-freshclam >/dev/null 2>&1 || true
-    echo -e "  ${GREEN}[OK]${NC} ClamAV-Dienste aktiv"
+remove_clamav_packages() {
+  echo -e "  ${CYAN}> ClamAV deinstallieren (nicht mehr benoetigt)...${NC}"
+  systemctl stop clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+  systemctl disable clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+
+  if dpkg-query -W -f='${Status}' clamav 2>/dev/null | grep -q "install ok installed" \
+    || dpkg-query -W -f='${Status}' clamav-daemon 2>/dev/null | grep -q "install ok installed" \
+    || dpkg-query -W -f='${Status}' clamav-freshclam 2>/dev/null | grep -q "install ok installed"; then
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq clamav clamav-daemon clamav-freshclam >/dev/null 2>&1 || true
+    DEBIAN_FRONTEND=noninteractive apt-get autoremove -y -qq >/dev/null 2>&1 || true
+    echo -e "  ${GREEN}[OK]${NC} ClamAV entfernt"
+  else
+    echo -e "  ${GREEN}[OK]${NC} ClamAV war nicht installiert"
   fi
 }
 
@@ -501,7 +454,7 @@ EOF
 echo -e "\n${CYAN}> System-Abhaengigkeiten pruefen...${NC}"
 ensure_required_apt_packages
 ensure_zip_runtime_tool
-ensure_clamav_services
+remove_clamav_packages
 
 # ============================================
 # Branch bestimmen
@@ -831,11 +784,9 @@ ensure_runtime_users_hardening
 ensure_upload_mount_hardening
 configure_subdomain_provisioning_prereqs
 configure_app_runtime_hardening
-configure_clamav_isolation
 ensure_node_jit_compatibility
 echo -e "  ${GREEN}[OK]${NC} Systemvoraussetzungen fuer automatische Subdomain-Einrichtung aktualisiert"
 systemctl daemon-reload
-ensure_clamav_services
 
 # ============================================
 # Service neu starten
