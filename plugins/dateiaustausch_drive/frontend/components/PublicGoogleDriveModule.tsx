@@ -20,16 +20,6 @@ type ListResponse = {
     uploadFolderName?: string;
 };
 
-type UploadSessionResponse = {
-    provider: 'google_drive' | 'sharepoint';
-    session: {
-        provider: 'google_drive' | 'sharepoint';
-        uploadUrl: string;
-        method: 'PUT';
-        chunkSizeBytes: number | null;
-    };
-};
-
 function formatDate(value: string | null): string {
     if (!value) return '-';
     const date = new Date(value);
@@ -79,6 +69,7 @@ const ICONS = {
     refresh: 'M20 11a8 8 0 10.8 3.5M20 5v6h-6',
     upload: 'M12 16V6M8 10l4-4 4 4M4 18h16',
     download: 'M12 4v10M8 10l4 4 4-4M4 20h16',
+    delete: 'M4 7h16M9 7V5h6v2M8 7l1 12h6l1-12',
     folder: 'M3 7h7l2 2h9v10a2 2 0 01-2 2H5a2 2 0 01-2-2z',
     file: 'M7 3h7l5 5v13H7zM14 3v5h5',
     open: 'M15 9l6-6M16 3h5v5M21 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h5',
@@ -92,7 +83,8 @@ export default function PublicGoogleDriveModule() {
     const [currentPath, setCurrentPath] = useState('');
     const [uploadFolderName, setUploadFolderName] = useState('');
     const [provider, setProvider] = useState<'google_drive' | 'sharepoint'>('google_drive');
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
@@ -149,6 +141,10 @@ export default function PublicGoogleDriveModule() {
         load();
     }, [load]);
 
+    useEffect(() => {
+        setSelectedIds(new Set());
+    }, [currentPath, entries.length]);
+
     const visibleEntries = useMemo(() => {
         const needle = searchTerm.trim().toLowerCase();
         const filtered = needle
@@ -168,67 +164,31 @@ export default function PublicGoogleDriveModule() {
 
     async function onUpload(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        if (!sessionToken || !selectedFile) return;
+        if (!sessionToken || selectedFiles.length === 0) return;
 
         setUploading(true);
         setUploadProgress(0);
         setError(null);
         setSuccess(null);
         try {
-            const sessionRes = await fetch('/api/plugins/dateiaustausch_drive/public/files/upload/session', {
+            const formData = new FormData();
+            selectedFiles.forEach((file) => {
+                formData.append('file', file, file.name);
+            });
+            const uploadRes = await fetch('/api/plugins/dateiaustausch_drive/public/files/upload', {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json',
                     'x-public-session-token': sessionToken,
                 },
-                body: JSON.stringify({
-                    fileName: selectedFile.name,
-                    mimeType: selectedFile.type || 'application/octet-stream',
-                    sizeBytes: selectedFile.size,
-                }),
+                body: formData,
             });
-            const sessionPayload = await sessionRes.json().catch(() => ({}));
-            if (!sessionRes.ok) throw new Error(sessionPayload?.error || 'Upload-Session konnte nicht erstellt werden.');
-            const uploadSession = sessionPayload as UploadSessionResponse;
+            const payload = await uploadRes.json().catch(() => ({}));
+            if (!uploadRes.ok) throw new Error(payload?.error || 'Upload fehlgeschlagen.');
+            setUploadProgress(100);
 
-            if (uploadSession.provider === 'google_drive') {
-                const uploadRes = await fetch(uploadSession.session.uploadUrl, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': selectedFile.type || 'application/octet-stream',
-                    },
-                    body: selectedFile,
-                });
-                if (!uploadRes.ok) {
-                    const detail = await uploadRes.text().catch(() => '');
-                    throw new Error(`Google-Upload fehlgeschlagen (${uploadRes.status}). ${detail}`);
-                }
-                setUploadProgress(100);
-            } else {
-                const chunkSize = uploadSession.session.chunkSizeBytes || 8 * 1024 * 1024;
-                let offset = 0;
-                while (offset < selectedFile.size) {
-                    const next = Math.min(offset + chunkSize, selectedFile.size);
-                    const chunk = selectedFile.slice(offset, next);
-                    const uploadRes = await fetch(uploadSession.session.uploadUrl, {
-                        method: 'PUT',
-                        headers: {
-                            'Content-Length': String(chunk.size),
-                            'Content-Range': `bytes ${offset}-${next - 1}/${selectedFile.size}`,
-                        },
-                        body: chunk,
-                    });
-                    if (!(uploadRes.ok || uploadRes.status === 202)) {
-                        const detail = await uploadRes.text().catch(() => '');
-                        throw new Error(`SharePoint-Upload fehlgeschlagen (${uploadRes.status}). ${detail}`);
-                    }
-                    offset = next;
-                    setUploadProgress(Math.round((offset / selectedFile.size) * 100));
-                }
-            }
-
-            setSelectedFile(null);
-            setSuccess('Datei erfolgreich hochgeladen.');
+            setSelectedFiles([]);
+            const uploadedCount = Number(payload?.uploadedCount || selectedFiles.length || 1);
+            setSuccess(`${uploadedCount} Datei(en) erfolgreich hochgeladen.`);
             await load();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
@@ -264,6 +224,55 @@ export default function PublicGoogleDriveModule() {
         URL.revokeObjectURL(objectUrl);
     }
 
+    function toggleSelect(id: string) {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
+    function toggleSelectAll() {
+        const visibleIds = visibleEntries.map((entry) => entry.id);
+        setSelectedIds((prev) => {
+            const allSelected = visibleIds.length > 0 && visibleIds.every((id) => prev.has(id));
+            if (allSelected) return new Set();
+            return new Set(visibleIds);
+        });
+    }
+
+    async function deleteSelected() {
+        if (!sessionToken || selectedIds.size === 0) return;
+        setError(null);
+        setSuccess(null);
+        try {
+            const params = new URLSearchParams();
+            if (currentPath) params.set('folderPath', currentPath);
+            const query = params.toString();
+            const url = query
+                ? `/api/plugins/dateiaustausch_drive/public/items/delete?${query}`
+                : '/api/plugins/dateiaustausch_drive/public/items/delete';
+
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-public-session-token': sessionToken,
+                },
+                body: JSON.stringify({ ids: Array.from(selectedIds) }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(payload?.error || 'Löschen fehlgeschlagen.');
+            const deletedCount = Number(payload?.deletedCount || 0);
+            setSelectedIds(new Set());
+            setSuccess(`${deletedCount} Eintrag/Einträge gelöscht.`);
+            await load();
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
+        }
+    }
+
     const isConnectorNotConfigured = Boolean(error && /nicht\s+konfiguriert/i.test(error));
 
     return (
@@ -281,16 +290,18 @@ export default function PublicGoogleDriveModule() {
                 <form className="dtxd-upload-inline" onSubmit={onUpload}>
                     <label className="dtxd-upload-pick">
                         <Icon path={ICONS.upload} />
-                        <span>Datei auswählen</span>
+                        <span>Dateien auswählen</span>
                         <input
                             type="file"
-                            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+                            multiple
+                            onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))}
                             required
                         />
                     </label>
-                    <button className="btn btn-primary" type="submit" disabled={uploading || !selectedFile}>
+                    <button className="btn btn-primary" type="submit" disabled={uploading || selectedFiles.length === 0}>
                         {uploading ? 'Lädt hoch...' : 'Hochladen'}
                     </button>
+                    {selectedFiles.length > 0 ? <span className="text-muted">{selectedFiles.length} Datei(en) gewählt</span> : null}
                 </form>
             </div>
 
@@ -339,6 +350,15 @@ export default function PublicGoogleDriveModule() {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                         <div className="dtxd-actions">
+                            <button
+                                className="dtxd-icon-btn danger"
+                                type="button"
+                                onClick={deleteSelected}
+                                disabled={selectedIds.size === 0}
+                                title="Auswahl löschen"
+                            >
+                                <Icon path={ICONS.delete} />
+                            </button>
                             <button className="dtxd-icon-btn" type="button" onClick={load} disabled={loading} title="Aktualisieren">
                                 <Icon path={ICONS.refresh} />
                             </button>
@@ -352,6 +372,7 @@ export default function PublicGoogleDriveModule() {
                                 <Icon path={ICONS.up} />
                             </button>
                         </div>
+                        <div className="dtxd-selection-count">{selectedIds.size} ausgewählt</div>
                     </div>
 
                     {isConnectorNotConfigured ? <div className="dtxd-info">Cloud-Connector ist noch nicht konfiguriert. Bitte in den Plugin-Einstellungen verbinden.</div> : null}
@@ -363,6 +384,14 @@ export default function PublicGoogleDriveModule() {
                         <table className="dtxd-table">
                             <thead>
                                 <tr>
+                                    <th>
+                                        <input
+                                            type="checkbox"
+                                            checked={visibleEntries.length > 0 && visibleEntries.every((entry) => selectedIds.has(entry.id))}
+                                            onChange={toggleSelectAll}
+                                            aria-label="Alle auswählen"
+                                        />
+                                    </th>
                                     <th>Name</th>
                                     <th>Typ</th>
                                     <th>Größe</th>
@@ -372,16 +401,24 @@ export default function PublicGoogleDriveModule() {
                             </thead>
                             <tbody>
                                 {loading ? (
-                                    <tr><td colSpan={5} className="text-muted">Lade Dateien...</td></tr>
+                                    <tr><td colSpan={6} className="text-muted">Lade Dateien...</td></tr>
                                 ) : visibleEntries.length === 0 ? (
                                     <tr>
-                                        <td colSpan={5} className="dtxd-empty-state">
+                                        <td colSpan={6} className="dtxd-empty-state">
                                             <div className="dtxd-empty-title">Dieser Ordner ist leer</div>
                                             <div className="text-muted">Zieh Dateien hier hinein oder lade oben eine Datei hoch.</div>
                                         </td>
                                     </tr>
                                 ) : visibleEntries.map((entry) => (
                                     <tr key={entry.id}>
+                                        <td>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedIds.has(entry.id)}
+                                                onChange={() => toggleSelect(entry.id)}
+                                                aria-label={`${entry.name} auswählen`}
+                                            />
+                                        </td>
                                         <td>
                                             <div className="dtxd-name-cell">
                                                 <span className={`dtxd-type-icon ${entry.isFolder ? 'is-folder' : 'is-file'}`}>

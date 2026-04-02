@@ -1,4 +1,7 @@
 import { createHash, createSign } from 'crypto';
+import { randomUUID } from 'crypto';
+import { createWriteStream } from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
 import type { FastifyInstance } from 'fastify';
 import { getDatabase } from '../../../backend/src/core/database.js';
@@ -9,6 +12,8 @@ const PLUGIN_ID = 'dateiaustausch_drive';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SHAREPOINT_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
+const MAX_CONCURRENT_PUBLIC_UPLOADS = 2;
+const MAX_FILES_PER_BULK_UPLOAD = 20;
 const CUSTOMER_UPLOADS_ROOT_NAME = 'Kundenuploads';
 const DEFAULT_MAX_UPLOAD_MB = 1024;
 const SUPPORTED_EXTENSIONS = [
@@ -19,6 +24,23 @@ const SUPPORTED_EXTENSIONS = [
     '.zip',
 ];
 const SUPPORTED_EXTENSIONS_SET = new Set(SUPPORTED_EXTENSIONS);
+const ALLOWED_MIME_BY_EXTENSION: Record<string, string[]> = {
+    '.jpg': ['image/jpeg'],
+    '.jpeg': ['image/jpeg'],
+    '.png': ['image/png'],
+    '.webp': ['image/webp'],
+    '.pdf': ['application/pdf'],
+    '.txt': ['text/plain'],
+    '.doc': ['application/msword', 'application/vnd.ms-word'],
+    '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    '.mp4': ['video/mp4'],
+    '.mov': ['video/quicktime'],
+    '.webm': ['video/webm'],
+    '.zip': ['application/zip', 'application/x-zip-compressed'],
+};
+let activePublicUploads = 0;
 
 type ConnectorProvider = 'google_drive' | 'sharepoint';
 
@@ -199,6 +221,16 @@ function sortDriveEntries(entries: DriveEntry[]): DriveEntry[] {
 function isAllowedFileName(fileName: string, allowedExtensions: Set<string>): boolean {
     const ext = path.extname(String(fileName || '')).toLowerCase();
     return allowedExtensions.has(ext);
+}
+
+function isAllowedMimeForFile(fileName: string, mimeTypeRaw: string): boolean {
+    const mimeType = String(mimeTypeRaw || '').trim().toLowerCase();
+    if (!mimeType || mimeType === 'application/octet-stream') return true;
+    const normalizedMime = mimeType.split(';')[0]?.trim() || mimeType;
+    const ext = path.extname(String(fileName || '')).toLowerCase();
+    const allowed = ALLOWED_MIME_BY_EXTENSION[ext];
+    if (!allowed || allowed.length === 0) return false;
+    return allowed.includes(normalizedMime);
 }
 
 function resolvePublicSessionToken(request: any): string {
@@ -824,6 +856,143 @@ async function createProviderUploadSession(
     return createGoogleUploadSession(settings, ctx, fileName, mimeType, sizeBytes);
 }
 
+async function streamUploadToTempFile(filePart: any, maxBytes: number): Promise<{ tempPath: string; sizeBytes: number }> {
+    const tempDir = path.join(process.cwd(), 'uploads', 'plugins', PLUGIN_ID, 'tmp');
+    await fs.mkdir(tempDir, { recursive: true });
+    const tempPath = path.join(tempDir, `${Date.now()}-${randomUUID()}.upload`);
+    const output = createWriteStream(tempPath);
+    let bytes = 0;
+    try {
+        for await (const chunk of filePart.file) {
+            const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+            bytes += part.length;
+            if (bytes > maxBytes) {
+                throw new Error(`Datei ist zu groß (max. ${Math.round(maxBytes / (1024 * 1024))} MB).`);
+            }
+            if (!output.write(part)) {
+                await new Promise<void>((resolve) => output.once('drain', resolve));
+            }
+        }
+        output.end();
+        await new Promise<void>((resolve) => output.once('finish', resolve));
+        return { tempPath, sizeBytes: bytes };
+    } catch (error) {
+        output.destroy();
+        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        throw error;
+    }
+}
+
+async function uploadTempFileToGoogle(uploadUrl: string, tempPath: string, mimeType: string, sizeBytes: number): Promise<void> {
+    const stream = await fs.open(tempPath, 'r');
+    try {
+        const body = stream.createReadStream();
+        const res = await fetch(uploadUrl, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': mimeType || 'application/octet-stream',
+                'Content-Length': String(sizeBytes),
+            },
+            // Node.js stream request body
+            duplex: 'half' as any,
+            body: body as any,
+        } as any);
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`Google-Upload fehlgeschlagen (${res.status}). ${detail}`);
+        }
+    } finally {
+        await stream.close().catch(() => undefined);
+    }
+}
+
+async function uploadTempFileToSharePoint(uploadUrl: string, tempPath: string, sizeBytes: number, chunkSizeBytes: number): Promise<void> {
+    const handle = await fs.open(tempPath, 'r');
+    try {
+        let offset = 0;
+        while (offset < sizeBytes) {
+            const next = Math.min(offset + chunkSizeBytes, sizeBytes);
+            const length = next - offset;
+            const buffer = Buffer.allocUnsafe(length);
+            const readResult = await handle.read(buffer, 0, length, offset);
+            const chunk = readResult.bytesRead === length ? buffer : buffer.subarray(0, readResult.bytesRead);
+            if (chunk.length <= 0) break;
+
+            const res = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Length': String(chunk.length),
+                    'Content-Range': `bytes ${offset}-${offset + chunk.length - 1}/${sizeBytes}`,
+                },
+                body: chunk,
+            });
+            if (!(res.ok || res.status === 202)) {
+                const detail = await res.text().catch(() => '');
+                throw new Error(`SharePoint-Upload fehlgeschlagen (${res.status}). ${detail}`);
+            }
+            offset += chunk.length;
+        }
+    } finally {
+        await handle.close().catch(() => undefined);
+    }
+}
+
+async function uploadTempFileToProvider(
+    settings: ConnectorSettings,
+    ctx: ProviderContext,
+    fileName: string,
+    mimeType: string,
+    tempPath: string,
+    sizeBytes: number,
+): Promise<void> {
+    const session = await createProviderUploadSession(settings, ctx, fileName, mimeType, sizeBytes);
+    if (session.provider === 'google_drive') {
+        await uploadTempFileToGoogle(session.uploadUrl, tempPath, mimeType, sizeBytes);
+        return;
+    }
+    await uploadTempFileToSharePoint(
+        session.uploadUrl,
+        tempPath,
+        sizeBytes,
+        session.chunkSizeBytes || SHAREPOINT_UPLOAD_CHUNK_BYTES,
+    );
+}
+
+async function deleteProviderEntry(
+    settings: ConnectorSettings,
+    ctx: ProviderContext,
+    entryId: string,
+): Promise<void> {
+    if (ctx.provider === 'sharepoint') {
+        const url = graphUrl(
+            `/v1.0/sites/${encodeURIComponent(settings.sharepoint.siteId)}/drives/${encodeURIComponent(settings.sharepoint.driveId)}/items/${encodeURIComponent(entryId)}`,
+        );
+        const res = await fetch(url, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${ctx.accessToken}` },
+        });
+        if (!res.ok && res.status !== 404) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`SharePoint-Löschen fehlgeschlagen (${res.status}). ${detail}`);
+        }
+        return;
+    }
+
+    const url = googleDriveUrl(
+        `/drive/v3/files/${encodeURIComponent(entryId)}`,
+        settings.google,
+        { supportsAllDrives: 'true' },
+    );
+    const res = await fetch(url, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${ctx.accessToken}` },
+    });
+    if (!res.ok && res.status !== 404) {
+        const detail = await res.text().catch(() => '');
+        throw new Error(`Google-Löschen fehlgeschlagen (${res.status}). ${detail}`);
+    }
+}
+
 async function streamProviderDownload(
     settings: ConnectorSettings,
     ctx: ProviderContext,
@@ -985,6 +1154,9 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!isAllowedFileName(fileName, allowedExtensions)) {
             return reply.status(400).send({ error: `Dateityp nicht erlaubt. Erlaubt: ${settings.allowedExtensions.join(', ')}` });
         }
+        if (!isAllowedMimeForFile(fileName, mimeType)) {
+            return reply.status(400).send({ error: 'MIME-Typ passt nicht zur Dateiendung.' });
+        }
 
         const maxUploadBytes = Math.max(1, settings.maxUploadMb) * 1024 * 1024;
         if (sizeBytes > maxUploadBytes) {
@@ -1016,11 +1188,141 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     fastify.post('/public/files/upload', {
         config: { policy: { public: true }, rateLimit: { max: 6, timeWindow: '1 minute' } },
         policy: { public: true },
-    }, async (_request, reply) => {
-        return reply.status(410).send({
-            error: 'Legacy-Upload deaktiviert. Bitte Direct-Upload-Session verwenden.',
-            endpoint: '/api/plugins/dateiaustausch_drive/public/files/upload/session',
-        });
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const settings = await loadConnectorSettings(db);
+        const status = connectorStatus(settings);
+        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+
+        if (activePublicUploads >= MAX_CONCURRENT_PUBLIC_UPLOADS) {
+            return reply.status(429).send({
+                error: `Server ist ausgelastet. Bitte kurz erneut versuchen (max. ${MAX_CONCURRENT_PUBLIC_UPLOADS} parallele Uploads).`,
+            });
+        }
+
+        const maxUploadBytes = Math.max(1, settings.maxUploadMb) * 1024 * 1024;
+        const allowedExtensions = new Set(settings.allowedExtensions);
+        const uploaded: Array<{ name: string; mimeType: string; size: number }> = [];
+        activePublicUploads += 1;
+        try {
+            const ctx = await resolveProviderContext(db, settings, session);
+
+            const parts = (request as any).parts ? (request as any).parts() : null;
+            if (!parts) {
+                return reply.status(400).send({ error: 'Multipart-Upload ist erforderlich.' });
+            }
+
+            let filesSeen = 0;
+            for await (const part of parts) {
+                if (!part || part.type !== 'file') continue;
+                filesSeen += 1;
+                if (filesSeen > MAX_FILES_PER_BULK_UPLOAD) {
+                    return reply.status(400).send({ error: `Zu viele Dateien. Maximal ${MAX_FILES_PER_BULK_UPLOAD} pro Upload.` });
+                }
+
+                const fileName = sanitizeUploadFileName(String(part.filename || '').trim());
+                const mimeType = String(part.mimetype || 'application/octet-stream').trim() || 'application/octet-stream';
+                if (!isAllowedFileName(fileName, allowedExtensions)) {
+                    return reply.status(400).send({ error: `Dateityp nicht erlaubt: ${fileName}. Erlaubt: ${settings.allowedExtensions.join(', ')}` });
+                }
+                if (!isAllowedMimeForFile(fileName, mimeType)) {
+                    return reply.status(400).send({ error: `MIME-Typ passt nicht zur Dateiendung: ${fileName}.` });
+                }
+
+                let tempPath = '';
+                try {
+                    const streamed = await streamUploadToTempFile(part, maxUploadBytes);
+                    if (!Number.isFinite(streamed.sizeBytes) || streamed.sizeBytes <= 0) {
+                        return reply.status(400).send({ error: `Leere Datei ist nicht erlaubt: ${fileName}.` });
+                    }
+                    tempPath = streamed.tempPath;
+                    await uploadTempFileToProvider(settings, ctx, fileName, mimeType, tempPath, streamed.sizeBytes);
+                    uploaded.push({ name: fileName, mimeType, size: streamed.sizeBytes });
+                } finally {
+                    if (tempPath) await fs.rm(tempPath, { force: true }).catch(() => undefined);
+                }
+            }
+
+            if (filesSeen === 0) {
+                return reply.status(400).send({ error: 'Mindestens eine Datei ist erforderlich.' });
+            }
+
+            return reply.status(201).send({
+                success: true,
+                provider: ctx.provider,
+                uploadedCount: uploaded.length,
+                uploaded,
+                targetFolder: `${ctx.companyFolderName}/${ctx.uploadFolderName}`,
+            });
+        } catch (error: any) {
+            return reply.status(502).send({ error: String(error?.message || 'Upload fehlgeschlagen.') });
+        } finally {
+            activePublicUploads = Math.max(0, activePublicUploads - 1);
+        }
+    });
+
+    fastify.post('/public/items/delete', {
+        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const sessionToken = resolvePublicSessionToken(request);
+        if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
+        const session = await verifyPublicSessionByToken(db, sessionToken);
+        if (!session) return reply.status(401).send({ error: 'Session abgelaufen oder ungültig.' });
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+
+        const settings = await loadConnectorSettings(db);
+        const status = connectorStatus(settings);
+        if (!status.configured) return reply.status(503).send({ error: 'Cloud-Connector ist noch nicht konfiguriert.' });
+
+        const body = (request.body || {}) as { ids?: unknown };
+        const ids = Array.isArray(body.ids)
+            ? body.ids.map((id) => String(id || '').trim()).filter(Boolean)
+            : [];
+        if (ids.length === 0) {
+            return reply.status(400).send({ error: 'Mindestens ein Eintrag muss ausgewählt sein.' });
+        }
+        if (ids.length > 100) {
+            return reply.status(400).send({ error: 'Zu viele Einträge auf einmal (max. 100).' });
+        }
+
+        try {
+            const ctx = await resolveProviderContext(db, settings, session);
+            const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
+            const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            const currentEntries = await listProviderEntries(settings, ctx, folder.id);
+            const allowedMap = new Map(currentEntries.map((entry) => [entry.id, entry]));
+
+            const validIds = ids.filter((id) => allowedMap.has(id));
+            if (validIds.length === 0) {
+                return reply.status(400).send({ error: 'Keine gültigen Einträge im aktuellen Ordner ausgewählt.' });
+            }
+
+            const deletedIds: string[] = [];
+            const failed: Array<{ id: string; reason: string }> = [];
+            for (const id of validIds) {
+                try {
+                    await deleteProviderEntry(settings, ctx, id);
+                    deletedIds.push(id);
+                } catch (error: any) {
+                    failed.push({ id, reason: String(error?.message || 'Löschen fehlgeschlagen.') });
+                }
+            }
+
+            return {
+                success: failed.length === 0,
+                deletedCount: deletedIds.length,
+                deletedIds,
+                failed,
+            };
+        } catch (error: any) {
+            return reply.status(502).send({ error: String(error?.message || 'Löschen fehlgeschlagen.') });
+        }
     });
 
     fastify.get('/public/files/:fileId/download', {
