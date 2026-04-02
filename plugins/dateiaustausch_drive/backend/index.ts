@@ -3,12 +3,33 @@ import { randomUUID } from 'crypto';
 import { createWriteStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
-import archiver from 'archiver';
 import { Readable } from 'stream';
+import { createRequire } from 'module';
 import type { FastifyInstance } from 'fastify';
+import type { Archiver } from 'archiver';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
 import { decrypt } from '../../../backend/src/core/encryption.js';
+
+const pluginRequire = createRequire(import.meta.url);
+const backendRequire = createRequire(new URL('../../../backend/package.json', import.meta.url));
+
+type ArchiverFactory = typeof import('archiver').default;
+
+function resolveArchiverFactory(): ArchiverFactory {
+    try {
+        return pluginRequire('archiver');
+    } catch {
+        try {
+            return backendRequire('archiver');
+        } catch (error: any) {
+            const reason = error instanceof Error ? error.message : String(error || 'unknown error');
+            throw new Error(`Archiver konnte nicht geladen werden. Bitte Backend-Dependencies installieren. Grund: ${reason}`);
+        }
+    }
+}
+
+const createZipArchiver = resolveArchiverFactory();
 
 const PLUGIN_ID = 'dateiaustausch_drive';
 const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/drive';
@@ -1276,7 +1297,7 @@ async function appendProviderEntryToArchive(
     settings: ConnectorSettings,
     ctx: ProviderContext,
     entry: DriveEntry,
-    archive: archiver.Archiver,
+    archive: Archiver,
     basePath: string,
     counters: { files: number },
 ): Promise<void> {
@@ -1732,7 +1753,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(zipName)}`);
             reply.raw.writeHead(200);
 
-            const archive = archiver('zip', { zlib: { level: 6 } });
+            const archive = createZipArchiver('zip', { zlib: { level: 6 } });
             archive.on('error', (err) => {
                 if (!reply.raw.destroyed) reply.raw.destroy(err);
             });
