@@ -7,18 +7,20 @@
     width: 100%;
     max-width: none;
     margin: 0;
+    min-height: 100vh;
 }
 
 .kp-page.vp-public-page {
-    background:
-        radial-gradient(circle at 0% 0%, rgba(37, 99, 235, 0.12), transparent 45%),
-        radial-gradient(circle at 100% 100%, rgba(29, 78, 216, 0.08), transparent 48%),
-        linear-gradient(180deg, #ecf2fb 0%, #dbe6f6 100%);
-    padding: clamp(12px, 2vw, 24px);
+    background: var(--color-bg, #f8fafc);
+    padding: 0;
     overflow-x: clip;
+    min-height: 100vh;
+    width: 100vw;
+    max-width: 100vw;
 }
 
 .kp-page .kp-portal {
+    padding: clamp(12px, 2vw, 24px);
     display: grid;
     gap: var(--space-md);
     width: 100%;
@@ -32,11 +34,11 @@
     align-items: center;
     justify-content: flex-start;
     gap: var(--space-sm);
-    border: 1px solid #d7e1ef;
+    border: 1px solid var(--color-border, #e2e8f0);
     border-radius: 16px;
     padding: var(--space-sm);
-    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
+    background: var(--color-surface, #ffffff);
 }
 
 .kp-page .kp-mobile-brand {
@@ -80,10 +82,10 @@
 }
 
 .kp-page .kp-sidebar {
-    border: 1px solid #d6e1ef;
-    border-radius: 18px;
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-lg, 12px);
+    background: var(--color-surface, #ffffff);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
     padding: var(--space-md);
     display: grid;
     gap: var(--space-sm);
@@ -118,8 +120,8 @@
 }
 
 .kp-page .kp-sidebar-customer {
-    border-top: 1px solid #dde6f2;
-    border-bottom: 1px solid #dde6f2;
+    border-top: 1px solid var(--color-border, #e2e8f0);
+    border-bottom: 1px solid var(--color-border, #e2e8f0);
     padding: var(--space-sm) 0;
     display: grid;
     gap: 4px;
@@ -226,10 +228,10 @@
 }
 
 .kp-page .kp-main {
-    border: 1px solid #d6e1ef;
-    border-radius: 18px;
-    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
-    box-shadow: 0 16px 36px rgba(15, 23, 42, 0.07);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-lg, 12px);
+    background: var(--color-surface, #ffffff);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.05));
     padding: calc(var(--space-lg) + 2px);
     display: grid;
     gap: var(--space-md);
@@ -1355,77 +1357,179 @@
 }
 
 .kp-page .vp-public-shell-login {
-    min-height: calc(100vh - var(--topbar-height) - 2rem);
+    min-height: 100vh;
+    display: flex;
     align-items: center;
+    justify-content: center;
+    padding: 24px;
 }
 
 .kp-page .vp-access-card {
-    width: min(720px, 100%);
+    width: min(480px, 100%);
     margin: 0 auto;
-    border: 1px solid #cdd9ea;
-    border-radius: 24px;
-    box-shadow: 0 26px 50px rgba(15, 23, 42, 0.12);
-    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-    padding: clamp(18px, 2.2vw, 30px);
+    border: 1px solid var(--color-border, #e2e8f0);
+    border-radius: var(--radius-xl, 16px);
+    box-shadow: var(--shadow-lg, 0 10px 15px -3px rgba(0,0,0,0.1));
+    background: var(--color-surface, #ffffff);
+    padding: clamp(24px, 3vw, 40px);
 }
 
 .kp-page .vp-access-head {
+    display: flex;
     justify-content: center;
-    margin-bottom: var(--space-xs);
+    margin-bottom: 20px;
 }
 
 .kp-page .vp-portal-brand {
+    display: flex;
     justify-content: center;
     width: 100%;
 }
 
 .kp-page .vp-portal-brand img {
-    max-width: min(360px, 80%);
+    max-width: min(260px, 70%);
 }
 
 .kp-page .vp-login-kicker {
-    margin: 24px 0 6px 0;
+    margin: 8px 0 6px 0;
     text-align: center;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: #607591;
+    color: var(--color-primary, #2563eb);
 }
 
 .kp-page .vp-access-title,
 .kp-page .vp-access-subtitle,
-.kp-page .vp-access-form .vp-label,
 .kp-page .vp-access-error {
     text-align: center;
 }
 
+.kp-page .vp-access-title {
+    font-size: 1.35rem;
+    margin: 0 0 4px 0;
+}
+
 .kp-page .vp-access-subtitle {
-    margin-left: auto;
-    margin-right: auto;
+    margin: 0 auto 8px auto;
+    font-size: 0.88rem;
+    max-width: 340px;
+    line-height: 1.45;
 }
 
 .kp-page .vp-access-form {
-    width: min(560px, 100%);
+    width: 100%;
     margin: 0 auto;
-    gap: 12px;
+    gap: 18px;
 }
 
 .kp-page .vp-access-form .input {
-    min-height: 52px;
+    min-height: 50px;
     border-radius: 12px;
-    font-size: 1.02rem;
-    padding-top: 10px;
-    padding-bottom: 10px;
+    font-size: 1rem;
+    padding: 12px 16px;
+    border: 1.5px solid var(--color-border, #e2e8f0);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.kp-page .vp-access-form .input:focus {
+    border-color: var(--color-primary, #2563eb);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    outline: none;
+}
+
+.kp-page .vp-access-form .input::placeholder {
+    color: var(--color-text-muted, #94a3b8);
 }
 
 .kp-page .vp-access-submit {
     width: 100%;
     justify-content: center;
-    min-height: 52px;
+    min-height: 50px;
     border-radius: 12px;
     font-size: 1rem;
     font-weight: 700;
+    letter-spacing: 0.02em;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kp-page .vp-access-submit:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(37, 99, 235, 0.25);
+}
+
+/* -- Back circle -- */
+.kp-page .vp-back-circle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 auto;
+    padding: 6px 16px 6px 8px;
+    border-radius: 999px;
+    border: 1.5px solid var(--color-border, #e2e8f0);
+    background: var(--color-surface-hover, #f1f5f9);
+    color: var(--color-text-secondary, #64748b);
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    line-height: 1;
+}
+
+.kp-page .vp-back-circle svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.kp-page .vp-back-circle:hover {
+    border-color: var(--color-primary, #2563eb);
+    color: var(--color-primary, #2563eb);
+    background: var(--color-primary-light, #eff6ff);
+}
+
+/* -- 2FA Code Boxes -- */
+.kp-page .vp-code-boxes {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.kp-page .vp-code-digit {
+    width: 50px;
+    height: 58px;
+    border: 1.5px solid var(--color-border, #e2e8f0);
+    border-radius: 12px;
+    text-align: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-text, #1e293b);
+    background: #fff;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    caret-color: var(--color-primary, #2563eb);
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.kp-page .vp-code-digit::-webkit-outer-spin-button,
+.kp-page .vp-code-digit::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.kp-page .vp-code-digit:focus {
+    border-color: var(--color-primary, #2563eb);
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    outline: none;
+}
+
+.kp-page .vp-code-digit:not(:placeholder-shown) {
+    border-color: var(--color-border-strong, #cbd5e1);
+}
+
+.kp-page .vp-access-form-code {
+    align-items: center;
 }
 
 .kp-page .kp-empty-icon svg {
@@ -1778,17 +1882,28 @@
 }
 
 @media (max-width: 640px) {
-    .kp-page.vp-public-page {
-        padding: 8px;
+    .kp-page .vp-public-shell-login {
+        padding: 12px;
     }
 
     .kp-page .vp-access-card {
-        border-radius: 16px;
-        padding: 16px;
+        border-radius: 18px;
+        padding: 20px 16px;
     }
 
     .kp-page .vp-portal-brand img {
-        max-width: min(300px, 88%);
+        max-width: min(220px, 80%);
+    }
+
+    .kp-page .vp-code-boxes {
+        gap: 6px;
+    }
+
+    .kp-page .vp-code-digit {
+        width: 42px;
+        height: 50px;
+        font-size: 1.25rem;
+        border-radius: 10px;
     }
 
     .kp-page .kp-mobile-topbar {

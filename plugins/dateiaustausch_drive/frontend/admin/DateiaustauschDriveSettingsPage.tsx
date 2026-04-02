@@ -27,8 +27,9 @@ const SETTING_KEYS = {
 
 const EXTENSION_OPTIONS = [
     '.jpg', '.jpeg', '.png', '.webp',
-    '.pdf', '.txt',
+    '.pdf', '.txt', '.csv',
     '.doc', '.docx', '.xlsx', '.pptx',
+    '.ai', '.svg', '.psd',
     '.mp4', '.mov', '.webm',
     '.zip',
 ] as const;
@@ -362,7 +363,7 @@ export default function DateiaustauschDriveSettingsPage() {
     return (
         <div className="card dtxd-stack">
             <div>
-                <h2 className="section-title">Dateiaustausch Drive</h2>
+                <h2 className="section-title">Dateiaustausch</h2>
                 <p className="text-muted">
                     Cloud-Connector für Google Drive oder SharePoint. Diese Variante hält große Kundendateien vom eigenen Server fern.
                 </p>
@@ -378,6 +379,9 @@ export default function DateiaustauschDriveSettingsPage() {
                     </p>
                     <p className="dtxd-muted" style={{ marginTop: 6 }}>
                         Max Upload: {status.maxUploadMb} MB · Erlaubte Typen: {status.allowedExtensions.join(', ')}
+                    </p>
+                    <p className="dtxd-muted" style={{ marginTop: 6 }}>
+                        Es ist immer nur ein Provider aktiv. Aktuell aktiv: <strong>{status.provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}</strong>.
                     </p>
                 </div>
             ) : null}
@@ -441,12 +445,8 @@ export default function DateiaustauschDriveSettingsPage() {
                             <span className="label">Google Auth Modus</span>
                             <select className="input" value={googleAuthMode} onChange={(e) => setGoogleAuthMode(e.target.value as 'service_account' | 'oauth_refresh')}>
                                 <option value="oauth_refresh">Persönliches Drive (OAuth Refresh Token)</option>
-                                <option value="service_account">Service Account (Shared Drive)</option>
+                                <option value="service_account">Google Workspace (Service Account + Shared Drive)</option>
                             </select>
-                        </label>
-                        <label className="field">
-                            <span className="label">Google Client E-Mail</span>
-                            <input className="input" value={googleClientEmail} onChange={(e) => setGoogleClientEmail(e.target.value)} placeholder="service-account@projekt.iam.gserviceaccount.com" />
                         </label>
                         <label className="field">
                             <span className="label">Google Root Folder ID</span>
@@ -457,9 +457,21 @@ export default function DateiaustauschDriveSettingsPage() {
                             <input className="input" value={googleSharedDriveId} onChange={(e) => setGoogleSharedDriveId(e.target.value)} placeholder="Optional: Shared Drive ID" />
                         </label>
                         <label className="field">
-                            <span className="label">Google OAuth Client ID</span>
-                            <input className="input" value={googleOAuthClientId} onChange={(e) => setGoogleOAuthClientId(e.target.value)} placeholder="xxxxxxxx.apps.googleusercontent.com" />
+                            <span className="label">Google Client E-Mail (nur Service Account)</span>
+                            <input
+                                className="input"
+                                value={googleClientEmail}
+                                onChange={(e) => setGoogleClientEmail(e.target.value)}
+                                placeholder="service-account@projekt.iam.gserviceaccount.com"
+                                disabled={googleAuthMode !== 'service_account'}
+                            />
                         </label>
+                        {googleAuthMode === 'oauth_refresh' ? (
+                            <label className="field">
+                                <span className="label">Google OAuth Client ID</span>
+                                <input className="input" value={googleOAuthClientId} onChange={(e) => setGoogleOAuthClientId(e.target.value)} placeholder="xxxxxxxx.apps.googleusercontent.com" />
+                            </label>
+                        ) : null}
                     </div>
                 ) : (
                     <div className="dtxd-grid">
@@ -568,7 +580,7 @@ export default function DateiaustauschDriveSettingsPage() {
                 <div className="modal-overlay" onClick={() => !saving && setWizardOpen(false)}>
                     <div className="modal-card dtxd-wizard-modal" onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
-                            <h3>Dateiaustausch Drive einrichten</h3>
+                            <h3>Dateiaustausch einrichten</h3>
                             <button className="modal-close" onClick={() => setWizardOpen(false)} disabled={saving}>×</button>
                         </div>
 
@@ -625,7 +637,7 @@ export default function DateiaustauschDriveSettingsPage() {
                                                 <span className="label">Google Auth Modus</span>
                                                 <select className="input" value={googleAuthMode} onChange={(e) => setGoogleAuthMode(e.target.value as 'service_account' | 'oauth_refresh')}>
                                                     <option value="oauth_refresh">Persönliches Drive (OAuth Refresh Token)</option>
-                                                    <option value="service_account">Service Account (Shared Drive)</option>
+                                                    <option value="service_account">Google Workspace (Service Account + Shared Drive)</option>
                                                 </select>
                                             </label>
                                             <label className="field">

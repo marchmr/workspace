@@ -277,7 +277,9 @@ export default function KundenportalPage() {
                         <p className="vp-login-kicker">Kundenportal</p>
                         <h1 className="page-title vp-access-title">Login - {portalBrand}</h1>
                         <p className="text-muted vp-access-subtitle">
-                            Melden Sie sich mit Ihrer E-Mail an. Wir senden Ihnen einen Code per Mail.
+                            {!codeRequested
+                                ? 'Melden Sie sich mit Ihrer E-Mail an. Wir senden Ihnen einen Code per Mail.'
+                                : `Wir haben einen 6-stelligen Code an ${email} gesendet.`}
                         </p>
 
                         {expectedHost && expectedHost !== window.location.hostname && (
@@ -288,16 +290,60 @@ export default function KundenportalPage() {
 
                         {!codeRequested ? (
                             <form onSubmit={requestCode} className="vp-stack vp-access-form">
-                                <label className="vp-label" htmlFor="kp-email-input">E-Mail</label>
-                                <input id="kp-email-input" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@firma.de" required />
+                                <input id="kp-email-input" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" required />
                                 <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>{loading ? 'Sende Code...' : 'Code anfordern'}</button>
                             </form>
                         ) : (
-                            <form onSubmit={verifyCode} className="vp-stack vp-access-form">
-                                <label className="vp-label" htmlFor="kp-code-input">6-stelliger Code</label>
-                                <input id="kp-code-input" className="input vp-input-center vp-code-input" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="123456" required />
-                                <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading}>{loading ? 'Prüfe Code...' : 'Anmelden'}</button>
-                                <button className="btn btn-secondary" type="button" onClick={() => { setCodeRequested(false); setCode(''); setError(null); }}>E-Mail ändern</button>
+                            <form onSubmit={verifyCode} className="vp-stack vp-access-form vp-access-form-code">
+                                <button className="vp-back-circle" type="button" onClick={() => { setCodeRequested(false); setCode(''); setError(null); }} title="Zurück zur E-Mail Eingabe">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                                    <span>Zurück zur E-Mail Eingabe</span>
+                                </button>
+                                <div className="vp-code-boxes">
+                                    {[0, 1, 2, 3, 4, 5].map((i) => (
+                                        <input
+                                            key={i}
+                                            className="vp-code-digit"
+                                            type="text"
+                                            inputMode="numeric"
+                                            maxLength={1}
+                                            value={code[i] || ''}
+                                            autoFocus={i === 0}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Backspace' && !code[i] && i > 0) {
+                                                    const prev = e.currentTarget.previousElementSibling as HTMLInputElement | null;
+                                                    if (prev) { prev.focus(); prev.select(); }
+                                                }
+                                            }}
+                                            onInput={(e) => {
+                                                const val = (e.target as HTMLInputElement).value.replace(/\D/g, '');
+                                                if (!val) {
+                                                    setCode((prev: string) => { const a = prev.split(''); a[i] = ''; return a.join(''); });
+                                                    return;
+                                                }
+                                                if (val.length > 1) {
+                                                    const pasted = val.slice(0, 6);
+                                                    setCode(pasted);
+                                                    const boxes = e.currentTarget.parentElement?.querySelectorAll('.vp-code-digit') as NodeListOf<HTMLInputElement>;
+                                                    const focusIdx = Math.min(pasted.length, 5);
+                                                    boxes?.[focusIdx]?.focus();
+                                                    return;
+                                                }
+                                                setCode((prev: string) => {
+                                                    const a = prev.split('');
+                                                    while (a.length < 6) a.push('');
+                                                    a[i] = val;
+                                                    return a.join('');
+                                                });
+                                                if (i < 5) {
+                                                    const next = e.currentTarget.nextElementSibling as HTMLInputElement | null;
+                                                    if (next) next.focus();
+                                                }
+                                            }}
+                                        />
+                                    ))}
+                                </div>
+                                <button className="btn btn-primary vp-access-submit" type="submit" disabled={loading || code.replace(/\D/g, '').length < 6}>{loading ? 'Prüfe Code...' : 'Anmelden'}</button>
                             </form>
                         )}
 

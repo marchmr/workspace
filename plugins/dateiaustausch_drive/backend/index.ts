@@ -18,8 +18,9 @@ const CUSTOMER_UPLOADS_ROOT_NAME = 'Kundenuploads';
 const DEFAULT_MAX_UPLOAD_MB = 1024;
 const SUPPORTED_EXTENSIONS = [
     '.jpg', '.jpeg', '.png', '.webp',
-    '.pdf', '.txt',
+    '.pdf', '.txt', '.csv',
     '.doc', '.docx', '.xlsx', '.pptx',
+    '.ai', '.svg', '.psd',
     '.mp4', '.mov', '.webm',
     '.zip',
 ];
@@ -31,10 +32,14 @@ const ALLOWED_MIME_BY_EXTENSION: Record<string, string[]> = {
     '.webp': ['image/webp'],
     '.pdf': ['application/pdf'],
     '.txt': ['text/plain'],
+    '.csv': ['text/csv', 'application/csv', 'application/vnd.ms-excel'],
     '.doc': ['application/msword', 'application/vnd.ms-word'],
     '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
     '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+    '.ai': ['application/postscript', 'application/illustrator'],
+    '.svg': ['image/svg+xml'],
+    '.psd': ['image/vnd.adobe.photoshop', 'application/octet-stream'],
     '.mp4': ['video/mp4'],
     '.mov': ['video/quicktime'],
     '.webm': ['video/webm'],
@@ -270,6 +275,16 @@ function resolveErrorStatusCode(error: unknown): number {
     }
     if (message.includes('abgelaufen') || message.includes('unauthorized')) {
         return 401;
+    }
+    if (
+        message.includes('forbidden')
+        || message.includes('(403)')
+        || message.includes('status 403')
+        || message.includes('access denied')
+        || message.includes('storagequotaexceeded')
+        || message.includes('service accounts do not have storage quota')
+    ) {
+        return 403;
     }
     return 502;
 }
@@ -1405,7 +1420,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 targetFolder: `${ctx.companyFolderName}/${ctx.uploadFolderName}`,
             });
         } catch (error: any) {
-            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) });
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) });
         } finally {
             activePublicUploads = Math.max(0, activePublicUploads - 1);
         }
@@ -1466,7 +1482,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 failed,
             };
         } catch (error: any) {
-            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) || 'Löschen fehlgeschlagen.' });
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'Löschen fehlgeschlagen.' });
         }
     });
 
@@ -1495,7 +1512,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             await streamProviderDownload(settings, ctx, folder.id, fileId, reply);
             return reply;
         } catch (error: any) {
-            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) || 'Download fehlgeschlagen.' });
+            const statusCode = resolveErrorStatusCode(error);
+            return reply.status(statusCode).send({ error: normalizeProviderErrorMessage(error) || 'Download fehlgeschlagen.' });
         }
     });
 }

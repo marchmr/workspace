@@ -47,7 +47,7 @@ export default function DateiaustauschDrivePage() {
         <div className="page">
             <div className="card dtxd-stack">
                 <div>
-                    <h1 className="page-title">Dateiaustausch Drive</h1>
+                    <h1 className="page-title">Dateiaustausch</h1>
                     <p className="text-muted">Cloud-Connector (Google Drive oder SharePoint) als alternative Dateiaustausch-Infrastruktur.</p>
                 </div>
 
@@ -87,7 +87,7 @@ export default function DateiaustauschDrivePage() {
 
                 <div className="card">
                     <p className="dtxd-muted">
-                        Konfiguration und Verbindungstest findest du unter <strong>Admin → Einstellungen → Dateiaustausch Drive</strong>.
+                        Konfiguration und Verbindungstest findest du unter <strong>Admin → Einstellungen → Dateiaustausch</strong>.
                     </p>
                 </div>
             </div>

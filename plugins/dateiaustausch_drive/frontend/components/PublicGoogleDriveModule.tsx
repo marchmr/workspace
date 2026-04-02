@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 const STORAGE_SESSION_KEY = 'kundenportal.session';
 
@@ -90,6 +90,8 @@ const ICONS = {
 
 export default function PublicGoogleDriveModule() {
     const sessionToken = useMemo(() => localStorage.getItem(STORAGE_SESSION_KEY) || '', []);
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const loadRequestIdRef = useRef(0);
     const [entries, setEntries] = useState<Entry[]>([]);
     const [folderName, setFolderName] = useState('Kundenordner');
     const [baseFolderName, setBaseFolderName] = useState('Kundenordner');
@@ -116,6 +118,7 @@ export default function PublicGoogleDriveModule() {
     }, []);
 
     const load = useCallback(async () => {
+        const requestId = ++loadRequestIdRef.current;
         if (!sessionToken) {
             setError('Session-Token fehlt.');
             setLoading(false);
@@ -136,6 +139,7 @@ export default function PublicGoogleDriveModule() {
             });
             const payload = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(payload?.error || 'Dateiliste konnte nicht geladen werden.');
+            if (requestId !== loadRequestIdRef.current) return;
             const data = payload as ListResponse;
             setProvider(data.provider === 'sharepoint' ? 'sharepoint' : 'google_drive');
             setEntries(Array.isArray(data.entries) ? data.entries : []);
@@ -144,9 +148,10 @@ export default function PublicGoogleDriveModule() {
             setCurrentPath(String(data.currentPath || ''));
             setUploadFolderName(String(data.uploadFolderName || ''));
         } catch (err) {
+            if (requestId !== loadRequestIdRef.current) return;
             setError(err instanceof Error ? err.message : 'Dateiliste konnte nicht geladen werden.');
         } finally {
-            setLoading(false);
+            if (requestId === loadRequestIdRef.current) setLoading(false);
         }
     }, [sessionToken, currentPath]);
 
@@ -174,6 +179,10 @@ export default function PublicGoogleDriveModule() {
         () => visibleEntries.filter((entry) => entry.isFolder).slice(0, 10),
         [visibleEntries],
     );
+    const queuedFilesTotalBytes = useMemo(
+        () => selectedFiles.reduce((sum, file) => sum + (Number(file.size) || 0), 0),
+        [selectedFiles],
+    );
 
     async function onUpload(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -200,6 +209,7 @@ export default function PublicGoogleDriveModule() {
             setUploadProgress(100);
 
             setSelectedFiles([]);
+            if (fileInputRef.current) fileInputRef.current.value = '';
             const uploadedCount = Number(payload?.uploadedCount || selectedFiles.length || 1);
             setSuccess(`${uploadedCount} Datei(en) erfolgreich hochgeladen.`);
             await load();
@@ -210,6 +220,15 @@ export default function PublicGoogleDriveModule() {
             setUploadProgress(null);
             setUploading(false);
         }
+    }
+
+    function removeQueuedFile(index: number) {
+        setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    }
+
+    function clearQueuedFiles() {
+        setSelectedFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = '';
     }
 
     async function download(fileId: string, fileName: string) {
@@ -306,6 +325,7 @@ export default function PublicGoogleDriveModule() {
                         <Icon path={ICONS.upload} />
                         <span>Dateien auswählen</span>
                         <input
+                            ref={fileInputRef}
                             type="file"
                             multiple
                             onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))}
@@ -316,27 +336,73 @@ export default function PublicGoogleDriveModule() {
                         {uploading ? 'Lädt hoch...' : 'Hochladen'}
                     </button>
                     {selectedFiles.length > 0 ? <span className="text-muted">{selectedFiles.length} Datei(en) gewählt</span> : null}
+                    {selectedFiles.length > 0 ? (
+                        <button className="btn btn-secondary" type="button" onClick={clearQueuedFiles}>
+                            Queue leeren
+                        </button>
+                    ) : null}
                 </form>
             </div>
+
+            {selectedFiles.length > 0 ? (
+                <div className="dtxd-queue">
+                    <div className="dtxd-queue-header">
+                        <strong>Upload-Queue</strong>
+                        <span className="text-muted">{selectedFiles.length} Datei(en) · {formatBytes(queuedFilesTotalBytes)}</span>
+                    </div>
+                    <div className="dtxd-queue-list">
+                        {selectedFiles.map((file, index) => (
+                            <div className="dtxd-queue-item" key={`${file.name}-${file.size}-${index}`}>
+                                <span className="dtxd-queue-name">{file.name}</span>
+                                <span className="text-muted">{formatBytes(file.size)}</span>
+                                <button className="dtxd-inline-action" type="button" onClick={() => removeQueuedFile(index)}>
+                                    Entfernen
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ) : null}
 
             <div className="dtxd-main">
                 <aside className="dtxd-sidebar">
                     <div className="dtxd-side-title">Schnellzugriff</div>
-                    <button className="dtxd-side-item" type="button" onClick={() => openPath([])}>
+                    <button
+                        className={`dtxd-side-item ${currentPath === '' ? 'is-active' : ''}`}
+                        type="button"
+                        onClick={() => openPath([])}
+                    >
                         <Icon path={ICONS.root} />
                         <span>Root</span>
                     </button>
-                    {quickFolders.map((entry) => (
-                        <button
-                            key={entry.id}
-                            className="dtxd-side-item"
-                            type="button"
-                            onClick={() => openPath([...pathParts, entry.name])}
-                        >
-                            <Icon path={ICONS.folder} />
-                            <span>{entry.name}</span>
-                        </button>
-                    ))}
+                    {pathParts.map((part, index) => {
+                        const targetPath = pathParts.slice(0, index + 1).join('/');
+                        return (
+                            <button
+                                key={`path-${targetPath}`}
+                                className={`dtxd-side-item ${targetPath === currentPath ? 'is-active' : ''}`}
+                                type="button"
+                                onClick={() => openPath(pathParts.slice(0, index + 1))}
+                            >
+                                <Icon path={ICONS.folder} />
+                                <span>{part}</span>
+                            </button>
+                        );
+                    })}
+                    {quickFolders.map((entry) => {
+                        const targetPath = [...pathParts, entry.name].join('/');
+                        return (
+                            <button
+                                key={entry.id}
+                                className={`dtxd-side-item ${targetPath === currentPath ? 'is-active' : ''}`}
+                                type="button"
+                                onClick={() => openPath([...pathParts, entry.name])}
+                            >
+                                <Icon path={ICONS.folder} />
+                                <span>{entry.name}</span>
+                            </button>
+                        );
+                    })}
                     {quickFolders.length === 0 ? <div className="dtxd-side-empty">Keine Ordner in dieser Ansicht.</div> : null}
                 </aside>
 

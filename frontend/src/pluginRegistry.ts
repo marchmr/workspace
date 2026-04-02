@@ -124,7 +124,7 @@ export const pluginRegistry: PluginRegistryEntry[] = [
     },
     {
         id: 'dateiaustausch_drive',
-        name: 'Dateiaustausch Drive',
+        name: 'Dateiaustausch',
         routes: (Array.isArray((plugin_dateiaustausch_drive_1 as any).routes) ? (plugin_dateiaustausch_drive_1 as any).routes : []) as PluginRoute[],
         navItems: (Array.isArray((plugin_dateiaustausch_drive_1 as any).navItems) ? (plugin_dateiaustausch_drive_1 as any).navItems : []) as PluginNavItem[],
         dashboardTiles: (Array.isArray((plugin_dateiaustausch_drive_1 as any).dashboardTiles) ? (plugin_dateiaustausch_drive_1 as any).dashboardTiles : []) as PluginDashboardTile[],

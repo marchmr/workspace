@@ -28,7 +28,7 @@ export const routes: PluginRoute[] = [
 
 export const navItems: PluginNavItem[] = [
     {
-        label: 'Dateiaustausch Drive',
+        label: 'Dateiaustausch',
         icon,
         path: '/dateiaustausch-drive',
         permission: 'dateiaustausch_drive.view',
@@ -51,7 +51,7 @@ export const quickActions: PluginQuickAction[] = [];
 export const portalTabs: PluginPortalTab[] = [
     {
         id: 'dateiaustausch-drive',
-        label: 'Dateiaustausch Drive',
+        label: 'Dateiaustausch',
         icon: cloudIcon,
         component: PublicGoogleDriveModule,
         order: 21,

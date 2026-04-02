@@ -149,6 +149,13 @@
     background: rgba(37, 99, 235, 0.03);
 }
 
+.dtxd-side-item.is-active {
+    border-color: rgba(37, 99, 235, 0.45);
+    background: rgba(37, 99, 235, 0.1);
+    color: #1d4ed8;
+    font-weight: 600;
+}
+
 .dtxd-side-empty {
     font-size: 13px;
     color: var(--text-muted);
@@ -243,6 +250,45 @@
     border-radius: 10px;
     padding: 10px 12px;
     font-size: 14px;
+}
+
+.dtxd-queue {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+}
+
+.dtxd-queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.dtxd-queue-list {
+    display: grid;
+    gap: 6px;
+}
+
+.dtxd-queue-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 10px;
+    align-items: center;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 6px 8px;
+    background: #fff;
+}
+
+.dtxd-queue-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .dtxd-table-wrap {
@@ -378,5 +424,10 @@
     .dtxd-search {
         max-width: 100%;
         width: 100%;
+    }
+
+    .dtxd-queue-item {
+        grid-template-columns: 1fr;
+        justify-items: start;
     }
 }
