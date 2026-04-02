@@ -85,7 +85,7 @@ function normalizeUploadErrorMessage(message: string): string {
         lower.includes('service accounts do not have storage quota') ||
         lower.includes('storagequotaexceeded')
     ) {
-        return 'Google Drive blockiert Uploads für diesen Service-Account (kein eigenes Speicherkontingent). Bitte auf OAuth (persönliches Drive) wechseln oder Shared Drive konfigurieren.';
+        return 'Cloud-Speicher blockiert Uploads (kein Speicherkontingent). Bitte den Administrator kontaktieren.';
     }
     return raw;
 }
@@ -410,7 +410,7 @@ export default function PublicGoogleDriveModule() {
                 <div>
                     <h2 className="section-title">Dateiaustausch Cloud</h2>
                     <p className="text-muted dtxd-subtitle">
-                        <span className="dtxd-badge">{provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}</span>
+                        <span className="dtxd-badge">Online</span>
                         <span>Aktueller Ordner: <strong>{folderName}</strong></span>
                         {uploadFolderName ? <span>Upload-Ziel heute: <strong>{baseFolderName}/{uploadFolderName}</strong></span> : null}
                     </p>
