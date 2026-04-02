@@ -43,6 +43,7 @@ const ALLOWED_MIME_BY_EXTENSION: Record<string, string[]> = {
 let activePublicUploads = 0;
 
 type ConnectorProvider = 'google_drive' | 'sharepoint';
+type GoogleAuthMode = 'service_account' | 'oauth_refresh';
 
 const SETTING_KEYS = {
     provider: 'dateiaustausch_drive.provider',
@@ -54,6 +55,10 @@ const SETTING_KEYS = {
     googlePrivateKey: 'dateiaustausch_drive.google.private_key',
     googleRootFolderId: 'dateiaustausch_drive.google.root_folder_id',
     googleSharedDriveId: 'dateiaustausch_drive.google.shared_drive_id',
+    googleAuthMode: 'dateiaustausch_drive.google.auth_mode',
+    googleOAuthClientId: 'dateiaustausch_drive.google.oauth_client_id',
+    googleOAuthClientSecret: 'dateiaustausch_drive.google.oauth_client_secret',
+    googleOAuthRefreshToken: 'dateiaustausch_drive.google.oauth_refresh_token',
 
     spTenantId: 'dateiaustausch_drive.sharepoint.tenant_id',
     spClientId: 'dateiaustausch_drive.sharepoint.client_id',
@@ -78,10 +83,14 @@ type ConnectorSettings = {
     maxUploadMb: number;
     allowedExtensions: string[];
     google: {
+        authMode: GoogleAuthMode;
         clientEmail: string;
         privateKey: string;
         rootFolderId: string;
         sharedDriveId: string | null;
+        oauthClientId: string;
+        oauthClientSecret: string;
+        oauthRefreshToken: string;
     };
     sharepoint: {
         tenantId: string;
@@ -105,6 +114,7 @@ type DriveEntry = {
 type ProviderContext = {
     provider: ConnectorProvider;
     accessToken: string;
+    effectiveGoogleSharedDriveId?: string | null;
     companyFolderId: string;
     companyFolderName: string;
     uploadFolderId: string;
@@ -233,6 +243,21 @@ function isAllowedMimeForFile(fileName: string, mimeTypeRaw: string): boolean {
     return allowed.includes(normalizedMime);
 }
 
+function normalizeProviderErrorMessage(error: unknown): string {
+    const raw = String((error as any)?.message || error || '').trim();
+    const lower = raw.toLowerCase();
+    if (
+        lower.includes('service accounts do not have storage quota') ||
+        lower.includes('storagequotaexceeded')
+    ) {
+        return 'Google Drive Service-Account hat kein eigenes Speicherkontingent. Nutze entweder Shared Drive oder Google OAuth (persönliches Drive) in den Plugin-Einstellungen.';
+    }
+    if (lower.includes('drive api has not been used') || lower.includes('access not configured')) {
+        return 'Google Drive API ist für dieses Projekt noch nicht aktiviert. Bitte in Google Cloud unter APIs die Google Drive API aktivieren.';
+    }
+    return raw || 'Cloud-Anfrage fehlgeschlagen.';
+}
+
 function resolvePublicSessionToken(request: any): string {
     const fromHeader = request.headers['x-public-session-token'];
     if (typeof fromHeader === 'string' && fromHeader.trim()) return fromHeader.trim();
@@ -327,6 +352,8 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
 
     const rawProvider = String(values.get(SETTING_KEYS.provider) || 'google_drive').trim();
     const provider: ConnectorProvider = rawProvider === 'sharepoint' ? 'sharepoint' : 'google_drive';
+    const rawGoogleAuthMode = String(values.get(SETTING_KEYS.googleAuthMode) || 'service_account').trim().toLowerCase();
+    const googleAuthMode: GoogleAuthMode = rawGoogleAuthMode === 'oauth_refresh' ? 'oauth_refresh' : 'service_account';
 
     const googleClientEmailRaw = String(values.get(SETTING_KEYS.googleClientEmail) || '').trim();
     const googlePrivateKeyRaw = String(values.get(SETTING_KEYS.googlePrivateKey) || '');
@@ -343,10 +370,14 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
         ),
         allowedExtensions: parseAllowedExtensions(String(values.get(SETTING_KEYS.allowedExtensions) || '')),
         google: {
+            authMode: googleAuthMode,
             clientEmail: googleClientEmailRaw || serviceAccountJson?.clientEmail || '',
             privateKey: normalizePrivateKey(serviceAccountJson?.privateKey || googlePrivateKeyRaw),
             rootFolderId: String(values.get(SETTING_KEYS.googleRootFolderId) || '').trim(),
             sharedDriveId: String(values.get(SETTING_KEYS.googleSharedDriveId) || '').trim() || null,
+            oauthClientId: String(values.get(SETTING_KEYS.googleOAuthClientId) || '').trim(),
+            oauthClientSecret: String(values.get(SETTING_KEYS.googleOAuthClientSecret) || '').trim(),
+            oauthRefreshToken: String(values.get(SETTING_KEYS.googleOAuthRefreshToken) || '').trim(),
         },
         sharepoint: {
             tenantId: String(values.get(SETTING_KEYS.spTenantId) || '').trim(),
@@ -360,7 +391,14 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
 }
 
 function connectorStatus(settings: ConnectorSettings) {
-    const googleConfigured = Boolean(settings.google.clientEmail && settings.google.privateKey && settings.google.rootFolderId);
+    const googleConfigured = settings.google.authMode === 'oauth_refresh'
+        ? Boolean(
+            settings.google.oauthClientId
+            && settings.google.oauthClientSecret
+            && settings.google.oauthRefreshToken
+            && settings.google.rootFolderId,
+        )
+        : Boolean(settings.google.clientEmail && settings.google.privateKey && settings.google.rootFolderId);
     const sharepointConfigured = Boolean(
         settings.sharepoint.tenantId
         && settings.sharepoint.clientId
@@ -378,11 +416,15 @@ function connectorStatus(settings: ConnectorSettings) {
         allowedExtensions: settings.allowedExtensions,
         google: {
             configured: googleConfigured,
+            authMode: settings.google.authMode,
             hasClientEmail: Boolean(settings.google.clientEmail),
             hasPrivateKey: Boolean(settings.google.privateKey),
             hasRootFolderId: Boolean(settings.google.rootFolderId),
             rootFolderId: settings.google.rootFolderId || null,
             sharedDriveId: settings.google.sharedDriveId,
+            hasOAuthClientId: Boolean(settings.google.oauthClientId),
+            hasOAuthClientSecret: Boolean(settings.google.oauthClientSecret),
+            hasOAuthRefreshToken: Boolean(settings.google.oauthRefreshToken),
         },
         sharepoint: {
             configured: sharepointConfigured,
@@ -400,8 +442,31 @@ function connectorStatus(settings: ConnectorSettings) {
 }
 
 async function getGoogleAccessToken(settings: ConnectorSettings['google']): Promise<string> {
+    if (settings.authMode === 'oauth_refresh') {
+        if (!settings.oauthClientId || !settings.oauthClientSecret || !settings.oauthRefreshToken) {
+            throw new Error('Google-Connector ist unvollständig konfiguriert (OAuth).');
+        }
+        const body = new URLSearchParams({
+            client_id: settings.oauthClientId,
+            client_secret: settings.oauthClientSecret,
+            refresh_token: settings.oauthRefreshToken,
+            grant_type: 'refresh_token',
+        });
+        const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+        });
+        const tokenPayload = await tokenRes.json().catch(() => ({}));
+        if (!tokenRes.ok || typeof tokenPayload?.access_token !== 'string') {
+            const detail = tokenPayload?.error_description || tokenPayload?.error || 'Token-Abruf fehlgeschlagen.';
+            throw new Error(`Google OAuth Fehler: ${detail}`);
+        }
+        return tokenPayload.access_token as string;
+    }
+
     if (!settings.clientEmail || !settings.privateKey) {
-        throw new Error('Google-Connector ist unvollständig konfiguriert.');
+        throw new Error('Google-Connector ist unvollständig konfiguriert (Service-Account).');
     }
 
     const now = Math.floor(Date.now() / 1000);
@@ -561,6 +626,23 @@ async function ensureGoogleChildFolder(
     return { id: created.id, name: created.name || folderName };
 }
 
+async function resolveGoogleEffectiveSharedDriveId(
+    accessToken: string,
+    settings: ConnectorSettings['google'],
+): Promise<string | null> {
+    if (settings.sharedDriveId) return settings.sharedDriveId;
+    if (!settings.rootFolderId) return null;
+    const rootMeta = await googleJson<{ id: string; driveId?: string; mimeType?: string }>(
+        accessToken,
+        googleDriveUrl(
+            `/drive/v3/files/${encodeURIComponent(settings.rootFolderId)}`,
+            settings,
+            { fields: 'id,driveId,mimeType', supportsAllDrives: 'true' },
+        ),
+    );
+    return String(rootMeta.driveId || '').trim() || null;
+}
+
 type GraphItem = {
     id: string;
     name: string;
@@ -635,27 +717,33 @@ async function resolveProviderContext(db: any, settings: ConnectorSettings, sess
         };
     }
     const accessToken = await getGoogleAccessToken(settings.google);
+    const effectiveSharedDriveId = await resolveGoogleEffectiveSharedDriveId(accessToken, settings.google);
+    const googleSettings = effectiveSharedDriveId
+        ? { ...settings.google, sharedDriveId: effectiveSharedDriveId }
+        : settings.google;
+
     const kundenuploads = await ensureGoogleChildFolder(
         accessToken,
-        settings.google,
+        googleSettings,
         settings.google.rootFolderId,
         CUSTOMER_UPLOADS_ROOT_NAME,
     );
     const customerFolder = await ensureGoogleChildFolder(
         accessToken,
-        settings.google,
+        googleSettings,
         kundenuploads.id,
         customerFolderName,
     );
     const dateFolder = await ensureGoogleChildFolder(
         accessToken,
-        settings.google,
+        googleSettings,
         customerFolder.id,
         dateFolderName,
     );
     return {
         provider: 'google_drive',
         accessToken,
+        effectiveGoogleSharedDriveId: effectiveSharedDriveId,
         companyFolderId: customerFolder.id,
         companyFolderName: customerFolder.name,
         uploadFolderId: dateFolder.id,
@@ -731,9 +819,12 @@ async function resolveFolderFromPath(
         );
         return { id: folder.id, name: folder.name, path: relativeParts };
     }
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
     const folder = await resolveGoogleFolderIdByRelativePath(
         ctx.accessToken,
-        settings.google,
+        googleSettings,
         ctx.companyFolderId,
         relativeParts,
     );
@@ -758,13 +849,16 @@ async function listProviderEntries(settings: ConnectorSettings, ctx: ProviderCon
         return sortDriveEntries(entries);
     }
 
-    const listUrl = googleDriveUrl('/drive/v3/files', settings.google, {
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
+    const listUrl = googleDriveUrl('/drive/v3/files', googleSettings, {
         q: `'${escapeDriveQuery(folderId)}' in parents and trashed=false`,
         fields: 'files(id,name,mimeType,size,modifiedTime,parents)',
         orderBy: 'folder,name',
         pageSize: '200',
-        corpora: settings.google.sharedDriveId ? 'drive' : 'user',
-        driveId: settings.google.sharedDriveId || '',
+        corpora: googleSettings.sharedDriveId ? 'drive' : 'user',
+        driveId: googleSettings.sharedDriveId || '',
     });
     const result = await googleJson<{ files?: Array<{ id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }> }>(ctx.accessToken, listUrl);
     const entries = (result.files || []).map((file) => ({
@@ -853,7 +947,16 @@ async function createProviderUploadSession(
     if (ctx.provider === 'sharepoint') {
         return createSharePointUploadSession(settings, ctx, fileName);
     }
-    return createGoogleUploadSession(settings, ctx, fileName, mimeType, sizeBytes);
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
+    return createGoogleUploadSession(
+        { ...settings, google: googleSettings },
+        ctx,
+        fileName,
+        mimeType,
+        sizeBytes,
+    );
 }
 
 async function streamUploadToTempFile(filePart: any, maxBytes: number): Promise<{ tempPath: string; sizeBytes: number }> {
@@ -1027,7 +1130,10 @@ async function streamProviderDownload(
         return;
     }
 
-    const listUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, settings.google, {
+    const googleSettings = ctx.effectiveGoogleSharedDriveId
+        ? { ...settings.google, sharedDriveId: ctx.effectiveGoogleSharedDriveId }
+        : settings.google;
+    const listUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
         fields: 'id,name,mimeType,parents',
         supportsAllDrives: 'true',
     });
@@ -1036,7 +1142,7 @@ async function streamProviderDownload(
         throw new Error('Datei nicht gefunden.');
     }
 
-    const mediaUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, settings.google, {
+    const mediaUrl = googleDriveUrl(`/drive/v3/files/${encodeURIComponent(fileId)}`, googleSettings, {
         alt: 'media',
         supportsAllDrives: 'true',
     });
@@ -1082,11 +1188,24 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             }
 
             const token = await getGoogleAccessToken(settings.google);
+            const effectiveSharedDriveId = await resolveGoogleEffectiveSharedDriveId(token, settings.google);
             const folder = await googleJson<{ id: string; name: string; mimeType: string }>(
                 token,
                 googleDriveUrl(`/drive/v3/files/${encodeURIComponent(settings.google.rootFolderId)}`, settings.google, { fields: 'id,name,mimeType', supportsAllDrives: 'true' }),
             );
-            return { success: true, status, rootFolder: folder };
+            return {
+                success: true,
+                status,
+                rootFolder: folder,
+                authMode: settings.google.authMode,
+                effectiveSharedDriveId: effectiveSharedDriveId || null,
+                uploadReady: settings.google.authMode === 'oauth_refresh' ? true : Boolean(effectiveSharedDriveId),
+                hint: effectiveSharedDriveId
+                    ? null
+                    : (settings.google.authMode === 'oauth_refresh'
+                        ? null
+                        : 'Root-Ordner liegt nicht in einem Shared Drive. Für Service-Account-Uploads bitte Shared Drive verwenden.'),
+            };
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Verbindungstest fehlgeschlagen.';
             return reply.status(400).send({ error: message, status });
@@ -1260,7 +1379,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 targetFolder: `${ctx.companyFolderName}/${ctx.uploadFolderName}`,
             });
         } catch (error: any) {
-            return reply.status(502).send({ error: String(error?.message || 'Upload fehlgeschlagen.') });
+            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) });
         } finally {
             activePublicUploads = Math.max(0, activePublicUploads - 1);
         }
@@ -1321,7 +1440,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 failed,
             };
         } catch (error: any) {
-            return reply.status(502).send({ error: String(error?.message || 'Löschen fehlgeschlagen.') });
+            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) || 'Löschen fehlgeschlagen.' });
         }
     });
 
@@ -1350,7 +1469,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             await streamProviderDownload(settings, ctx, folder.id, fileId, reply);
             return reply;
         } catch (error: any) {
-            return reply.status(502).send({ error: String(error?.message || 'Download fehlgeschlagen.') });
+            return reply.status(502).send({ error: normalizeProviderErrorMessage(error) || 'Download fehlgeschlagen.' });
         }
     });
 }

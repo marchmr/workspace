@@ -223,6 +223,14 @@
     letter-spacing: .08em;
 }
 
+.dtxd-row-folder {
+    cursor: pointer;
+}
+
+.dtxd-row-folder:hover td {
+    background: rgba(37, 99, 235, 0.03);
+}
+
 .dtxd-name-cell {
     display: inline-flex;
     align-items: center;

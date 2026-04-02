@@ -13,6 +13,10 @@ const SETTING_KEYS = {
     googlePrivateKey: 'dateiaustausch_drive.google.private_key',
     googleRootFolderId: 'dateiaustausch_drive.google.root_folder_id',
     googleSharedDriveId: 'dateiaustausch_drive.google.shared_drive_id',
+    googleAuthMode: 'dateiaustausch_drive.google.auth_mode',
+    googleOAuthClientId: 'dateiaustausch_drive.google.oauth_client_id',
+    googleOAuthClientSecret: 'dateiaustausch_drive.google.oauth_client_secret',
+    googleOAuthRefreshToken: 'dateiaustausch_drive.google.oauth_refresh_token',
     spTenantId: 'dateiaustausch_drive.sharepoint.tenant_id',
     spClientId: 'dateiaustausch_drive.sharepoint.client_id',
     spClientSecret: 'dateiaustausch_drive.sharepoint.client_secret',
@@ -37,11 +41,15 @@ type ConnectorStatus = {
     allowedExtensions: string[];
     google: {
         configured: boolean;
+        authMode: 'service_account' | 'oauth_refresh';
         hasClientEmail: boolean;
         hasPrivateKey: boolean;
         hasRootFolderId: boolean;
         sharedDriveId: string | null;
         rootFolderId: string | null;
+        hasOAuthClientId: boolean;
+        hasOAuthClientSecret: boolean;
+        hasOAuthRefreshToken: boolean;
     };
     sharepoint: {
         configured: boolean;
@@ -79,10 +87,16 @@ export default function DateiaustauschDriveSettingsPage() {
 
     const [provider, setProvider] = useState<'google_drive' | 'sharepoint'>('google_drive');
     const [googleClientEmail, setGoogleClientEmail] = useState('');
+    const [googleAuthMode, setGoogleAuthMode] = useState<'service_account' | 'oauth_refresh'>('service_account');
     const [googlePrivateKey, setGooglePrivateKey] = useState('');
     const [googlePrivateKeyStored, setGooglePrivateKeyStored] = useState(false);
     const [googleRootFolderId, setGoogleRootFolderId] = useState('');
     const [googleSharedDriveId, setGoogleSharedDriveId] = useState('');
+    const [googleOAuthClientId, setGoogleOAuthClientId] = useState('');
+    const [googleOAuthClientSecret, setGoogleOAuthClientSecret] = useState('');
+    const [googleOAuthRefreshToken, setGoogleOAuthRefreshToken] = useState('');
+    const [googleOAuthClientSecretStored, setGoogleOAuthClientSecretStored] = useState(false);
+    const [googleOAuthRefreshTokenStored, setGoogleOAuthRefreshTokenStored] = useState(false);
     const [spTenantId, setSpTenantId] = useState('');
     const [spClientId, setSpClientId] = useState('');
     const [spClientSecret, setSpClientSecret] = useState('');
@@ -104,11 +118,15 @@ export default function DateiaustauschDriveSettingsPage() {
                 if (!active) return;
                 const settings = (settingsPayload || {}) as Record<string, string>;
                 setProvider((settings[SETTING_KEYS.provider] as 'google_drive' | 'sharepoint') || 'google_drive');
+                setGoogleAuthMode((settings[SETTING_KEYS.googleAuthMode] as 'service_account' | 'oauth_refresh') || 'service_account');
                 setGoogleClientEmail(String(settings[SETTING_KEYS.googleClientEmail] || ''));
                 // Secret niemals automatisch im Klartext zurück ins Formular schreiben.
                 setGooglePrivateKey('');
                 setGoogleRootFolderId(String(settings[SETTING_KEYS.googleRootFolderId] || ''));
                 setGoogleSharedDriveId(String(settings[SETTING_KEYS.googleSharedDriveId] || ''));
+                setGoogleOAuthClientId(String(settings[SETTING_KEYS.googleOAuthClientId] || ''));
+                setGoogleOAuthClientSecret('');
+                setGoogleOAuthRefreshToken('');
                 setSpTenantId(String(settings[SETTING_KEYS.spTenantId] || ''));
                 setSpClientId(String(settings[SETTING_KEYS.spClientId] || ''));
                 setSpClientSecret(String(settings[SETTING_KEYS.spClientSecret] || ''));
@@ -125,7 +143,10 @@ export default function DateiaustauschDriveSettingsPage() {
                 if (statusPayload) {
                     const typed = statusPayload as ConnectorStatus;
                     setStatus(typed);
+                    setGoogleAuthMode(typed.google?.authMode || 'service_account');
                     setGooglePrivateKeyStored(Boolean(typed.google?.hasPrivateKey));
+                    setGoogleOAuthClientSecretStored(Boolean(typed.google?.hasOAuthClientSecret));
+                    setGoogleOAuthRefreshTokenStored(Boolean(typed.google?.hasOAuthRefreshToken));
                 }
             })
             .finally(() => {
@@ -154,13 +175,28 @@ export default function DateiaustauschDriveSettingsPage() {
         const effectiveGoogleKey = (extractedGoogle?.privateKey || googlePrivateKey || '').trim();
 
         if (provider === 'google_drive') {
-            if (!effectiveGoogleEmail) {
-                toast.error('Google Client E-Mail fehlt.');
-                return;
-            }
-            if (!effectiveGoogleKey && !googlePrivateKeyStored) {
-                toast.error('Google Private Key fehlt.');
-                return;
+            if (googleAuthMode === 'oauth_refresh') {
+                if (!googleOAuthClientId.trim()) {
+                    toast.error('Google OAuth Client ID fehlt.');
+                    return;
+                }
+                if (!googleOAuthClientSecret.trim() && !googleOAuthClientSecretStored) {
+                    toast.error('Google OAuth Client Secret fehlt.');
+                    return;
+                }
+                if (!googleOAuthRefreshToken.trim() && !googleOAuthRefreshTokenStored) {
+                    toast.error('Google OAuth Refresh Token fehlt.');
+                    return;
+                }
+            } else {
+                if (!effectiveGoogleEmail) {
+                    toast.error('Google Client E-Mail fehlt.');
+                    return;
+                }
+                if (!effectiveGoogleKey && !googlePrivateKeyStored) {
+                    toast.error('Google Private Key fehlt.');
+                    return;
+                }
             }
             if (!googleRootFolderId.trim()) {
                 toast.error('Google Root Folder ID fehlt.');
@@ -206,12 +242,14 @@ export default function DateiaustauschDriveSettingsPage() {
         try {
             const saveTasks: Promise<void>[] = [
                 saveSetting(SETTING_KEYS.provider, provider),
+                saveSetting(SETTING_KEYS.googleAuthMode, googleAuthMode),
                 saveSetting(SETTING_KEYS.customerFolderPrefix, (customerFolderPrefix || 'KD').trim()),
                 saveSetting(SETTING_KEYS.maxUploadMb, String(parsedUploadMb)),
                 saveSetting(SETTING_KEYS.allowedExtensions, allowedExtensions.join(',')),
                 saveSetting(SETTING_KEYS.googleClientEmail, effectiveGoogleEmail),
                 saveSetting(SETTING_KEYS.googleRootFolderId, googleRootFolderId.trim()),
                 saveSetting(SETTING_KEYS.googleSharedDriveId, googleSharedDriveId.trim()),
+                saveSetting(SETTING_KEYS.googleOAuthClientId, googleOAuthClientId.trim()),
                 saveSetting(SETTING_KEYS.spTenantId, spTenantId.trim()),
                 saveSetting(SETTING_KEYS.spClientId, spClientId.trim()),
                 saveSetting(SETTING_KEYS.spClientSecret, spClientSecret.trim()),
@@ -223,11 +261,23 @@ export default function DateiaustauschDriveSettingsPage() {
             if (effectiveGoogleKey) {
                 saveTasks.push(saveSetting(SETTING_KEYS.googlePrivateKey, effectiveGoogleKey));
             }
+            if (googleOAuthClientSecret.trim()) {
+                saveTasks.push(saveSetting(SETTING_KEYS.googleOAuthClientSecret, googleOAuthClientSecret.trim()));
+            }
+            if (googleOAuthRefreshToken.trim()) {
+                saveTasks.push(saveSetting(SETTING_KEYS.googleOAuthRefreshToken, googleOAuthRefreshToken.trim()));
+            }
 
             await Promise.all(saveTasks);
             toast.success('Connector-Einstellungen gespeichert.');
             if (effectiveGoogleKey) {
                 setGooglePrivateKey('');
+            }
+            if (googleOAuthClientSecret.trim()) {
+                setGoogleOAuthClientSecret('');
+            }
+            if (googleOAuthRefreshToken.trim()) {
+                setGoogleOAuthRefreshToken('');
             }
 
             const statusRes = await apiFetch('/api/plugins/dateiaustausch_drive/admin/connector/status');
@@ -235,7 +285,10 @@ export default function DateiaustauschDriveSettingsPage() {
             if (statusRes.ok && payload) {
                 const typed = payload as ConnectorStatus;
                 setStatus(typed);
+                setGoogleAuthMode(typed.google?.authMode || 'service_account');
                 setGooglePrivateKeyStored(Boolean(typed.google?.hasPrivateKey));
+                setGoogleOAuthClientSecretStored(Boolean(typed.google?.hasOAuthClientSecret));
+                setGoogleOAuthRefreshTokenStored(Boolean(typed.google?.hasOAuthRefreshToken));
             }
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Speichern fehlgeschlagen.');
@@ -334,6 +387,13 @@ export default function DateiaustauschDriveSettingsPage() {
                 {provider === 'google_drive' ? (
                     <div className="dtxd-grid">
                         <label className="field">
+                            <span className="label">Google Auth Modus</span>
+                            <select className="input" value={googleAuthMode} onChange={(e) => setGoogleAuthMode(e.target.value as 'service_account' | 'oauth_refresh')}>
+                                <option value="oauth_refresh">Persönliches Drive (OAuth Refresh Token)</option>
+                                <option value="service_account">Service Account (Shared Drive)</option>
+                            </select>
+                        </label>
+                        <label className="field">
                             <span className="label">Google Client E-Mail</span>
                             <input className="input" value={googleClientEmail} onChange={(e) => setGoogleClientEmail(e.target.value)} placeholder="service-account@projekt.iam.gserviceaccount.com" />
                         </label>
@@ -344,6 +404,10 @@ export default function DateiaustauschDriveSettingsPage() {
                         <label className="field">
                             <span className="label">Google Shared Drive ID (optional)</span>
                             <input className="input" value={googleSharedDriveId} onChange={(e) => setGoogleSharedDriveId(e.target.value)} placeholder="Optional: Shared Drive ID" />
+                        </label>
+                        <label className="field">
+                            <span className="label">Google OAuth Client ID</span>
+                            <input className="input" value={googleOAuthClientId} onChange={(e) => setGoogleOAuthClientId(e.target.value)} placeholder="xxxxxxxx.apps.googleusercontent.com" />
                         </label>
                     </div>
                 ) : (
@@ -375,7 +439,7 @@ export default function DateiaustauschDriveSettingsPage() {
                     </div>
                 )}
 
-                {provider === 'google_drive' ? (
+                {provider === 'google_drive' && googleAuthMode === 'service_account' ? (
                     <label className="field">
                         <span className="label">Google Private Key oder komplette Service-Account JSON</span>
                         <textarea
@@ -391,6 +455,41 @@ export default function DateiaustauschDriveSettingsPage() {
                                 : 'Noch kein Private Key gespeichert.'}
                         </span>
                     </label>
+                ) : null}
+
+                {provider === 'google_drive' && googleAuthMode === 'oauth_refresh' ? (
+                    <>
+                        <label className="field">
+                            <span className="label">Google OAuth Client Secret</span>
+                            <input
+                                className="input"
+                                type="password"
+                                value={googleOAuthClientSecret}
+                                onChange={(e) => setGoogleOAuthClientSecret(e.target.value)}
+                                placeholder="Nur eintragen, wenn neu setzen/ändern"
+                            />
+                            <span className="text-muted" style={{ marginTop: 6, display: 'block' }}>
+                                {googleOAuthClientSecretStored
+                                    ? 'Client Secret ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt.'
+                                    : 'Noch kein OAuth Client Secret gespeichert.'}
+                            </span>
+                        </label>
+                        <label className="field">
+                            <span className="label">Google OAuth Refresh Token</span>
+                            <textarea
+                                className="input"
+                                rows={5}
+                                value={googleOAuthRefreshToken}
+                                onChange={(e) => setGoogleOAuthRefreshToken(e.target.value)}
+                                placeholder="Nur eintragen, wenn neu setzen/ändern"
+                            />
+                            <span className="text-muted" style={{ marginTop: 6, display: 'block' }}>
+                                {googleOAuthRefreshTokenStored
+                                    ? 'Refresh Token ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt.'
+                                    : 'Noch kein OAuth Refresh Token gespeichert.'}
+                            </span>
+                        </label>
+                    </>
                 ) : null}
 
                 <div className="dtxd-grid">

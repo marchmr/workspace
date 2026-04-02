@@ -55,6 +55,19 @@ function getTodayIsoDate(): string {
     return `${y}-${m}-${d}`;
 }
 
+function normalizeUploadErrorMessage(message: string): string {
+    const raw = String(message || '').trim();
+    if (!raw) return 'Upload fehlgeschlagen.';
+    const lower = raw.toLowerCase();
+    if (
+        lower.includes('service accounts do not have storage quota') ||
+        lower.includes('storagequotaexceeded')
+    ) {
+        return 'Google Drive blockiert Uploads für diesen Service-Account (kein eigenes Speicherkontingent). Bitte auf OAuth (persönliches Drive) wechseln oder Shared Drive konfigurieren.';
+    }
+    return raw;
+}
+
 function Icon({ path }: { path: string }) {
     return (
         <svg viewBox="0 0 24 24" aria-hidden="true" className="dtxd-icon">
@@ -191,7 +204,8 @@ export default function PublicGoogleDriveModule() {
             setSuccess(`${uploadedCount} Datei(en) erfolgreich hochgeladen.`);
             await load();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Upload fehlgeschlagen.');
+            const msg = err instanceof Error ? err.message : 'Upload fehlgeschlagen.';
+            setError(normalizeUploadErrorMessage(msg));
         } finally {
             setUploadProgress(null);
             setUploading(false);
@@ -410,7 +424,13 @@ export default function PublicGoogleDriveModule() {
                                         </td>
                                     </tr>
                                 ) : visibleEntries.map((entry) => (
-                                    <tr key={entry.id}>
+                                    <tr
+                                        key={entry.id}
+                                        className={entry.isFolder ? 'dtxd-row-folder' : undefined}
+                                        onDoubleClick={() => {
+                                            if (entry.isFolder) openPath([...pathParts, entry.name]);
+                                        }}
+                                    >
                                         <td>
                                             <input
                                                 type="checkbox"
