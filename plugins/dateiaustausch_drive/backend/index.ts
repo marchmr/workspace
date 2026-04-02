@@ -82,6 +82,7 @@ const SETTING_KEYS = {
     provider: 'dateiaustausch_drive.provider',
     customerFolderPrefix: 'dateiaustausch_drive.customer_folder_prefix',
     maxUploadMb: 'dateiaustausch_drive.max_upload_mb',
+    customerQuotaMb: 'dateiaustausch_drive.customer_quota_mb',
     allowedExtensions: 'dateiaustausch_drive.allowed_extensions',
 
     googleClientEmail: 'dateiaustausch_drive.google.client_email',
@@ -114,6 +115,7 @@ type ConnectorSettings = {
     provider: ConnectorProvider;
     customerFolderPrefix: string;
     maxUploadMb: number;
+    customerQuotaMb: number;
     allowedExtensions: string[];
     google: {
         authMode: GoogleAuthMode;
@@ -444,6 +446,12 @@ async function loadConnectorSettings(db: any): Promise<ConnectorSettings> {
             1,
             1024,
         ),
+        customerQuotaMb: parsePositiveInt(
+            String(values.get(SETTING_KEYS.customerQuotaMb) || ''),
+            0,
+            0,
+            102400,
+        ),
         allowedExtensions: parseAllowedExtensions(String(values.get(SETTING_KEYS.allowedExtensions) || '')),
         google: {
             authMode: googleAuthMode,
@@ -489,6 +497,7 @@ function connectorStatus(settings: ConnectorSettings) {
         configured: settings.provider === 'google_drive' ? googleConfigured : sharepointConfigured,
         customerFolderPrefix: settings.customerFolderPrefix,
         maxUploadMb: settings.maxUploadMb,
+        customerQuotaMb: settings.customerQuotaMb,
         allowedExtensions: settings.allowedExtensions,
         google: {
             configured: googleConfigured,
@@ -946,6 +955,20 @@ async function listProviderEntries(settings: ConnectorSettings, ctx: ProviderCon
         isFolder: file.mimeType === 'application/vnd.google-apps.folder',
     }));
     return sortDriveEntries(entries);
+}
+
+async function calculateFolderSizeBytes(settings: ConnectorSettings, ctx: ProviderContext, folderId: string): Promise<number> {
+    const entries = await listProviderEntries(settings, ctx, folderId);
+    let total = 0;
+    for (const entry of entries) {
+        if (!entry.isFolder && entry.size && Number.isFinite(entry.size)) {
+            total += entry.size;
+        }
+        if (entry.isFolder) {
+            total += await calculateFolderSizeBytes(settings, ctx, entry.id);
+        }
+    }
+    return total;
 }
 
 async function createGoogleUploadSession(
@@ -1482,6 +1505,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             const relativeParts = parseRelativeFolderPath((request.query as any)?.folderPath);
             const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
             const entries = await listProviderEntries(settings, ctx, folder.id);
+
+            let quotaMb = settings.customerQuotaMb;
+            let usedBytes = 0;
+            if (quotaMb > 0) {
+                usedBytes = await calculateFolderSizeBytes(settings, ctx, ctx.companyFolderId);
+            }
+
             return {
                 provider: ctx.provider,
                 folderId: folder.id,
@@ -1490,6 +1520,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 currentPath: joinRelativeFolderPath(relativeParts),
                 uploadFolderName: ctx.uploadFolderName,
                 entries,
+                quotaMb: quotaMb > 0 ? quotaMb : null,
+                usedBytes: quotaMb > 0 ? usedBytes : null,
             };
         } catch (error: any) {
             const statusCode = resolveErrorStatusCode(error);
@@ -1539,6 +1571,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             }
 
             const ctx = await resolveProviderContext(db, settings, session);
+
+            if (settings.customerQuotaMb > 0) {
+                const usedBytes = await calculateFolderSizeBytes(settings, ctx, ctx.companyFolderId);
+                const quotaBytes = settings.customerQuotaMb * 1024 * 1024;
+                if (usedBytes + sizeBytes > quotaBytes) {
+                    const usedMb = (usedBytes / 1024 / 1024).toFixed(1);
+                    return reply.status(400).send({ error: `Speicherlimit erreicht (${usedMb} / ${settings.customerQuotaMb} MB belegt). Bitte Dateien löschen oder den Administrator kontaktieren.` });
+                }
+            }
             const uploadSession = await createProviderUploadSession(
                 settings,
                 ctx,
@@ -1590,6 +1631,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         activePublicUploads += 1;
         try {
             const ctx = await resolveProviderContext(db, settings, session);
+
+            if (settings.customerQuotaMb > 0) {
+                const usedBytes = await calculateFolderSizeBytes(settings, ctx, ctx.companyFolderId);
+                const quotaBytes = settings.customerQuotaMb * 1024 * 1024;
+                if (usedBytes >= quotaBytes) {
+                    const usedMb = (usedBytes / 1024 / 1024).toFixed(1);
+                    return reply.status(400).send({ error: `Speicherlimit erreicht (${usedMb} / ${settings.customerQuotaMb} MB belegt). Bitte Dateien löschen oder den Administrator kontaktieren.` });
+                }
+            }
 
             const parts = (request as any).parts ? (request as any).parts() : null;
             if (!parts) {

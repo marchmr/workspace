@@ -8,6 +8,7 @@ const SETTING_KEYS = {
     provider: 'dateiaustausch_drive.provider',
     customerFolderPrefix: 'dateiaustausch_drive.customer_folder_prefix',
     maxUploadMb: 'dateiaustausch_drive.max_upload_mb',
+    customerQuotaMb: 'dateiaustausch_drive.customer_quota_mb',
     allowedExtensions: 'dateiaustausch_drive.allowed_extensions',
     googleClientEmail: 'dateiaustausch_drive.google.client_email',
     googlePrivateKey: 'dateiaustausch_drive.google.private_key',
@@ -39,6 +40,7 @@ type ConnectorStatus = {
     configured: boolean;
     customerFolderPrefix: string;
     maxUploadMb: number;
+    customerQuotaMb: number;
     allowedExtensions: string[];
     google: {
         configured: boolean;
@@ -106,6 +108,7 @@ export default function DateiaustauschDriveSettingsPage() {
     const [spRootFolderId, setSpRootFolderId] = useState('');
     const [customerFolderPrefix, setCustomerFolderPrefix] = useState('KD');
     const [maxUploadMb, setMaxUploadMb] = useState('1024');
+    const [customerQuotaMb, setCustomerQuotaMb] = useState('0');
     const [allowedExtensions, setAllowedExtensions] = useState<string[]>([...EXTENSION_OPTIONS]);
     const [status, setStatus] = useState<ConnectorStatus | null>(null);
     const [wizardOpen, setWizardOpen] = useState(false);
@@ -139,6 +142,7 @@ export default function DateiaustauschDriveSettingsPage() {
                 setSpRootFolderId(String(settings[SETTING_KEYS.spRootFolderId] || ''));
                 setCustomerFolderPrefix(String(settings[SETTING_KEYS.customerFolderPrefix] || 'KD'));
                 setMaxUploadMb(String(settings[SETTING_KEYS.maxUploadMb] || '1024'));
+                setCustomerQuotaMb(String(settings[SETTING_KEYS.customerQuotaMb] || '0'));
                 const storedExtensions = String(settings[SETTING_KEYS.allowedExtensions] || '')
                     .split(',')
                     .map((entry) => entry.trim().toLowerCase())
@@ -248,6 +252,7 @@ export default function DateiaustauschDriveSettingsPage() {
                 saveSetting(SETTING_KEYS.googleAuthMode, googleAuthMode),
                 saveSetting(SETTING_KEYS.customerFolderPrefix, (customerFolderPrefix || 'KD').trim()),
                 saveSetting(SETTING_KEYS.maxUploadMb, String(parsedUploadMb)),
+                saveSetting(SETTING_KEYS.customerQuotaMb, String(Number.parseInt(customerQuotaMb, 10) || 0)),
                 saveSetting(SETTING_KEYS.allowedExtensions, allowedExtensions.join(',')),
                 saveSetting(SETTING_KEYS.googleClientEmail, effectiveGoogleEmail),
                 saveSetting(SETTING_KEYS.googleRootFolderId, googleRootFolderId.trim()),
@@ -378,7 +383,7 @@ export default function DateiaustauschDriveSettingsPage() {
                         Provider: {status.provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'} · Prefix: {status.customerFolderPrefix}
                     </p>
                     <p className="dtxd-muted" style={{ marginTop: 6 }}>
-                        Max Upload: {status.maxUploadMb} MB · Erlaubte Typen: {status.allowedExtensions.join(', ')}
+                        Max Upload: {status.maxUploadMb} MB · Kundenordner-Limit: {status.customerQuotaMb ? `${status.customerQuotaMb} MB` : 'Unbegrenzt'} · Erlaubte Typen: {status.allowedExtensions.join(', ')}
                     </p>
                     <p className="dtxd-muted" style={{ marginTop: 6 }}>
                         Es ist immer nur ein Provider aktiv. Aktuell aktiv: <strong>{status.provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}</strong>.
@@ -417,6 +422,11 @@ export default function DateiaustauschDriveSettingsPage() {
                     <label className="field">
                         <span className="label">Max Upload pro Datei (MB)</span>
                         <input className="input" type="number" min={1} max={1024} value={maxUploadMb} onChange={(e) => setMaxUploadMb(e.target.value)} placeholder="1024" />
+                    </label>
+                    <label className="field">
+                        <span className="label">Speicherlimit pro Kunde (MB)</span>
+                        <input className="input" type="number" min={0} max={102400} value={customerQuotaMb} onChange={(e) => setCustomerQuotaMb(e.target.value)} placeholder="0 = unbegrenzt" />
+                        <span className="text-muted" style={{ marginTop: 4, display: 'block', fontSize: 12 }}>0 = kein Limit</span>
                     </label>
                 </div>
 
@@ -609,6 +619,11 @@ export default function DateiaustauschDriveSettingsPage() {
                                         <span className="label">Max Upload pro Datei (MB)</span>
                                         <input className="input" type="number" min={1} max={1024} value={maxUploadMb} onChange={(e) => setMaxUploadMb(e.target.value)} />
                                     </label>
+                                    <label className="field">
+                                        <span className="label">Speicherlimit pro Kunde (MB)</span>
+                                        <input className="input" type="number" min={0} max={102400} value={customerQuotaMb} onChange={(e) => setCustomerQuotaMb(e.target.value)} placeholder="0 = unbegrenzt" />
+                                        <span className="text-muted" style={{ marginTop: 4, display: 'block', fontSize: 12 }}>0 = kein Limit</span>
+                                    </label>
                                 </div>
                                 <div className="field">
                                     <span className="label">Erlaubte Dateiendungen</span>
@@ -719,6 +734,7 @@ export default function DateiaustauschDriveSettingsPage() {
                                         <strong>Provider:</strong> {provider === 'sharepoint' ? 'SharePoint' : 'Google Drive'}<br />
                                         <strong>Prefix:</strong> {customerFolderPrefix || 'KD'}<br />
                                         <strong>Max Upload:</strong> {maxUploadMb} MB<br />
+                                        <strong>Kundenordner-Limit:</strong> {Number(customerQuotaMb) > 0 ? `${customerQuotaMb} MB` : 'Unbegrenzt'}<br />
                                         <strong>Erlaubte Typen:</strong> {allowedExtensions.join(', ')}
                                     </p>
                                 </div>

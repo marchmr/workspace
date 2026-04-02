@@ -20,6 +20,8 @@ type ListResponse = {
     baseFolderName?: string;
     currentPath?: string;
     uploadFolderName?: string;
+    quotaMb?: number | null;
+    usedBytes?: number | null;
 };
 
 function getExt(name: string): string {
@@ -132,6 +134,8 @@ export default function PublicGoogleDriveModule() {
     const [previewEntry, setPreviewEntry] = useState<Entry | null>(null);
     const [downloadingId, setDownloadingId] = useState<string | null>(null);
     const [deleting, setDeleting] = useState(false);
+    const [quotaMb, setQuotaMb] = useState<number | null>(null);
+    const [usedBytes, setUsedBytes] = useState<number | null>(null);
 
     const pathParts = useMemo(
         () => String(currentPath || '').split('/').map((part) => part.trim()).filter(Boolean),
@@ -187,6 +191,8 @@ export default function PublicGoogleDriveModule() {
             setBaseFolderName(String(data.baseFolderName || 'Kundenordner'));
             setCurrentPath(String(data.currentPath || ''));
             setUploadFolderName(String(data.uploadFolderName || ''));
+            setQuotaMb(data.quotaMb != null ? Number(data.quotaMb) : null);
+            setUsedBytes(data.usedBytes != null ? Number(data.usedBytes) : null);
         } catch (err) {
             if (requestId !== loadRequestIdRef.current) return;
             setError(err instanceof Error ? err.message : 'Dateiliste konnte nicht geladen werden.');
@@ -424,6 +430,18 @@ export default function PublicGoogleDriveModule() {
                         <span>Aktueller Ordner: <strong>{folderName}</strong></span>
                         {uploadFolderName ? <span>Upload-Ziel heute: <strong>{baseFolderName}/{uploadFolderName}</strong></span> : null}
                     </p>
+                    {quotaMb != null && usedBytes != null ? (() => {
+                        const usedMb = usedBytes / 1024 / 1024;
+                        const pct = Math.min(100, Math.round((usedMb / quotaMb) * 100));
+                        return (
+                            <div className="dtxd-quota-bar">
+                                <div className="dtxd-quota-track">
+                                    <div className={`dtxd-quota-fill${pct >= 90 ? ' is-critical' : ''}`} style={{ width: `${pct}%` }} />
+                                </div>
+                                <span className="dtxd-quota-label">{usedMb.toFixed(1)} / {quotaMb} MB ({pct}%)</span>
+                            </div>
+                        );
+                    })() : null}
                 </div>
 
                 <form className="dtxd-upload-inline" onSubmit={onUpload}>
