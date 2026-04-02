@@ -608,3 +608,161 @@
         height: 62vh;
     }
 }
+
+/* ── Loading & transition animations ── */
+
+@keyframes dtxd-spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes dtxd-fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes dtxd-shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+
+@keyframes dtxd-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .65; }
+}
+
+/* Spinner used in loading overlay */
+.dtxd-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid var(--border-color, #e2e8f0);
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: dtxd-spin .7s linear infinite;
+}
+
+/* Loading overlay on content area */
+.dtxd-content.is-loading {
+    position: relative;
+    pointer-events: none;
+}
+
+.dtxd-content.is-loading::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: inherit;
+    z-index: 10;
+}
+
+.dtxd-loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 11;
+    pointer-events: none;
+}
+
+/* Fade-in for table rows after loading */
+.dtxd-table tbody tr {
+    animation: dtxd-fade-in .3s ease both;
+}
+
+.dtxd-table tbody tr:nth-child(1)  { animation-delay: 0s; }
+.dtxd-table tbody tr:nth-child(2)  { animation-delay: .03s; }
+.dtxd-table tbody tr:nth-child(3)  { animation-delay: .06s; }
+.dtxd-table tbody tr:nth-child(4)  { animation-delay: .09s; }
+.dtxd-table tbody tr:nth-child(5)  { animation-delay: .12s; }
+.dtxd-table tbody tr:nth-child(6)  { animation-delay: .15s; }
+.dtxd-table tbody tr:nth-child(7)  { animation-delay: .18s; }
+.dtxd-table tbody tr:nth-child(8)  { animation-delay: .21s; }
+.dtxd-table tbody tr:nth-child(9)  { animation-delay: .24s; }
+.dtxd-table tbody tr:nth-child(10) { animation-delay: .27s; }
+
+/* Upload progress bar */
+.dtxd-progress-bar {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border-color, #e2e8f0);
+    overflow: hidden;
+}
+
+.dtxd-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2563eb, #3b82f6);
+    border-radius: 3px;
+    transition: width .3s ease;
+    animation: dtxd-pulse 1.5s ease-in-out infinite;
+}
+
+/* Inline busy indicator for buttons */
+.dtxd-inline-action.is-busy,
+.dtxd-icon-btn.is-busy {
+    position: relative;
+    pointer-events: none;
+    opacity: .7;
+}
+
+.dtxd-inline-action.is-busy::after {
+    content: '';
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border-color, #e2e8f0);
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: dtxd-spin .7s linear infinite;
+    margin-left: 4px;
+}
+
+/* Sidebar skeleton shimmer while loading */
+.dtxd-side-item.is-skeleton {
+    background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+    background-size: 800px 100%;
+    animation: dtxd-shimmer 1.8s infinite linear;
+    color: transparent;
+    border-color: #e2e8f0;
+    pointer-events: none;
+    height: 38px;
+}
+
+/* Success flash on row after upload */
+@keyframes dtxd-success-flash {
+    0%   { background: rgba(34, 197, 94, 0.15); }
+    100% { background: transparent; }
+}
+
+.dtxd-row-new td {
+    animation: dtxd-success-flash 2s ease forwards;
+}
+
+/* Toast-style status message */
+.dtxd-toast {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    animation: dtxd-fade-in .3s ease;
+}
+
+.dtxd-toast.is-loading {
+    border: 1px solid rgba(37, 99, 235, 0.2);
+    background: rgba(37, 99, 235, 0.06);
+    color: #1d4ed8;
+}
+
+.dtxd-toast.is-success {
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    background: rgba(34, 197, 94, 0.08);
+    color: #15803d;
+}
+
+.dtxd-toast.is-error {
+    border: 1px solid rgba(220, 38, 38, 0.25);
+    background: rgba(220, 38, 38, 0.06);
+    color: #dc2626;
+}

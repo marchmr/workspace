@@ -130,6 +130,8 @@ export default function PublicGoogleDriveModule() {
     const [error, setError] = useState<string | null>(null);
     const [success, setSuccess] = useState<string | null>(null);
     const [previewEntry, setPreviewEntry] = useState<Entry | null>(null);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
+    const [deleting, setDeleting] = useState(false);
 
     const pathParts = useMemo(
         () => String(currentPath || '').split('/').map((part) => part.trim()).filter(Boolean),
@@ -281,28 +283,33 @@ export default function PublicGoogleDriveModule() {
 
     async function download(fileId: string, fileName: string) {
         if (!sessionToken) return;
-        const params = new URLSearchParams();
-        if (currentPath) params.set('folderPath', currentPath);
-        const query = params.toString();
-        const pathName = query
-            ? `/public/files/${encodeURIComponent(fileId)}/download?${query}`
-            : `/public/files/${encodeURIComponent(fileId)}/download`;
+        setDownloadingId(fileId);
+        try {
+            const params = new URLSearchParams();
+            if (currentPath) params.set('folderPath', currentPath);
+            const query = params.toString();
+            const pathName = query
+                ? `/public/files/${encodeURIComponent(fileId)}/download?${query}`
+                : `/public/files/${encodeURIComponent(fileId)}/download`;
 
-        const res = await requestPluginApi(pathName, {
-            headers: { 'x-public-session-token': sessionToken },
-        });
-        if (!res.ok) {
-            const payload = await res.json().catch(() => ({}));
-            setError(payload?.error || 'Download fehlgeschlagen.');
-            return;
+            const res = await requestPluginApi(pathName, {
+                headers: { 'x-public-session-token': sessionToken },
+            });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                setError(payload?.error || 'Download fehlgeschlagen.');
+                return;
+            }
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = objectUrl;
+            a.download = fileName || 'download';
+            a.click();
+            URL.revokeObjectURL(objectUrl);
+        } finally {
+            setDownloadingId(null);
         }
-        const blob = await res.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = objectUrl;
-        a.download = fileName || 'download';
-        a.click();
-        URL.revokeObjectURL(objectUrl);
     }
 
     async function downloadSelected() {
@@ -373,6 +380,7 @@ export default function PublicGoogleDriveModule() {
 
     async function deleteSelected() {
         if (!sessionToken || selectedIds.size === 0) return;
+        setDeleting(true);
         setError(null);
         setSuccess(null);
         try {
@@ -399,6 +407,8 @@ export default function PublicGoogleDriveModule() {
             await load();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Löschen fehlgeschlagen.');
+        } finally {
+            setDeleting(false);
         }
     }
 
@@ -502,7 +512,8 @@ export default function PublicGoogleDriveModule() {
                     {quickFolders.length === 0 ? <div className="dtxd-side-empty">Keine Ordner in dieser Ansicht.</div> : null}
                 </aside>
 
-                <section className="dtxd-content">
+                <section className={`dtxd-content${loading ? ' is-loading' : ''}`}>
+                    {loading && <div className="dtxd-loading-overlay"><div className="dtxd-spinner" /></div>}
                     <div className="dtxd-breadcrumb-row">
                         <button className="dtxd-crumb" type="button" onClick={() => openPath([])}>Eigene Dateien</button>
                         {pathParts.map((part, index) => (
@@ -536,13 +547,13 @@ export default function PublicGoogleDriveModule() {
                                 <Icon path={ICONS.download} />
                             </button>
                             <button
-                                className="dtxd-icon-btn danger"
+                                className={`dtxd-icon-btn danger${deleting ? ' is-busy' : ''}`}
                                 type="button"
                                 onClick={deleteSelected}
-                                disabled={selectedIds.size === 0}
+                                disabled={selectedIds.size === 0 || deleting}
                                 title="Auswahl löschen"
                             >
-                                <Icon path={ICONS.delete} />
+                                {deleting ? <div className="dtxd-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : <Icon path={ICONS.delete} />}
                             </button>
                             <button className="dtxd-icon-btn" type="button" onClick={load} disabled={loading} title="Aktualisieren">
                                 <Icon path={ICONS.refresh} />
@@ -561,9 +572,10 @@ export default function PublicGoogleDriveModule() {
                     </div>
 
                     {isConnectorNotConfigured ? <div className="dtxd-info">Cloud-Connector ist noch nicht konfiguriert. Bitte in den Plugin-Einstellungen verbinden.</div> : null}
-                    {error && !isConnectorNotConfigured ? <p className="text-danger">{error}</p> : null}
-                    {success ? <p className="text-success">{success}</p> : null}
-                    {uploadProgress !== null ? <p className="text-muted">Upload-Fortschritt: {uploadProgress}%</p> : null}
+                    {error && !isConnectorNotConfigured ? <div className="dtxd-toast is-error">{error}</div> : null}
+                    {success ? <div className="dtxd-toast is-success">{success}</div> : null}
+                    {uploading ? <div className="dtxd-toast is-loading"><div className="dtxd-spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> Wird hochgeladen…</div> : null}
+                    {uploadProgress !== null ? <div className="dtxd-progress-bar"><div className="dtxd-progress-fill" style={{ width: `${uploadProgress}%` }} /></div> : null}
 
                     <div className="dtxd-table-wrap">
                         <table className="dtxd-table">
@@ -665,9 +677,9 @@ export default function PublicGoogleDriveModule() {
                                                             <span>Vorschau</span>
                                                         </button>
                                                     ) : null}
-                                                    <button className="dtxd-inline-action" type="button" onClick={() => download(entry.id, entry.name)}>
+                                                    <button className={`dtxd-inline-action${downloadingId === entry.id ? ' is-busy' : ''}`} type="button" onClick={() => download(entry.id, entry.name)} disabled={downloadingId === entry.id}>
                                                         <Icon path={ICONS.download} />
-                                                        <span>Download</span>
+                                                        <span>{downloadingId === entry.id ? 'Lädt…' : 'Download'}</span>
                                                     </button>
                                                 </div>
                                             )}
