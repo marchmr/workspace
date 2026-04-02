@@ -92,9 +92,9 @@ const ALLOWED_UPLOAD_EXTENSIONS = new Set([
     'zip',
 ]);
 
-function buildDownloadUrl(item: PortalFileItem, sessionToken: string): string {
+function buildDownloadUrl(item: PortalFileItem): string {
     if (!item.currentVersionId) return '#';
-    return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download?sessionToken=${encodeURIComponent(sessionToken)}`;
+    return `/api/plugins/dateiaustausch/public/files/${item.id}/versions/${item.currentVersionId}/download`;
 }
 
 function buildPreviewUrl(item: PortalFileItem, sessionToken: string): string {
@@ -185,8 +185,8 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
         setError(null);
         try {
             const [filesRes, foldersRes] = await Promise.all([
-                fetch(`/api/plugins/dateiaustausch/public/files?sessionToken=${encodeURIComponent(sessionToken)}`),
-                fetch(`/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}`),
+                fetch('/api/plugins/dateiaustausch/public/files', { headers: { 'x-public-session-token': sessionToken } }),
+                fetch('/api/plugins/dateiaustausch/public/folders', { headers: { 'x-public-session-token': sessionToken } }),
             ]);
 
             const filesPayload = await filesRes.json().catch(() => []);
@@ -310,7 +310,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
     async function createFolder(pathValue: string) {
         const folderPath = normalizePath(pathValue);
         if (!folderPath) return;
-        const res = await fetch(`/api/plugins/dateiaustausch/public/folders?sessionToken=${encodeURIComponent(sessionToken)}`, {
+        const res = await fetch('/api/plugins/dateiaustausch/public/folders', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-public-session-token': sessionToken },
             body: JSON.stringify({ folderPath }),
@@ -338,7 +338,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                 if (currentPath) formData.append('folderPath', currentPath);
                 formData.append('file', file);
 
-                const res = await fetch(`/api/plugins/dateiaustausch/public/files/upload?sessionToken=${encodeURIComponent(sessionToken)}`, {
+                const res = await fetch('/api/plugins/dateiaustausch/public/files/upload', {
                     method: 'POST',
                     headers: { 'x-public-session-token': sessionToken },
                     body: formData,
@@ -366,7 +366,9 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             setPreviewOpen(true);
             return;
         }
-        window.open(buildDownloadUrl(entry.file, sessionToken), '_blank', 'noopener,noreferrer');
+        triggerDownload(buildDownloadUrl(entry.file), entry.file.displayName).catch((err) => {
+            setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
+        });
     }
 
     function setSingleSelection(key: string | null) {
@@ -409,7 +411,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                 .filter((entry) => entry.kind === 'file')
                 .map((entry) => entry.file.id);
 
-            const res = await fetch(`/api/plugins/dateiaustausch/public/files/bulk-delete?sessionToken=${encodeURIComponent(sessionToken)}`, {
+            const res = await fetch('/api/plugins/dateiaustausch/public/files/bulk-delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-public-session-token': sessionToken },
                 body: JSON.stringify({ fileIds, folderPaths }),
@@ -486,7 +488,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
             setError(null);
             const itemIds = clipboardEntries.filter((entry) => entry.kind === 'file').map((entry) => Number(entry.itemId));
             const folderPaths = clipboardEntries.filter((entry) => entry.kind === 'folder').map((entry) => String(entry.folderPath || ''));
-            const res = await fetch(`/api/plugins/dateiaustausch/public/files/copy?sessionToken=${encodeURIComponent(sessionToken)}`, {
+            const res = await fetch('/api/plugins/dateiaustausch/public/files/copy', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'x-public-session-token': sessionToken },
                 body: JSON.stringify({
@@ -547,19 +549,19 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
 
     async function downloadEntry(entry: BrowserEntry | null) {
         if (!entry) {
-            const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(currentPath)}`;
+            const url = `/api/plugins/dateiaustausch/public/folders/download?folderPath=${encodeURIComponent(currentPath)}`;
             const folderName = getBaseName(currentPath) || 'Dateien';
             await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (entry.kind === 'folder') {
-            const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(entry.fullPath)}`;
+            const url = `/api/plugins/dateiaustausch/public/folders/download?folderPath=${encodeURIComponent(entry.fullPath)}`;
             const folderName = getBaseName(entry.fullPath) || 'Ordner';
             await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
             return;
         }
         if (!entry.file.currentVersionId) return;
-        await triggerDownload(buildDownloadUrl(entry.file, sessionToken), entry.file.displayName);
+        await triggerDownload(buildDownloadUrl(entry.file), entry.file.displayName);
     }
 
     async function downloadCurrentSelection() {
@@ -985,7 +987,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     disabled={downloadPending}
                                     onClick={async () => {
                                         const folderPath = menuState.key.replace('folder:', '');
-                                        const url = `/api/plugins/dateiaustausch/public/folders/download?sessionToken=${encodeURIComponent(sessionToken)}&folderPath=${encodeURIComponent(folderPath)}`;
+                                        const url = `/api/plugins/dateiaustausch/public/folders/download?folderPath=${encodeURIComponent(folderPath)}`;
                                         const folderName = getBaseName(folderPath) || 'Ordner';
                                         await triggerDownload(url, `dateiaustausch-${folderName}.zip`);
                                         setMenuState(null);
@@ -1077,7 +1079,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                             type="button"
                                             disabled={downloadPending}
                                             onClick={() => {
-                                                triggerDownload(buildDownloadUrl(file, sessionToken), file.displayName).catch((err) => {
+                                                triggerDownload(buildDownloadUrl(file), file.displayName).catch((err) => {
                                                     setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
                                                 });
                                                 setMenuState(null);
@@ -1134,7 +1136,7 @@ export default function PublicFileExchangeModule({ sessionToken, formatDate }: P
                                     type="button"
                                     disabled={downloadPending}
                                     onClick={() => {
-                                        triggerDownload(buildDownloadUrl(previewFile, sessionToken), previewFile.displayName).catch((err) => {
+                                        triggerDownload(buildDownloadUrl(previewFile), previewFile.displayName).catch((err) => {
                                             setError(err instanceof Error ? err.message : 'Download fehlgeschlagen.');
                                         });
                                     }}

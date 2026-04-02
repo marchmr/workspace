@@ -1,0 +1,18 @@
+{
+  "id": "dateiaustausch_drive",
+  "name": "Dateiaustausch Drive",
+  "version": "1.0.0",
+  "description": "Google-Drive-basierter Dateiaustausch als Alternative zum lokalen Dateispeicher",
+  "author": "Hammer Team",
+  "dependencies": ["kundenportal", "videoplattform"],
+  "backend_entry": "backend/index.ts",
+  "frontend_entry": "frontend/index.tsx",
+  "nav_icon": "folder",
+  "nav_label": "Dateiaustausch Drive",
+  "nav_order": 37,
+  "permissions": [
+    "dateiaustausch_drive.view",
+    "dateiaustausch_drive.manage"
+  ],
+  "settings_page": true
+}
