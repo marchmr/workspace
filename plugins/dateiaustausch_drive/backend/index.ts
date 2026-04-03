@@ -5,7 +5,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { Readable } from 'stream';
 import { createRequire } from 'module';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Archiver } from 'archiver';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import { requirePermission } from '../../../backend/src/core/permissions.js';
@@ -1436,6 +1436,31 @@ async function streamProviderPreview(
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
 
+    async function logDateiaustauschAudit(
+        request: FastifyRequest,
+        payload: {
+            action: string;
+            session?: SessionRow | null;
+            entityType?: string;
+            entityId?: string | number | null;
+            newState?: Record<string, any> | null;
+            previousState?: Record<string, any> | null;
+        },
+    ): Promise<void> {
+        await (fastify as any).audit.log({
+            action: payload.action,
+            category: 'plugin',
+            pluginId: PLUGIN_ID,
+            entityType: payload.entityType || (payload.session ? 'vp_customers' : 'dateiaustausch_public'),
+            entityId: payload.entityId !== undefined
+                ? (payload.entityId === null ? undefined : String(payload.entityId))
+                : (payload.session ? String(payload.session.customer_id) : undefined),
+            tenantId: payload.session ? payload.session.tenant_id : null,
+            previousState: payload.previousState || null,
+            newState: payload.newState || null,
+        }, request).catch((err: any) => fastify.log.error(`Audit logging failed: ${err.message}`));
+    }
+
     fastify.get('/admin/connector/status', { preHandler: [requirePermission('settings.manage')] }, async () => {
         const settings = await loadConnectorSettings(db);
         return connectorStatus(settings);
@@ -1512,6 +1537,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 usedBytes = await calculateFolderSizeBytes(settings, ctx, ctx.companyFolderId);
             }
 
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.list',
+                session,
+                newState: {
+                    provider: ctx.provider,
+                    folderPath: joinRelativeFolderPath(relativeParts),
+                    entryCount: entries.length,
+                },
+            });
+
             return {
                 provider: ctx.provider,
                 folderId: folder.id,
@@ -1587,6 +1622,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 mimeType,
                 sizeBytes,
             );
+
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.upload.session_start',
+                session,
+                newState: {
+                    fileName,
+                    sizeBytes,
+                    mimeType,
+                },
+            });
 
             return reply.status(201).send({
                 success: true,
@@ -1672,6 +1717,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                     tempPath = streamed.tempPath;
                     await uploadTempFileToProvider(settings, ctx, fileName, mimeType, tempPath, streamed.sizeBytes);
                     uploaded.push({ name: fileName, mimeType, size: streamed.sizeBytes });
+
+                    await logDateiaustauschAudit(request, {
+                        action: 'cp.file.upload',
+                        session,
+                        newState: {
+                            fileName,
+                            sizeBytes: streamed.sizeBytes,
+                            mimeType,
+                        },
+                    });
                 } finally {
                     if (tempPath) await fs.rm(tempPath, { force: true }).catch(() => undefined);
                 }
@@ -1744,6 +1799,21 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 }
             }
 
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.delete',
+                session,
+                newState: {
+                    folderPath: joinRelativeFolderPath(relativeParts),
+                    selectedCount: ids.length,
+                    deletedCount: deletedIds.length,
+                    failedCount: failed.length,
+                    deletedItems: deletedIds.map((id) => {
+                        const entry = allowedMap.get(id);
+                        return { id, name: entry?.name || null, isFolder: Boolean(entry?.isFolder) };
+                    }),
+                },
+            });
+
             return {
                 success: failed.length === 0,
                 deletedCount: deletedIds.length,
@@ -1794,6 +1864,21 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             if (validEntries.length === 0) {
                 return reply.status(400).send({ error: 'Keine gültigen Einträge im aktuellen Ordner ausgewählt.' });
             }
+
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.download.zip',
+                session,
+                newState: {
+                    folderPath: joinRelativeFolderPath(relativeParts),
+                    selectedCount: ids.length,
+                    entryCount: validEntries.length,
+                    entries: validEntries.map((entry) => ({
+                        id: entry.id,
+                        name: entry.name,
+                        isFolder: Boolean(entry.isFolder),
+                    })),
+                },
+            });
 
             const zipBaseName = sanitizeZipPathPart(relativeParts.length
                 ? relativeParts[relativeParts.length - 1]
@@ -1850,6 +1935,19 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         try {
             const ctx = await resolveProviderContext(db, settings, session);
             const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            const entries = await listProviderEntries(settings, ctx, folder.id);
+            const selected = entries.find((entry) => String(entry.id) === fileId);
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.download',
+                session,
+                entityType: 'cloud_file',
+                entityId: fileId,
+                newState: {
+                    folderPath: joinRelativeFolderPath(relativeParts),
+                    fileName: selected?.name || null,
+                    isFolder: selected ? Boolean(selected.isFolder) : null,
+                },
+            });
             await streamProviderDownload(settings, ctx, folder.id, fileId, reply);
             return reply;
         } catch (error: any) {
@@ -1880,6 +1978,19 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         try {
             const ctx = await resolveProviderContext(db, settings, session);
             const folder = await resolveFolderFromPath(settings, ctx, relativeParts);
+            const entries = await listProviderEntries(settings, ctx, folder.id);
+            const selected = entries.find((entry) => String(entry.id) === fileId);
+            await logDateiaustauschAudit(request, {
+                action: 'cp.file.preview',
+                session,
+                entityType: 'cloud_file',
+                entityId: fileId,
+                newState: {
+                    folderPath: joinRelativeFolderPath(relativeParts),
+                    fileName: selected?.name || null,
+                    isFolder: selected ? Boolean(selected.isFolder) : null,
+                },
+            });
             await streamProviderPreview(settings, ctx, folder.id, fileId, reply);
             return reply;
         } catch (error: any) {
