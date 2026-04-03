@@ -1447,6 +1447,19 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             previousState?: Record<string, any> | null;
         },
     ): Promise<void> {
+        let enrichedNewState = payload.newState || null;
+        if (payload.session) {
+            try {
+                const profile = await resolveCustomerProfile(db, payload.session);
+                enrichedNewState = {
+                    ...(payload.newState || {}),
+                    customerName: profile.displayName,
+                    customerCompany: profile.companyName || null,
+                };
+            } catch {
+                // best effort only
+            }
+        }
         await (fastify as any).audit.log({
             action: payload.action,
             category: 'plugin',
@@ -1457,7 +1470,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 : (payload.session ? String(payload.session.customer_id) : undefined),
             tenantId: payload.session ? payload.session.tenant_id : null,
             previousState: payload.previousState || null,
-            newState: payload.newState || null,
+            newState: enrichedNewState,
         }, request).catch((err: any) => fastify.log.error(`Audit logging failed: ${err.message}`));
     }
 

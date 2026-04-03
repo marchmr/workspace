@@ -1590,6 +1590,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
 
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+        const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
         await logVideoAudit(request, {
             action: 'cp.video.list',
@@ -1597,6 +1598,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerId: Number(session.customer_id),
             newState: {
                 visibleVideoCount: videos.length,
+                customerName: customerProfile.displayName,
             },
         });
         return {
@@ -1650,6 +1652,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         tenantId = Number(session.tenant_id);
         customerId = Number(session.customer_id);
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
+        const customerProfile = await getPortalCustomerProfile(db, tenantId, customerId);
 
         const video = await db('vp_videos')
             .where({ tenant_id: tenantId, id: videoId })
@@ -1671,6 +1674,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 videoId,
                 newState: {
                     reason: 'video_not_found',
+                    customerName: customerProfile.displayName,
                 },
             });
             return reply.status(404).send({ error: 'Video nicht gefunden' });
@@ -1695,6 +1699,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 videoId,
                 newState: {
                     reason: 'not_allowed',
+                    customerName: customerProfile.displayName,
+                    videoTitle: String(video.title || ''),
                 },
             });
             return reply.status(403).send({ error: 'Keine Berechtigung für dieses Video' });
@@ -1719,6 +1725,8 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 videoId,
                 newState: {
                     sourceType: streamVideo.source_type,
+                    customerName: customerProfile.displayName,
+                    videoTitle: String(streamVideo.title || ''),
                 },
             });
         }

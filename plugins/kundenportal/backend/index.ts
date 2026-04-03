@@ -580,6 +580,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             newState: {
                 email,
                 delivery: 'mail',
+                customerName: resolved.customerName,
             },
         });
 
@@ -706,6 +707,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const session = await verifyPublicSessionByToken(db, sessionToken);
         if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
 
+        const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
         await logPortalAudit(request, {
             action: 'cp.customer.session.validated',
@@ -713,10 +715,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerId: Number(session.customer_id),
             newState: {
                 sessionId: Number(session.id),
+                customerName: customerProfile.displayName,
             },
         });
 
-        const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
         const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
@@ -752,12 +754,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             .whereNull('revoked_at')
             .update({ revoked_at: db.fn.now() });
         if (activeSession) {
+            const customerProfile = await getPortalCustomerProfile(
+                db,
+                Number(activeSession.tenant_id),
+                Number(activeSession.customer_id),
+            );
             await logPortalAudit(request, {
                 action: 'cp.customer.logout',
                 tenantId: Number(activeSession.tenant_id),
                 customerId: Number(activeSession.customer_id),
                 newState: {
                     sessionId: Number(activeSession.id),
+                    customerName: customerProfile.displayName,
                 },
             });
         }
