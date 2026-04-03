@@ -995,6 +995,33 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     await ensureVideoplattformSchema(db);
     const brandingDir = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding');
 
+    async function logVideoAudit(
+        request: FastifyRequest,
+        payload: {
+            action: string;
+            tenantId?: number | null;
+            customerId?: number | null;
+            videoId?: number | null;
+            previousState?: Record<string, any> | null;
+            newState?: Record<string, any> | null;
+        },
+    ): Promise<void> {
+        const hasVideo = Number(payload.videoId || 0) > 0;
+        const hasCustomer = Number(payload.customerId || 0) > 0;
+        await fastify.audit.log({
+            action: payload.action,
+            category: 'plugin',
+            pluginId: PLUGIN_ID,
+            entityType: hasVideo ? 'vp_videos' : (hasCustomer ? 'vp_customers' : 'videoplattform_public'),
+            entityId: hasVideo
+                ? String(payload.videoId)
+                : (hasCustomer ? String(payload.customerId) : undefined),
+            tenantId: payload.tenantId ?? null,
+            previousState: payload.previousState || null,
+            newState: payload.newState || null,
+        }, request).catch((err: any) => fastify.log.error(`Audit logging failed: ${err.message}`));
+    }
+
     async function upsertPluginSetting(key: string, value: string): Promise<void> {
         const encrypted = encrypt(value);
         const existing = await db('settings')
@@ -1562,7 +1589,16 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
 
+        await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
         const videos = await getVideosForCustomer(db, Number(session.tenant_id), Number(session.customer_id));
+        await logVideoAudit(request, {
+            action: 'cp.video.list',
+            tenantId: Number(session.tenant_id),
+            customerId: Number(session.customer_id),
+            newState: {
+                visibleVideoCount: videos.length,
+            },
+        });
         return {
             videos: videos.map((video) => formatVideo(video)),
         };
@@ -1584,6 +1620,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!ok) return;
 
         const videoId = Number((request.params as any)?.videoId);
+        const hasRangeRequest = Boolean(String(request.headers.range || '').trim());
         const sessionToken = String((request.query as any)?.sessionToken || request.headers['x-public-session-token'] || '').trim();
         if (!Number.isInteger(videoId) || videoId <= 0) return reply.status(400).send({ error: 'Ungültige Video-ID' });
         if (!sessionToken) return reply.status(401).send({ error: 'Session-Token ist erforderlich' });
@@ -1600,6 +1637,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 videoId,
                 success: false,
                 detail: 'Ungültige oder abgelaufene Session',
+            });
+            await logVideoAudit(request, {
+                action: 'cp.video.view.denied',
+                videoId,
+                newState: {
+                    reason: 'invalid_or_expired_session',
+                },
             });
             return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
         }
@@ -1620,6 +1664,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 success: false,
                 detail: 'Video nicht gefunden',
             });
+            await logVideoAudit(request, {
+                action: 'cp.video.view.denied',
+                tenantId,
+                customerId,
+                videoId,
+                newState: {
+                    reason: 'video_not_found',
+                },
+            });
             return reply.status(404).send({ error: 'Video nicht gefunden' });
         }
 
@@ -1635,6 +1688,15 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 success: false,
                 detail: 'Session nicht berechtigt für dieses Video',
             });
+            await logVideoAudit(request, {
+                action: 'cp.video.view.denied',
+                tenantId,
+                customerId,
+                videoId,
+                newState: {
+                    reason: 'not_allowed',
+                },
+            });
             return reply.status(403).send({ error: 'Keine Berechtigung für dieses Video' });
         }
 
@@ -1649,6 +1711,17 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             success: true,
             detail: 'Video-Stream gestartet',
         });
+        if (!hasRangeRequest) {
+            await logVideoAudit(request, {
+                action: 'cp.video.view',
+                tenantId,
+                customerId: streamVideo.customer_id,
+                videoId,
+                newState: {
+                    sourceType: streamVideo.source_type,
+                },
+            });
+        }
 
         if (streamVideo.source_type === 'url') {
             if (!streamVideo.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
