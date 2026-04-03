@@ -431,28 +431,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
     await ensureCustomerAccessSchema(db);
 
-    async function logPortalAudit(
-        request: FastifyRequest,
-        payload: {
-            action: string;
-            tenantId?: number | null;
-            customerId?: number | null;
-            previousState?: Record<string, any> | null;
-            newState?: Record<string, any> | null;
-        },
-    ): Promise<void> {
-        await fastify.audit.log({
-            action: payload.action,
-            category: 'plugin',
-            pluginId: PLUGIN_ID,
-            entityType: payload.customerId ? 'vp_customers' : 'kundenportal_public',
-            entityId: payload.customerId ? String(payload.customerId) : undefined,
-            tenantId: payload.tenantId ?? null,
-            previousState: payload.previousState || null,
-            newState: payload.newState || null,
-        }, request).catch((err: any) => fastify.log.error(`Audit logging failed: ${err.message}`));
-    }
-
     fastify.get('/public/modules', {
         exposeHeadRoute: false,
         config: { policy: { public: true } },
@@ -573,16 +551,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             html: `<p>Hallo,</p><p>Ihr Login-Code lautet:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">${code}</p><p>Der Code ist <strong>${MAGIC_CODE_TTL_MINUTES} Minuten</strong> gültig.</p><p>Wenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail.</p>`,
         });
 
-        await logPortalAudit(request, {
-            action: 'cp.customer.login_code.requested',
-            tenantId: Number(resolved.tenantId),
-            customerId: Number(vpCustomerId),
-            newState: {
-                email,
-                delivery: 'mail',
-            },
-        });
-
         return { success: true, message: 'Wenn die E-Mail bekannt ist, wurde ein Code versendet.' };
     });
 
@@ -631,13 +599,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             .first();
 
         if (!row) {
-            await logPortalAudit(request, {
-                action: 'cp.customer.login.failed',
-                newState: {
-                    email,
-                    reason: 'invalid_or_expired_code',
-                },
-            });
             return reply.status(401).send({ error: 'Ungültiger oder abgelaufener Code.' });
         }
 
@@ -664,17 +625,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         });
 
         const customerProfile = await getPortalCustomerProfile(db, Number(row.tenant_id), Number(row.customer_id));
-
-        await logPortalAudit(request, {
-            action: 'cp.customer.login',
-            tenantId: Number(row.tenant_id),
-            customerId: Number(row.customer_id),
-            newState: {
-                customerName: customerProfile.displayName,
-                email,
-            },
-        });
-
         const tenant = await db('tenants').where({ id: row.tenant_id }).first('id', 'logo_file', 'name');
         const fallbackLogoFile = await readPublicLogoFile(db);
         const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
@@ -709,14 +659,6 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         if (!session) return reply.status(401).send({ error: 'Session ungültig oder abgelaufen.' });
 
         await db('vp_public_sessions').where({ id: session.id }).update({ last_used_at: new Date() });
-        await logPortalAudit(request, {
-            action: 'cp.customer.session.validated',
-            tenantId: Number(session.tenant_id),
-            customerId: Number(session.customer_id),
-            newState: {
-                sessionId: Number(session.id),
-            },
-        });
 
         const customerProfile = await getPortalCustomerProfile(db, Number(session.tenant_id), Number(session.customer_id));
         const tenant = await db('tenants').where({ id: session.tenant_id }).first('id', 'logo_file', 'name');
@@ -745,24 +687,10 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const sessionToken = String((request.body as any)?.sessionToken || '').trim();
         if (!sessionToken) return { success: true };
         const tokenHash = hashValue(sessionToken);
-        const activeSession = await db('vp_public_sessions')
-            .where({ token_hash: tokenHash })
-            .whereNull('revoked_at')
-            .first('id', 'tenant_id', 'customer_id');
         await db('vp_public_sessions')
             .where({ token_hash: tokenHash })
             .whereNull('revoked_at')
             .update({ revoked_at: db.fn.now() });
-        if (activeSession) {
-            await logPortalAudit(request, {
-                action: 'cp.customer.logout',
-                tenantId: Number(activeSession.tenant_id),
-                customerId: Number(activeSession.customer_id),
-                newState: {
-                    sessionId: Number(activeSession.id),
-                },
-            });
-        }
         return { success: true };
     });
 
@@ -774,7 +702,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     }, async (_request, reply) => {
         const fileName = await readPublicLogoFile(db);
         if (!fileName) return reply.status(404).send({ error: 'Kein Portal-Logo hinterlegt' });
-        
+
         const absPathNew = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, 'branding', fileName);
         const absPathOld = path.join(config.app.uploadsDir, 'plugins', VIDEOPLATTFORM_PLUGIN_ID, 'branding', fileName);
 
@@ -788,7 +716,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 continue;
             }
         }
-        
+
         return reply.status(404).send({ error: 'Logo-Datei nicht gefunden' });
     });
 
