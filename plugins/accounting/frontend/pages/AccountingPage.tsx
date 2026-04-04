@@ -31,6 +31,9 @@ interface CustomerData {
 }
 
 const API_BASE = '/api/plugins/accounting';
+interface AccountingPageProps {
+    sessionToken?: string;
+}
 
 function formatCurrency(amount: number, currency: string): string {
     return new Intl.NumberFormat('de-DE', {
@@ -111,29 +114,36 @@ function DocumentTable({ documents, category }: { documents: AccountingDocument[
     );
 }
 
-export default function AccountingPage() {
+export default function AccountingPage({ sessionToken }: AccountingPageProps) {
     const [documents, setDocuments] = useState<AccountingDocument[]>([]);
     const [customer, setCustomer] = useState<CustomerData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState('rechnung');
 
-    // Customer ID aus der Session holen (angenommen es ist verfügbar)
-    const customerId = '1'; // TODO: Aus Session holen
-
     useEffect(() => {
         const fetchData = async () => {
             try {
                 setLoading(true);
+                setError(null);
+
+                if (!sessionToken) {
+                    setDocuments([]);
+                    setCustomer(null);
+                    setError('Session-Token fehlt');
+                    return;
+                }
+
+                const qs = `sessionToken=${encodeURIComponent(sessionToken)}`;
 
                 // Dokumente laden
-                const docsResponse = await fetch(`${API_BASE}/documents?customerId=${customerId}`);
-                if (!docsResponse.ok) throw new Error('Failed to load documents');
+                const docsResponse = await fetch(`${API_BASE}/documents?${qs}`);
+                if (!docsResponse.ok) throw new Error(`Failed to load documents (${docsResponse.status})`);
                 const docsData = await docsResponse.json();
                 setDocuments(docsData.documents || []);
 
                 // Kundendaten laden
-                const customerResponse = await fetch(`${API_BASE}/customer?customerId=${customerId}`);
+                const customerResponse = await fetch(`${API_BASE}/customer?${qs}`);
                 if (customerResponse.ok) {
                     const customerData = await customerResponse.json();
                     setCustomer(customerData.customer);
@@ -147,7 +157,7 @@ export default function AccountingPage() {
         };
 
         fetchData();
-    }, [customerId]);
+    }, [sessionToken]);
 
     if (loading) {
         return <div className="p-4">Laden...</div>;

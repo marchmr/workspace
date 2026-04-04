@@ -38,81 +38,123 @@ function getDisplayName(customer: any): string {
 
 export default async function customerRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
+    let contactsTableAvailable: boolean | null = null;
+    let contactsPrimaryFlagAvailable: boolean | null = null;
+
+    async function canJoinPrimaryContacts(): Promise<boolean> {
+        if (contactsTableAvailable === null) {
+            contactsTableAvailable = await db.schema.hasTable('crm_contacts').catch(() => false);
+        }
+        if (!contactsTableAvailable) return false;
+        if (contactsPrimaryFlagAvailable === null) {
+            contactsPrimaryFlagAvailable = await db.schema.hasColumn('crm_contacts', 'is_primary').catch(() => false);
+        }
+        return Boolean(contactsPrimaryFlagAvailable);
+    }
 
     // ─── GET / — Kundenliste mit Paginierung, Suche, Filter ───
     fastify.get('/', { preHandler: [requirePermission('crm.view')] }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const tenantId = (request.user as any).tenantId;
-        const query = request.query as Record<string, string>;
+        try {
+            const tenantId = (request.user as any).tenantId;
+            const query = request.query as Record<string, string>;
 
-        const page = Math.max(1, parseInt(query.page || '1', 10));
-        const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '25', 10)));
-        const search = (query.search || '').trim();
-        const status = query.status || '';
-        const type = query.type || '';
-        const category = query.category || '';
-        const sortBy = query.sortBy || 'created_at';
-        const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+            const page = Math.max(1, parseInt(query.page || '1', 10));
+            const pageSize = Math.min(100, Math.max(1, parseInt(query.pageSize || '25', 10)));
+            const search = (query.search || '').trim();
+            const status = query.status || '';
+            const type = query.type || '';
+            const category = query.category || '';
+            const sortBy = query.sortBy || 'created_at';
+            const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
-        let baseQuery = db('crm_customers').where('crm_customers.tenant_id', tenantId);
+            let baseQuery = db('crm_customers').where('crm_customers.tenant_id', tenantId);
 
-        // Suchfilter
-        if (search) {
-            const safeTerm = search.replace(/[%_\\]/g, '\\$&');
-            baseQuery = baseQuery.where(function (this: any) {
-                this.orWhere('customer_number', 'like', `%${safeTerm}%`)
-                    .orWhere('company_name', 'like', `%${safeTerm}%`)
-                    .orWhere('first_name', 'like', `%${safeTerm}%`)
-                    .orWhere('last_name', 'like', `%${safeTerm}%`)
-                    .orWhere('email', 'like', `%${safeTerm}%`)
-                    .orWhere('phone', 'like', `%${safeTerm}%`)
-                    .orWhere('mobile', 'like', `%${safeTerm}%`)
-                    .orWhere('city', 'like', `%${safeTerm}%`);
+            // Suchfilter
+            if (search) {
+                const safeTerm = search.replace(/[%_\\]/g, '\\$&');
+                baseQuery = baseQuery.where(function (this: any) {
+                    this.orWhere('customer_number', 'like', `%${safeTerm}%`)
+                        .orWhere('company_name', 'like', `%${safeTerm}%`)
+                        .orWhere('first_name', 'like', `%${safeTerm}%`)
+                        .orWhere('last_name', 'like', `%${safeTerm}%`)
+                        .orWhere('email', 'like', `%${safeTerm}%`)
+                        .orWhere('phone', 'like', `%${safeTerm}%`)
+                        .orWhere('mobile', 'like', `%${safeTerm}%`)
+                        .orWhere('city', 'like', `%${safeTerm}%`);
+                });
+            }
+
+            // Filter
+            if (status && ['active', 'inactive', 'prospect'].includes(status)) {
+                baseQuery = baseQuery.where('status', status);
+            }
+            if (type && ['company', 'person'].includes(type)) {
+                baseQuery = baseQuery.where('type', type);
+            }
+            if (category) {
+                baseQuery = baseQuery.where('category', category);
+            }
+
+            // Gesamtanzahl
+            const countResult = await baseQuery.clone().count('id as count').first();
+            const total = Number(countResult?.count || 0);
+            const totalPages = Math.ceil(total / pageSize);
+
+            const withPrimaryContact = await canJoinPrimaryContacts();
+            const safeSortBy = [
+                'customer_number', 'company_name', 'first_name', 'last_name', 'city', 'email', 'phone', 'status', 'created_at',
+            ].includes(sortBy) ? sortBy : 'created_at';
+
+            let items: any[] = [];
+            if (withPrimaryContact) {
+                items = await baseQuery
+                    .leftJoin('crm_contacts as pc', function (this: any) {
+                        this.on('pc.customer_id', '=', 'crm_customers.id')
+                            .andOn('pc.is_primary', '=', db.raw('1'));
+                    })
+                    .orderBy(
+                        sortBy === 'primary_contact'
+                            ? db.raw("CONCAT(COALESCE(pc.first_name,''), ' ', COALESCE(pc.last_name,''))")
+                            : `crm_customers.${safeSortBy}`,
+                        sortOrder,
+                    )
+                    .limit(pageSize)
+                    .offset((page - 1) * pageSize)
+                    .select(
+                        'crm_customers.*',
+                        db.raw("TRIM(CONCAT(COALESCE(pc.first_name,''), ' ', COALESCE(pc.last_name,''))) as primary_contact_name"),
+                        'pc.email as primary_contact_email',
+                        'pc.phone as primary_contact_phone',
+                    );
+            } else {
+                items = await baseQuery
+                    .orderBy(`crm_customers.${safeSortBy}`, sortOrder)
+                    .limit(pageSize)
+                    .offset((page - 1) * pageSize)
+                    .select('crm_customers.*');
+                items = items.map((item: any) => ({
+                    ...item,
+                    primary_contact_name: null,
+                    primary_contact_email: null,
+                    primary_contact_phone: null,
+                }));
+            }
+
+            // Display-Name hinzufügen
+            const enriched = items.map((c: any) => ({
+                ...c,
+                display_name: getDisplayName(c),
+                primary_contact_name: c.primary_contact_name?.trim() || null,
+            }));
+
+            return reply.send({
+                items: enriched,
+                pagination: { page, pageSize, total, totalPages },
             });
+        } catch (error) {
+            request.log.error({ err: error }, 'CRM Kundenliste konnte nicht geladen werden');
+            return reply.status(500).send({ error: 'CRM-Kundenliste konnte nicht geladen werden' });
         }
-
-        // Filter
-        if (status && ['active', 'inactive', 'prospect'].includes(status)) {
-            baseQuery = baseQuery.where('status', status);
-        }
-        if (type && ['company', 'person'].includes(type)) {
-            baseQuery = baseQuery.where('type', type);
-        }
-        if (category) {
-            baseQuery = baseQuery.where('category', category);
-        }
-
-        // Gesamtanzahl
-        const countResult = await baseQuery.clone().count('id as count').first();
-        const total = Number(countResult?.count || 0);
-        const totalPages = Math.ceil(total / pageSize);
-
-        // Daten mit Hauptansprechpartner (LEFT JOIN)
-        const items = await baseQuery
-            .leftJoin('crm_contacts as pc', function (this: any) {
-                this.on('pc.customer_id', '=', 'crm_customers.id')
-                    .andOn('pc.is_primary', '=', db.raw('1'));
-            })
-            .orderBy(sortBy === 'primary_contact' ? db.raw("CONCAT(COALESCE(pc.first_name,''), ' ', COALESCE(pc.last_name,''))") : `crm_customers.${sortBy}`, sortOrder)
-            .limit(pageSize)
-            .offset((page - 1) * pageSize)
-            .select(
-                'crm_customers.*',
-                db.raw("TRIM(CONCAT(COALESCE(pc.first_name,''), ' ', COALESCE(pc.last_name,''))) as primary_contact_name"),
-                'pc.email as primary_contact_email',
-                'pc.phone as primary_contact_phone'
-            );
-
-        // Display-Name hinzufügen
-        const enriched = items.map((c: any) => ({
-            ...c,
-            display_name: getDisplayName(c),
-            primary_contact_name: c.primary_contact_name?.trim() || null,
-        }));
-
-        return reply.send({
-            items: enriched,
-            pagination: { page, pageSize, total, totalPages },
-        });
     });
 
     // ─── GET /categories — Verfügbare Kategorien ───
