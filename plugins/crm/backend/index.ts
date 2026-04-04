@@ -1,4 +1,5 @@
 import { FastifyInstance } from 'fastify';
+import { createHash } from 'crypto';
 import { getDatabase } from '../../../backend/src/core/database.js';
 import customerRoutes from './routes/customers.js';
 import layoutRoutes from './routes/layout.js';
@@ -34,6 +35,45 @@ function extractAddress(payload: any): { street: string | null; zip: string | nu
     };
 }
 
+function isCustomerEventType(eventType: string): boolean {
+    return ['customer.exported', 'customer.created', 'customer.updated'].includes(eventType);
+}
+
+function readCustomerFromPayload(payload: any): any | null {
+    const direct = payload?.customer;
+    if (direct && typeof direct === 'object') return direct;
+    const nested = payload?.data?.customer;
+    if (nested && typeof nested === 'object') return nested;
+    return null;
+}
+
+function buildFallbackCustomerNumber(payload: any, customer: any): string {
+    const seed = JSON.stringify({
+        eventId: payload?.event_id || payload?.eventId || null,
+        name: customer?.name || customer?.company || null,
+        email: customer?.email || null,
+    });
+    const hash = createHash('sha1').update(seed || String(Date.now()), 'utf8').digest('hex').slice(0, 12);
+    return `ACCT-${hash}`.toUpperCase();
+}
+
+function readCustomerNumber(payload: any, customer: any): string {
+    const candidates = [
+        customer?.id,
+        customer?.customer_id,
+        customer?.customer_number,
+        customer?.number,
+        customer?.uuid,
+        payload?.customer_id,
+        payload?.customer_number,
+    ];
+    for (const value of candidates) {
+        const normalized = String(value ?? '').trim();
+        if (normalized) return normalized;
+    }
+    return buildFallbackCustomerNumber(payload, customer);
+}
+
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
     // Kunden CRUD + Suche + Bulk
     await fastify.register(customerRoutes, { prefix: '/customers' });
@@ -65,33 +105,40 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     // Kunden-Adressen CRUD
     await fastify.register(addressRoutes, { prefix: '/addresses' });
 
-    fastify.events.on('accounting.connector.event.received', async (incoming: any) => {
-        try {
-            const eventType = String(incoming?.eventType || '').trim().toLowerCase();
-            if (!['customer.exported', 'customer.created', 'customer.updated'].includes(eventType)) return;
+    async function resolveTargetTenantIds(db: any, payload: any, customer: any): Promise<number[]> {
+        const explicitTenant = Number(payload?.tenant_id ?? customer?.tenant_id ?? customer?.tenantId ?? 0);
+        if (Number.isInteger(explicitTenant) && explicitTenant > 0) return [explicitTenant];
 
-            const payload = incoming?.payload || {};
-            const customer = payload?.customer;
-            if (!customer || typeof customer !== 'object') return;
+        const activeTenants = await db('tenants')
+            .where('is_active', true)
+            .select('id');
+        const ids = activeTenants
+            .map((row: any) => Number(row.id))
+            .filter((id: number) => Number.isInteger(id) && id > 0);
+        if (ids.length > 0) return ids;
 
-            const customerNumber = String(customer.id ?? customer.customer_number ?? '').trim();
-            if (!customerNumber) return;
+        const defaultTenant = await db('tenants').where({ slug: 'default' }).first('id');
+        const fallbackId = Number(defaultTenant?.id || 0);
+        return fallbackId > 0 ? [fallbackId] : [];
+    }
 
-            const db = getDatabase();
-            const tenantFromPayload = Number(payload?.tenant_id ?? customer?.tenant_id ?? customer?.tenantId ?? 0);
-            let tenantId = Number.isInteger(tenantFromPayload) && tenantFromPayload > 0 ? tenantFromPayload : 0;
-            if (!tenantId) {
-                const defaultTenant = await db('tenants').where({ slug: 'default' }).first('id');
-                tenantId = Number(defaultTenant?.id || 0);
-            }
-            if (!tenantId) return;
+    async function upsertCustomerFromAccountingEvent(payload: any): Promise<void> {
+        const customer = readCustomerFromPayload(payload);
+        if (!customer) return;
 
-            const firstName = textOrNull(customer.first_name);
-            const lastName = textOrNull(customer.last_name);
-            const companyName = textOrNull(customer.company) || (!firstName && !lastName ? textOrNull(customer.name) : null);
-            const type = String(customer.kind || '').toLowerCase() === 'person' || (!!firstName || !!lastName) ? 'person' : 'company';
-            const addr = extractAddress(customer);
+        const customerNumber = readCustomerNumber(payload, customer);
 
+        const db = getDatabase();
+        const targetTenantIds = await resolveTargetTenantIds(db, payload, customer);
+        if (targetTenantIds.length === 0) return;
+
+        const firstName = textOrNull(customer.first_name);
+        const lastName = textOrNull(customer.last_name);
+        const companyName = textOrNull(customer.company) || (!firstName && !lastName ? textOrNull(customer.name) : null);
+        const type = String(customer.kind || '').toLowerCase() === 'person' || (!!firstName || !!lastName) ? 'person' : 'company';
+        const addr = extractAddress(customer);
+
+        for (const tenantId of targetTenantIds) {
             const record = {
                 tenant_id: tenantId,
                 customer_number: customerNumber,
@@ -115,17 +162,57 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
             if (existing?.id) {
                 await db('crm_customers').where({ id: existing.id }).update(record);
-                return;
+            } else {
+                await db('crm_customers').insert({
+                    ...record,
+                    created_at: new Date(),
+                });
             }
+        }
+    }
 
-            await db('crm_customers').insert({
-                ...record,
-                created_at: new Date(),
-            });
+    fastify.events.on('accounting.connector.event.received', async (incoming: any) => {
+        try {
+            const eventType = String(incoming?.eventType || '').trim().toLowerCase();
+            if (!isCustomerEventType(eventType)) return;
+            await upsertCustomerFromAccountingEvent(incoming?.payload || {});
         } catch (error) {
             console.error('[CRM] Fehler beim Verarbeiten von Accounting-Event:', error);
         }
     });
+
+    // Backfill: Beim Plugin-Start die juengsten Accounting-Kunden-Events einlesen,
+    // damit bereits empfangene Events auch ohne erneutes Senden im CRM landen.
+    try {
+        const db = getDatabase();
+        const rows = await db('accounting_connector_events')
+            .whereIn('event_type', ['customer.exported', 'customer.created', 'customer.updated'])
+            .orderBy('created_at', 'desc')
+            .limit(2000)
+            .select('payload_json');
+
+        const newestByCustomer = new Map<string, any>();
+        for (const row of rows) {
+            try {
+                const payload = JSON.parse(String(row.payload_json || '{}'));
+                const customerKey = String(payload?.customer?.id ?? payload?.customer?.customer_number ?? '').trim();
+                if (!customerKey || newestByCustomer.has(customerKey)) continue;
+                newestByCustomer.set(customerKey, payload);
+            } catch {
+                // kaputte Einzelpayloads ignorieren
+            }
+        }
+
+        for (const payload of newestByCustomer.values()) {
+            await upsertCustomerFromAccountingEvent(payload);
+        }
+
+        if (newestByCustomer.size > 0) {
+            console.log(`[CRM] Accounting-Backfill verarbeitet: ${newestByCustomer.size} Kunden`);
+        }
+    } catch (error) {
+        console.error('[CRM] Accounting-Backfill fehlgeschlagen:', error);
+    }
 
     console.log('[CRM] Plugin geladen (Kunden, Tickets, Kontakte, Adressen, Notizen, Import/Export)');
 }

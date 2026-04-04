@@ -158,6 +158,20 @@ const FIELD_MAP: Record<string, { dbField: string; label: string }> = {
    ════════════════════════════════════════════ */
 
 export default async function importExportRoutes(fastify: FastifyInstance): Promise<void> {
+    function resolveAccountingCustomerNumber(customerData: any): string {
+        const candidates = [
+            customerData?.id,
+            customerData?.customer_id,
+            customerData?.customer_number,
+            customerData?.number,
+            customerData?.uuid,
+        ];
+        for (const value of candidates) {
+            const normalized = String(value ?? '').trim();
+            if (normalized) return normalized;
+        }
+        return '';
+    }
 
     // ══════════════════════════════════════════
     // POST /import/preview — CSV hochladen + Vorschau
@@ -725,18 +739,19 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
         for (const event of events) {
             const payload = JSON.parse(event.payload_json);
             const customerData = payload.customer;
+            const customerNumber = resolveAccountingCustomerNumber(customerData);
 
-            if (!customerData || processed.has(customerData.id)) continue;
-            processed.add(customerData.id);
+            if (!customerData || !customerNumber || processed.has(customerNumber)) continue;
+            processed.add(customerNumber);
 
             // Check if customer already exists
             const existingCustomer = await db('crm_customers')
                 .where('tenant_id', (request.user as any).tenantId)
-                .where('customer_number', String(customerData.id))
+                .where('customer_number', customerNumber)
                 .first();
 
             const customer = {
-                customer_number: customerData.id,
+                customer_number: customerNumber,
                 company: customerData.company || customerData.name || '',
                 first_name: customerData.first_name || '',
                 last_name: customerData.last_name || '',
@@ -799,19 +814,20 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
             try {
                 const payload = JSON.parse(event.payload_json);
                 const customerData = payload.customer;
+                const customerNumber = resolveAccountingCustomerNumber(customerData);
 
-                if (!customerData || processed.has(customerData.id)) continue;
-                processed.add(customerData.id);
+                if (!customerData || !customerNumber || processed.has(customerNumber)) continue;
+                processed.add(customerNumber);
 
                 // Check if customer already exists
                 const existingCustomer = await db('crm_customers')
                     .where('tenant_id', tenantId)
-                    .where('customer_number', String(customerData.id))
+                    .where('customer_number', customerNumber)
                     .first();
 
                 const customerRecord: any = {
                     tenant_id: tenantId,
-                    customer_number: String(customerData.id),
+                    customer_number: customerNumber,
                     type: (String(customerData.kind || '').toLowerCase() === 'person' || customerData.first_name || customerData.last_name) ? 'person' : 'company',
                     company_name: customerData.company || customerData.name || null,
                     first_name: customerData.first_name || '',
@@ -844,10 +860,10 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
                     const customerId = existingCustomer
                         ? existingCustomer.id
                         : (await db('crm_customers')
-                            .where({ tenant_id: tenantId, customer_number: String(customerData.id) })
+                            .where({ tenant_id: tenantId, customer_number: customerNumber })
                             .first())?.id;
                     if (!customerId) {
-                        errors.push(`Error processing customer ${String(customerData.id)}: customer_id not found`);
+                        errors.push(`Error processing customer ${customerNumber}: customer_id not found`);
                         continue;
                     }
 

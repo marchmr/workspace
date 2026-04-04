@@ -37,6 +37,18 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     const DASHBOARD_KEY_PATTERN = /^[a-zA-Z0-9._:-]{1,190}$/;
     const DASHBOARD_MAX_TILES = 120;
 
+    let hasTenantsLogoUpdatedAtColumn: boolean | null = null;
+
+    async function tenantsHasLogoUpdatedAt(): Promise<boolean> {
+        if (hasTenantsLogoUpdatedAtColumn !== null) return hasTenantsLogoUpdatedAtColumn;
+        try {
+            hasTenantsLogoUpdatedAtColumn = await db.schema.hasColumn('tenants', 'logo_updated_at');
+        } catch {
+            hasTenantsLogoUpdatedAtColumn = false;
+        }
+        return hasTenantsLogoUpdatedAtColumn;
+    }
+
     function useSecureCookie(request: FastifyRequest): boolean {
         const mode = String(config.jwt.cookieSecure || 'auto').toLowerCase();
         if (mode === 'true') return true;
@@ -47,11 +59,16 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     }
 
     async function getUserTenantList(userId: number): Promise<Array<{ id: number; name: string; slug: string; logoUrl: string | null; logoUpdatedAt: string | null }>> {
+        const selectColumns = ['tenants.id', 'tenants.name', 'tenants.slug', 'tenants.logo_file'];
+        if (await tenantsHasLogoUpdatedAt()) {
+            selectColumns.push('tenants.logo_updated_at');
+        }
+
         const rows = await db('user_tenants')
             .join('tenants', 'user_tenants.tenant_id', 'tenants.id')
             .where('user_tenants.user_id', userId)
             .where('tenants.is_active', true)
-            .select('tenants.id', 'tenants.name', 'tenants.slug', 'tenants.logo_file', 'tenants.logo_updated_at')
+            .select(selectColumns)
             .orderBy('tenants.name', 'asc');
 
         return rows.map((row: any) => ({
@@ -124,7 +141,12 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     }) {
         const decryptedUser = decryptUserSensitiveFields(user);
         const avatar = getAvatarMeta(decryptedUser);
-        const activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
+        let activePlugins: string[] = [];
+        try {
+            activePlugins = await db('plugins').where('is_active', true).pluck('plugin_id');
+        } catch {
+            activePlugins = [];
+        }
         return {
             id: decryptedUser.id,
             username: decryptedUser.username,
@@ -290,9 +312,16 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     }
 
     async function getDashboardLayout(userId: number): Promise<{ tiles: DashboardLayout; updatedAt: string | null }> {
-        const row = await db(DASHBOARD_LAYOUT_TABLE)
-            .where('user_id', userId)
-            .first('layout_json', 'updated_at');
+        let row: any = null;
+        try {
+            const hasLayoutTable = await db.schema.hasTable(DASHBOARD_LAYOUT_TABLE);
+            if (!hasLayoutTable) return { tiles: {}, updatedAt: null };
+            row = await db(DASHBOARD_LAYOUT_TABLE)
+                .where('user_id', userId)
+                .first('layout_json', 'updated_at');
+        } catch {
+            return { tiles: {}, updatedAt: null };
+        }
 
         if (!row?.layout_json) {
             return { tiles: {}, updatedAt: null };
@@ -573,37 +602,47 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
 
     // GET /api/auth/ws-token – Kurzlebiges Token fuer WebSocket-Verbindung
     fastify.get('/ws-token', { preHandler: [fastify.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const token = fastify.jwt.sign(
-            {
-                userId: request.user.userId,
-                username: request.user.username || '',
-                tenantId: request.user.tenantId,
-                tenantIds: request.user.tenantIds || [],
-                permissions: request.user.permissions || [],
-                sessionId: request.user.sessionId || 0,
-            },
-            { expiresIn: '5m' }
-        );
-        return reply.send({ token });
+        try {
+            const token = fastify.jwt.sign(
+                {
+                    userId: request.user.userId,
+                    username: request.user.username || '',
+                    tenantId: request.user.tenantId,
+                    tenantIds: request.user.tenantIds || [],
+                    permissions: request.user.permissions || [],
+                    sessionId: request.user.sessionId || 0,
+                },
+                { expiresIn: '5m' }
+            );
+            return reply.send({ token });
+        } catch (error) {
+            request.log.error({ err: error }, 'ws-token konnte nicht erstellt werden');
+            return reply.status(401).send({ error: 'Nicht autorisiert' });
+        }
     });
 
     // GET /api/auth/me
     fastify.get('/me', { preHandler: [fastify.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const user = await db('users').where('id', request.user.userId).first();
-        if (!user) {
-            return reply.status(404).send({ error: 'Benutzer nicht gefunden' });
+        try {
+            const user = await db('users').where('id', request.user.userId).first();
+            if (!user) {
+                return reply.status(404).send({ error: 'Benutzer nicht gefunden' });
+            }
+
+            const roles = await db('user_roles')
+                .join('roles', 'user_roles.role_id', 'roles.id')
+                .where('user_roles.user_id', user.id)
+                .select('roles.name');
+            const context = await buildAuthContext(user);
+
+            return reply.send({
+                ...(await buildUserResponse(user, context)),
+                roles: roles.map((r: any) => r.name),
+            });
+        } catch (error) {
+            request.log.error({ err: error }, 'auth/me fehlgeschlagen');
+            return reply.status(500).send({ error: 'Benutzerdaten konnten nicht geladen werden' });
         }
-
-        const roles = await db('user_roles')
-            .join('roles', 'user_roles.role_id', 'roles.id')
-            .where('user_roles.user_id', user.id)
-            .select('roles.name');
-        const context = await buildAuthContext(user);
-
-        return reply.send({
-            ...(await buildUserResponse(user, context)),
-            roles: roles.map((r: any) => r.name),
-        });
     });
 
     // GET /api/auth/profile
@@ -665,8 +704,13 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
 
     // GET /api/auth/dashboard-layout
     fastify.get('/dashboard-layout', { preHandler: [fastify.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const layout = await getDashboardLayout(request.user.userId);
-        return reply.send(layout);
+        try {
+            const layout = await getDashboardLayout(request.user.userId);
+            return reply.send(layout);
+        } catch (error) {
+            request.log.error({ err: error }, 'dashboard-layout konnte nicht geladen werden');
+            return reply.send({ tiles: {}, updatedAt: null });
+        }
     });
 
     // PUT /api/auth/dashboard-layout
@@ -684,6 +728,15 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
 
         const now = new Date();
         const payload = JSON.stringify(normalized);
+
+        const hasLayoutTable = await db.schema.hasTable(DASHBOARD_LAYOUT_TABLE);
+        if (!hasLayoutTable) {
+            return reply.send({
+                success: true,
+                tiles: normalized,
+                updatedAt: now.toISOString(),
+            });
+        }
 
         const existing = await db(DASHBOARD_LAYOUT_TABLE)
             .where('user_id', request.user.userId)
