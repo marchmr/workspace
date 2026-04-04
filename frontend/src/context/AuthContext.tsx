@@ -36,6 +36,20 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+let refreshInFlight: Promise<Response> | null = null;
+
+async function refreshAccessTokenOnce(): Promise<Response> {
+    if (!refreshInFlight) {
+        refreshInFlight = fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include',
+        }).finally(() => {
+            refreshInFlight = null;
+        });
+    }
+    return refreshInFlight;
+}
+
 export function useAuth(): AuthContextType {
     const ctx = useContext(AuthContext);
     if (!ctx) throw new Error('useAuth muss innerhalb von AuthProvider verwendet werden');
@@ -58,10 +72,7 @@ async function apiFetch(url: string, options: RequestInit = {}): Promise<Respons
 
     // Bei 401: einmal Refresh versuchen
     if (res.status === 401 && !url.includes('/auth/refresh') && !url.includes('/auth/login')) {
-        const refreshRes = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            credentials: 'include',
-        });
+        const refreshRes = await refreshAccessTokenOnce();
 
         if (refreshRes.ok) {
             const retryHeaders = new Headers(options.headers || {});
@@ -95,10 +106,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 const data = await res.json();
                 setUser(data);
             } else {
-                setUser(null);
+                if (res.status === 401 || res.status === 403) {
+                    setUser(null);
+                }
             }
         } catch {
-            setUser(null);
+            // Netzwerk-/Transient-Fehler sollen die Session nicht sofort löschen.
         } finally {
             setLoading(false);
         }

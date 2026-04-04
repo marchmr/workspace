@@ -40,6 +40,10 @@ async function rateLimiterPlugin(fastify: FastifyInstance): Promise<void> {
     await fastify.register(import('@fastify/rate-limit'), {
         global: true,
         max: (request: FastifyRequest, _key: string) => {
+            const path = String(request.url || '').split('?')[0];
+            if (path === '/api/auth/me' || path === '/api/auth/refresh') {
+                return 600;
+            }
             // Authentifizierte Benutzer: großzügiges Limit
             // Anonyme Requests (Login, Branding): strengeres Limit
             const user = (request as any).user;

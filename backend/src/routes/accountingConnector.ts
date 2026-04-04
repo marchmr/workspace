@@ -227,10 +227,14 @@ function parseIncomingAccountingPayload(
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
     const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
     const eventTypeOriginal = normalizeIncomingEventType(asText(details?.event_type_original));
+    const isPaymentStatusLikeEvent = normalizedEventType === 'document.payment_status_changed'
+        || eventTypeOriginal === 'document.payment_status_changed';
 
     const categoryFromPayload = normalizeCategory(payload?.document_category ?? document?.category ?? document?.typ);
-    const categoryFromOriginalEventType = eventTypeOriginal.includes('storno') ? 'storno' : null;
-    const categoryFromEventType = normalizedEventType === 'document.payment_status_changed'
+    const categoryFromOriginalEventType = eventTypeOriginal.includes('storno')
+        ? 'storno'
+        : (eventTypeOriginal === 'document.payment_status_changed' ? 'rechnung' : null);
+    const categoryFromEventType = isPaymentStatusLikeEvent
         ? 'rechnung'
         : (isCustomerEventType(normalizedEventType) ? 'customer' : null);
     const category = categoryFromPayload ?? categoryFromOriginalEventType ?? categoryFromEventType;
@@ -259,7 +263,7 @@ function parseIncomingAccountingPayload(
         ?? document?.id
         ?? payload?.entity_id,
     );
-    let documentId = normalizedEventType === 'document.payment_status_changed'
+    let documentId = isPaymentStatusLikeEvent
         ? paymentStatusDocumentId
         : asText(
             payload?.document_id
@@ -289,7 +293,7 @@ function parseIncomingAccountingPayload(
     if (amountOpen === null && amountTotal !== null) {
         amountOpen = Math.max(0, amountTotal - (amountPaid ?? 0));
     }
-    if (normalizedEventType === 'document.payment_status_changed' && category !== 'rechnung') {
+    if (isPaymentStatusLikeEvent && category !== 'rechnung') {
         throw new ProcessingHttpError(422, 'document.payment_status_changed ist nur für document_category=rechnung erlaubt');
     }
 
@@ -439,6 +443,9 @@ async function upsertAccountingDocumentRecord(args: {
     };
 
     const normalizedEventType = normalizeIncomingEventType(eventType);
+    const normalizedOriginalEventTypeForUpsert = normalizeIncomingEventType(asText(parsed.eventTypeOriginal));
+    const isPaymentStatusLikeEvent = normalizedEventType === 'document.payment_status_changed'
+        || normalizedOriginalEventTypeForUpsert === 'document.payment_status_changed';
     const existing = await trx('accounting_connector_documents')
         .where({ record_key: parsed.recordKey, tenant_id: parsed.tenantId })
         .first(
@@ -467,7 +474,7 @@ async function upsertAccountingDocumentRecord(args: {
         );
 
     let targetExisting = existing;
-    if (!targetExisting?.id && normalizedEventType === 'document.payment_status_changed') {
+    if (!targetExisting?.id && isPaymentStatusLikeEvent) {
         targetExisting = await trx('accounting_connector_documents')
             .where({ tenant_id: parsed.tenantId, document_category: 'rechnung' })
             .andWhere(function paymentMatch(this: any) {
@@ -661,10 +668,6 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         if (!isSupportedAccountingEventType(normalizedEventType)) {
             return reply.status(422).send({ ok: false, error: `Nicht unterstützter event_type: ${normalizedEventType}` });
         }
-        if (normalizedOriginalEventType && !isSupportedAccountingEventType(normalizedOriginalEventType)) {
-            return reply.status(422).send({ ok: false, error: `Nicht unterstützter details.event_type_original: ${normalizedOriginalEventType}` });
-        }
-
         if (eventIdHeader && payloadEventId && eventIdHeader !== payloadEventId) {
             return reply.status(400).send({ ok: false, error: 'event_id header/body mismatch' });
         }
