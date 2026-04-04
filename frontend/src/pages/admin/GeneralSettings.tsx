@@ -27,6 +27,29 @@ interface AccountingConnectorSettings {
     hasHmacSecret: boolean;
 }
 
+interface ConnectorEventLogItem {
+    id: number;
+    eventId: string;
+    eventType: string;
+    status: string;
+    duplicateCount: number;
+    sourceIp: string | null;
+    createdAt: string | null;
+    processedAt: string | null;
+    lastSeenAt: string | null;
+    documentNumber: string | null;
+    customerName: string | null;
+}
+
+interface ConnectorEventLogResponse {
+    items: ConnectorEventLogItem[];
+    summary: {
+        total: number;
+        totalDuplicates: number;
+        processed24h: number;
+    };
+}
+
 const DEFAULT_CONNECTOR_SETTINGS: AccountingConnectorSettings = {
     enabled: true,
     apiKeyHeaderName: 'X-API-Key',
@@ -51,6 +74,19 @@ export default function GeneralSettings() {
     const [connectorEventTypesInput, setConnectorEventTypesInput] = useState('');
     const [savingConnector, setSavingConnector] = useState(false);
     const [testingConnector, setTestingConnector] = useState(false);
+    const [loadingConnectorEvents, setLoadingConnectorEvents] = useState(false);
+    const [connectorEvents, setConnectorEvents] = useState<ConnectorEventLogItem[]>([]);
+    const [connectorEventSummary, setConnectorEventSummary] = useState<ConnectorEventLogResponse['summary']>({
+        total: 0,
+        totalDuplicates: 0,
+        processed24h: 0,
+    });
+    const [lastConnectorTestResult, setLastConnectorTestResult] = useState<{
+        ok: boolean;
+        statusCode: number;
+        eventId: string;
+        status: string;
+    } | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -73,7 +109,27 @@ export default function GeneralSettings() {
             setConnectorEventTypesInput((payload.allowedEventTypes || []).join(', '));
         }
 
+        await loadConnectorEvents();
         setLoading(false);
+    };
+
+    const loadConnectorEvents = async () => {
+        setLoadingConnectorEvents(true);
+        try {
+            const res = await apiFetch('/api/admin/settings/accounting-connector/events?limit=25');
+            if (!res.ok) return;
+            const payload = await res.json() as ConnectorEventLogResponse;
+            setConnectorEvents(Array.isArray(payload.items) ? payload.items : []);
+            if (payload.summary) {
+                setConnectorEventSummary({
+                    total: Number(payload.summary.total || 0),
+                    totalDuplicates: Number(payload.summary.totalDuplicates || 0),
+                    processed24h: Number(payload.summary.processed24h || 0),
+                });
+            }
+        } finally {
+            setLoadingConnectorEvents(false);
+        }
     };
 
     const hasPermission = (permission?: string): boolean => {
@@ -135,8 +191,21 @@ export default function GeneralSettings() {
             if (!res.ok || payload?.ok === false) {
                 throw new Error(payload?.error || `Test fehlgeschlagen (HTTP ${res.status})`);
             }
+            setLastConnectorTestResult({
+                ok: true,
+                statusCode: Number(payload?.statusCode || res.status),
+                eventId: String(payload?.eventId || ''),
+                status: String(payload?.response?.status || 'processed'),
+            });
+            await loadConnectorEvents();
             toast.success(`Connector-Test erfolgreich (${payload?.response?.status || 'processed'})`);
         } catch (err) {
+            setLastConnectorTestResult({
+                ok: false,
+                statusCode: 500,
+                eventId: '',
+                status: 'failed',
+            });
             toast.error(err instanceof Error ? err.message : 'Connector-Test fehlgeschlagen');
         } finally {
             setTestingConnector(false);
@@ -150,6 +219,22 @@ export default function GeneralSettings() {
         } catch {
             toast.error('Kopieren nicht möglich');
         }
+    };
+
+    const connectorChecks = [
+        { label: 'Connector aktiv', ok: connector.enabled },
+        { label: 'API-Key gesetzt', ok: connector.apiKey.trim().length > 0 },
+        { label: 'HMAC Secret gesetzt', ok: connector.hmacSecret.trim().length > 0 },
+        { label: 'API-Key Header Name gültig', ok: /^[A-Za-z0-9-]{1,100}$/.test(connector.apiKeyHeaderName.trim()) },
+        { label: 'HTTPS Connector URL', ok: connector.endpointUrl.startsWith('https://') || connector.endpointUrl.startsWith('/api/') },
+    ];
+    const connectorReady = connectorChecks.every((item) => item.ok);
+
+    const formatDateTime = (value: string | null): string => {
+        if (!value) return '-';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '-';
+        return date.toLocaleString('de-DE');
     };
 
     return (
@@ -166,6 +251,24 @@ export default function GeneralSettings() {
                     <code>Rechnungen, Angebote, Mahnungen, Gutschriften, Stornos</code> ).
                     Signaturprüfung, Replay-Schutz und Idempotenz übernimmt der Core automatisch.
                 </p>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                    <span className={`badge ${connectorReady ? 'badge-success' : 'badge-warning'}`}>
+                        {connectorReady ? 'Konfiguration vollständig' : 'Konfiguration unvollständig'}
+                    </span>
+                    {lastConnectorTestResult && (
+                        <span className={`badge ${lastConnectorTestResult.ok ? 'badge-success' : 'badge-danger'}`}>
+                            Letzter Test: {lastConnectorTestResult.ok ? 'OK' : 'Fehlgeschlagen'}
+                        </span>
+                    )}
+                </div>
+                <div style={{ display: 'grid', gap: 'var(--space-xs)', marginTop: 'var(--space-sm)' }}>
+                    {connectorChecks.map((check) => (
+                        <div key={check.label} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                            <span className={`badge ${check.ok ? 'badge-success' : 'badge-warning'}`}>{check.ok ? 'OK' : 'Fehlt'}</span>
+                            <span>{check.label}</span>
+                        </div>
+                    ))}
+                </div>
 
                 <form onSubmit={saveAccountingConnector} style={{ marginTop: 'var(--space-md)' }}>
                     <div style={{ display: 'grid', gap: 'var(--space-sm)' }}>
@@ -267,9 +370,66 @@ export default function GeneralSettings() {
                             <button type="button" className="btn btn-secondary" onClick={testAccountingConnector} disabled={testingConnector}>
                                 {testingConnector ? 'Teste...' : 'Verbindung testen'}
                             </button>
+                            <button type="button" className="btn btn-secondary" onClick={loadConnectorEvents} disabled={loadingConnectorEvents}>
+                                {loadingConnectorEvents ? 'Lädt...' : 'Events aktualisieren'}
+                            </button>
                         </div>
                     </div>
                 </form>
+            </div>
+
+            <div className="card" style={{ marginTop: 'var(--space-lg)' }}>
+                <div className="card-title">Connector Event-Übersicht</div>
+                <div style={{ display: 'flex', gap: 'var(--space-sm)', marginTop: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                    <span className="badge badge-info">Gesamt: {connectorEventSummary.total}</span>
+                    <span className="badge badge-warning">Duplikate: {connectorEventSummary.totalDuplicates}</span>
+                    <span className="badge badge-success">Letzte 24h: {connectorEventSummary.processed24h}</span>
+                </div>
+                <div className="table-container mt-md">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Zeit</th>
+                                <th>Event</th>
+                                <th>Typ</th>
+                                <th>Dokument/Kunde</th>
+                                <th>Status</th>
+                                <th>Quelle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {connectorEvents.length === 0 && (
+                                <tr>
+                                    <td colSpan={6} className="text-muted">
+                                        {loadingConnectorEvents ? 'Events werden geladen...' : 'Noch keine Connector-Events vorhanden.'}
+                                    </td>
+                                </tr>
+                            )}
+                            {connectorEvents.map((item) => (
+                                <tr key={item.id}>
+                                    <td>{formatDateTime(item.createdAt)}</td>
+                                    <td><code>{item.eventId}</code></td>
+                                    <td><code>{item.eventType}</code></td>
+                                    <td>
+                                        <div>{item.documentNumber || '-'}</div>
+                                        <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>{item.customerName || '-'}</div>
+                                    </td>
+                                    <td>
+                                        <span className={`badge ${item.status === 'processed' ? 'badge-success' : 'badge-warning'}`}>
+                                            {item.status}
+                                        </span>
+                                        {item.duplicateCount > 0 && (
+                                            <span className="text-muted" style={{ marginLeft: 'var(--space-xs)' }}>
+                                                +{item.duplicateCount} Duplikat(e)
+                                            </span>
+                                        )}
+                                    </td>
+                                    <td className="text-muted">{item.sourceIp || '-'}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {settings.filter((s) => !s.key.startsWith('update.') && !s.key.startsWith('system.')).length > 0 && (

@@ -1192,6 +1192,83 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         });
     });
 
+    // GET /api/admin/settings/accounting-connector/events
+    fastify.get('/settings/accounting-connector/events', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const query = request.query as { limit?: string };
+        const limitRaw = Number.parseInt(String(query?.limit || '25'), 10);
+        const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, limitRaw)) : 25;
+
+        const hasEventsTable = await db.schema.hasTable('accounting_connector_events');
+        if (!hasEventsTable) {
+            return reply.send({
+                items: [],
+                summary: {
+                    total: 0,
+                    totalDuplicates: 0,
+                    processed24h: 0,
+                },
+            });
+        }
+
+        const rows = await db('accounting_connector_events')
+            .select(
+                'id',
+                'event_id',
+                'event_type',
+                'status',
+                'duplicate_count',
+                'source_ip',
+                'processed_at',
+                'last_seen_at',
+                'created_at',
+                'payload_json',
+            )
+            .orderBy('id', 'desc')
+            .limit(limit);
+
+        const summaryRow = await db('accounting_connector_events')
+            .count('* as total')
+            .sum('duplicate_count as totalDuplicates')
+            .first() as any;
+
+        const last24h = new Date(Date.now() - (24 * 60 * 60 * 1000));
+        const processed24hRow = await db('accounting_connector_events')
+            .where('created_at', '>=', last24h)
+            .count('* as processed24h')
+            .first() as any;
+
+        const items = rows.map((row: any) => {
+            let payload: any = null;
+            try {
+                payload = row.payload_json ? JSON.parse(String(row.payload_json)) : null;
+            } catch {
+                payload = null;
+            }
+            return {
+                id: Number(row.id),
+                eventId: String(row.event_id || ''),
+                eventType: String(row.event_type || ''),
+                status: String(row.status || 'processed'),
+                duplicateCount: Number(row.duplicate_count || 0),
+                sourceIp: row.source_ip ? String(row.source_ip) : null,
+                createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+                processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null,
+                lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at).toISOString() : null,
+                documentNumber: payload?.document?.nummer ? String(payload.document.nummer) : null,
+                customerName: payload?.customer?.name ? String(payload.customer.name) : null,
+            };
+        });
+
+        return reply.send({
+            items,
+            summary: {
+                total: Number(summaryRow?.total || 0),
+                totalDuplicates: Number(summaryRow?.totalDuplicates || 0),
+                processed24h: Number(processed24hRow?.processed24h || 0),
+            },
+        });
+    });
+
     // GET /api/admin/settings/plugin/:pluginId -- Einstellungen eines Plugins (entschlüsselt)
     fastify.get('/settings/plugin/:pluginId', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { pluginId } = request.params as { pluginId: string };
