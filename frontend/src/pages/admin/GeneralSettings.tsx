@@ -89,6 +89,13 @@ export default function GeneralSettings() {
     } | null>(null);
     const [loading, setLoading] = useState(true);
 
+    const generateRandomSecret = (length: number): string => {
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_';
+        const bytes = new Uint8Array(length);
+        crypto.getRandomValues(bytes);
+        return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join('');
+    };
+
     useEffect(() => {
         loadSettings();
     }, []);
@@ -221,6 +228,25 @@ export default function GeneralSettings() {
         }
     };
 
+    const generateApiKey = () => {
+        setConnector((prev) => ({ ...prev, apiKey: generateRandomSecret(32) }));
+        toast.success('API-Key generiert');
+    };
+
+    const generateHmacSecret = () => {
+        setConnector((prev) => ({ ...prev, hmacSecret: generateRandomSecret(64) }));
+        toast.success('HMAC-Secret generiert');
+    };
+
+    const generateBothSecrets = () => {
+        setConnector((prev) => ({
+            ...prev,
+            apiKey: generateRandomSecret(32),
+            hmacSecret: generateRandomSecret(64),
+        }));
+        toast.success('API-Key und HMAC-Secret generiert');
+    };
+
     const connectorChecks = [
         { label: 'Connector aktiv', ok: connector.enabled },
         { label: 'API-Key gesetzt', ok: connector.apiKey.trim().length > 0 },
@@ -304,20 +330,35 @@ export default function GeneralSettings() {
                         />
 
                         <label className="label">API-Key</label>
-                        <input
-                            className="input"
-                            value={connector.apiKey}
-                            onChange={(e) => setConnector((prev) => ({ ...prev, apiKey: e.target.value }))}
-                            placeholder="Gemeinsamer API-Key"
-                        />
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                            <input
+                                className="input"
+                                value={connector.apiKey}
+                                onChange={(e) => setConnector((prev) => ({ ...prev, apiKey: e.target.value }))}
+                                placeholder="Gemeinsamer API-Key"
+                                style={{ flex: '1 1 320px' }}
+                            />
+                            <button type="button" className="btn btn-secondary" onClick={generateApiKey}>
+                                API-Key generieren
+                            </button>
+                        </div>
 
                         <label className="label">Signatur-Secret (HMAC)</label>
-                        <input
-                            className="input"
-                            value={connector.hmacSecret}
-                            onChange={(e) => setConnector((prev) => ({ ...prev, hmacSecret: e.target.value }))}
-                            placeholder="Gemeinsames HMAC-Secret"
-                        />
+                        <div style={{ display: 'flex', gap: 'var(--space-sm)', flexWrap: 'wrap' }}>
+                            <input
+                                className="input"
+                                value={connector.hmacSecret}
+                                onChange={(e) => setConnector((prev) => ({ ...prev, hmacSecret: e.target.value }))}
+                                placeholder="Gemeinsames HMAC-Secret"
+                                style={{ flex: '1 1 320px' }}
+                            />
+                            <button type="button" className="btn btn-secondary" onClick={generateHmacSecret}>
+                                HMAC-Secret generieren
+                            </button>
+                        </div>
+                        <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>
+                            Wenn du willst, kannst du beide Felder automatisch neu erzeugen.
+                        </div>
 
                         <label className="label">Eventtypen erlauben (optional, kommasepariert)</label>
                         <input
@@ -372,6 +413,9 @@ export default function GeneralSettings() {
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={loadConnectorEvents} disabled={loadingConnectorEvents}>
                                 {loadingConnectorEvents ? 'Lädt...' : 'Events aktualisieren'}
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={generateBothSecrets}>
+                                API-Key + HMAC neu generieren
                             </button>
                         </div>
                     </div>
