@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { config } from '../core/config.js';
+import {
+    loadAccountingConnectorSettings,
+    normalizeIncomingEventType,
+} from '../core/accountingConnectorSettings.js';
 
 type AccountingEventPayload = {
     event_id?: unknown;
@@ -46,13 +49,6 @@ function parseSignature(headerValue: string): string | null {
 }
 
 export default async function accountingConnectorRoutes(fastify: FastifyInstance): Promise<void> {
-    const apiKeyHeaderName = String(config.accountingConnector.apiKeyHeaderName || 'X-API-Key').trim() || 'X-API-Key';
-    const apiKeyHeaderLookup = apiKeyHeaderName.toLowerCase();
-    const expectedApiKey = String(config.accountingConnector.apiKey || '').trim();
-    const expectedHmacSecret = String(config.accountingConnector.hmacSecret || '').trim();
-    const timestampToleranceSec = normalizePositiveInt(config.accountingConnector.timestampToleranceSec, 300);
-    const nonceTtlSec = normalizePositiveInt(config.accountingConnector.nonceTtlSec, 300);
-
     fastify.addContentTypeParser(
         /^application\/(?:json|[a-zA-Z0-9!#$&^_.+-]+\+json)(?:;|$)/,
         { parseAs: 'buffer' },
@@ -62,12 +58,23 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
     );
 
     fastify.post('/events', {
-        bodyLimit: normalizePositiveInt(config.accountingConnector.maxPayloadBytes, 1024 * 1024),
+        bodyLimit: 10 * 1024 * 1024,
         config: {
             policy: { public: true },
             rateLimit: { max: 60, timeWindow: '1 minute' },
         },
     }, async (request: FastifyRequest, reply: FastifyReply) => {
+        const runtimeConfig = await loadAccountingConnectorSettings(fastify.db);
+        const apiKeyHeaderLookup = runtimeConfig.apiKeyHeaderName.toLowerCase();
+        const expectedApiKey = runtimeConfig.apiKey;
+        const expectedHmacSecret = runtimeConfig.hmacSecret;
+        const timestampToleranceSec = normalizePositiveInt(runtimeConfig.timestampToleranceSec, 300);
+        const nonceTtlSec = normalizePositiveInt(runtimeConfig.nonceTtlSec, 300);
+
+        if (!runtimeConfig.enabled) {
+            return reply.status(503).send({ ok: false, error: 'Connector disabled' });
+        }
+
         if (!expectedApiKey || !expectedHmacSecret) {
             request.log.error('Accounting-Connector nicht konfiguriert: API-Key oder HMAC-Secret fehlt');
             return reply.status(503).send({ ok: false, error: 'Connector not configured' });
@@ -117,6 +124,9 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         }
 
         const rawBody = asRawBodyBuffer(request.body);
+        if (rawBody.length > runtimeConfig.maxPayloadBytes) {
+            return reply.status(413).send({ ok: false, error: 'Payload too large' });
+        }
         const calculatedBodySha = crypto.createHash('sha256').update(rawBody).digest('hex');
         if (!constantTimeEqual(calculatedBodySha, bodyShaHeader)) {
             return reply.status(401).send({ ok: false, error: 'Body hash mismatch' });
@@ -140,6 +150,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
 
         const payloadEventId = String(payload?.event_id || '').trim();
         const eventType = String(payload?.event_type || '').trim();
+        const normalizedEventType = normalizeIncomingEventType(eventType);
         const eventId = payloadEventId || eventIdHeader;
 
         if (!eventId || !eventType) {
@@ -148,6 +159,13 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
 
         if (eventIdHeader && payloadEventId && eventIdHeader !== payloadEventId) {
             return reply.status(400).send({ ok: false, error: 'event_id header/body mismatch' });
+        }
+        if (runtimeConfig.allowedEventTypes.length > 0 && !runtimeConfig.allowedEventTypes.includes(normalizedEventType)) {
+            return reply.status(202).send({
+                ok: true,
+                event_id: eventId,
+                status: 'ignored_event_type',
+            });
         }
 
         const db = fastify.db;

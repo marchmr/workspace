@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID } from 'crypto';
 import { createReadStream } from 'fs';
 import fs from 'fs/promises';
 import path from 'path';
@@ -8,6 +8,11 @@ import { requirePermission } from '../core/permissions.js';
 import { hashPassword } from '../core/auth.js';
 import { encrypt, decrypt } from '../core/encryption.js';
 import { config } from '../core/config.js';
+import {
+    ACCOUNTING_CONNECTOR_SETTING_KEYS,
+    buildAccountingConnectorEndpointUrl,
+    loadAccountingConnectorSettings,
+} from '../core/accountingConnectorSettings.js';
 import { decryptUserSensitiveFields, encryptUserSensitiveFields, hashEmail } from '../core/userSensitiveFields.js';
 import { createUpdateTask, getUpdateTask, runUpdateTask } from '../services/updateTasks.js';
 
@@ -1021,6 +1026,170 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         }, request);
 
         return reply.send({ success: true });
+    });
+
+    // GET /api/admin/settings/accounting-connector
+    fastify.get('/settings/accounting-connector', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
+        const connector = await loadAccountingConnectorSettings(db);
+        return reply.send({
+            enabled: connector.enabled,
+            apiKeyHeaderName: connector.apiKeyHeaderName,
+            apiKey: connector.apiKey,
+            hmacSecret: connector.hmacSecret,
+            timestampToleranceSec: connector.timestampToleranceSec,
+            nonceTtlSec: connector.nonceTtlSec,
+            maxPayloadBytes: connector.maxPayloadBytes,
+            publicBaseUrl: connector.publicBaseUrl,
+            allowedEventTypes: connector.allowedEventTypes,
+            endpointPath: '/api/accounting/events',
+            endpointUrl: buildAccountingConnectorEndpointUrl(connector.publicBaseUrl),
+            hasApiKey: Boolean(connector.apiKey),
+            hasHmacSecret: Boolean(connector.hmacSecret),
+        });
+    });
+
+    // PUT /api/admin/settings/accounting-connector
+    fastify.put('/settings/accounting-connector', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const payload = (request.body || {}) as Record<string, unknown>;
+
+        const enabled = payload.enabled === undefined ? true : Boolean(payload.enabled);
+        const apiKeyHeaderName = String(payload.apiKeyHeaderName || '').trim() || 'X-API-Key';
+        const apiKey = String(payload.apiKey || '').trim();
+        const hmacSecret = String(payload.hmacSecret || '').trim();
+        const timestampToleranceSec = Number.parseInt(String(payload.timestampToleranceSec ?? ''), 10);
+        const nonceTtlSec = Number.parseInt(String(payload.nonceTtlSec ?? ''), 10);
+        const maxPayloadBytes = Number.parseInt(String(payload.maxPayloadBytes ?? ''), 10);
+        const publicBaseUrl = String(payload.publicBaseUrl || '').trim();
+        const allowedEventTypesRaw = Array.isArray(payload.allowedEventTypes)
+            ? payload.allowedEventTypes.map((v) => String(v || '').trim().toLowerCase()).filter(Boolean)
+            : String(payload.allowedEventTypes || '')
+                .split(',')
+                .map((v) => v.trim().toLowerCase())
+                .filter(Boolean);
+        const allowedEventTypes = Array.from(new Set(allowedEventTypesRaw));
+
+        if (!/^[A-Za-z0-9-]{1,100}$/.test(apiKeyHeaderName)) {
+            return reply.status(400).send({ error: 'API-Key Header Name ist ungültig' });
+        }
+        if (!Number.isFinite(timestampToleranceSec) || timestampToleranceSec < 30 || timestampToleranceSec > 3600) {
+            return reply.status(400).send({ error: 'Timestamp-Fenster muss zwischen 30 und 3600 Sekunden liegen' });
+        }
+        if (!Number.isFinite(nonceTtlSec) || nonceTtlSec < 30 || nonceTtlSec > 3600) {
+            return reply.status(400).send({ error: 'Nonce-TTL muss zwischen 30 und 3600 Sekunden liegen' });
+        }
+        if (!Number.isFinite(maxPayloadBytes) || maxPayloadBytes < 1024 || maxPayloadBytes > 10 * 1024 * 1024) {
+            return reply.status(400).send({ error: 'Max Payload muss zwischen 1024 und 10485760 Bytes liegen' });
+        }
+        if (enabled && (!apiKey || !hmacSecret)) {
+            return reply.status(400).send({ error: 'API-Key und Signatur-Secret sind erforderlich, wenn der Connector aktiv ist' });
+        }
+        if (publicBaseUrl) {
+            try {
+                const parsed = new URL(publicBaseUrl);
+                if (parsed.protocol !== 'https:') {
+                    return reply.status(400).send({ error: 'Connector Base URL muss mit https:// beginnen' });
+                }
+            } catch {
+                return reply.status(400).send({ error: 'Connector Base URL ist ungültig' });
+            }
+        }
+
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.enabled, enabled ? 'true' : 'false', 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.apiKeyHeaderName, apiKeyHeaderName, 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.apiKey, apiKey, 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.hmacSecret, hmacSecret, 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.timestampToleranceSec, String(timestampToleranceSec), 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.nonceTtlSec, String(nonceTtlSec), 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.maxPayloadBytes, String(maxPayloadBytes), 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.publicBaseUrl, publicBaseUrl, 'integrations');
+        await setGlobalSetting(ACCOUNTING_CONNECTOR_SETTING_KEYS.allowedEventTypes, allowedEventTypes.join(','), 'integrations');
+
+        await fastify.audit.log({
+            action: 'admin.settings.accounting_connector.updated',
+            category: 'admin',
+            entityType: 'settings',
+            entityId: 'accounting.connector',
+            newState: {
+                enabled,
+                apiKeyHeaderName,
+                hasApiKey: Boolean(apiKey),
+                hasHmacSecret: Boolean(hmacSecret),
+                timestampToleranceSec,
+                nonceTtlSec,
+                maxPayloadBytes,
+                publicBaseUrl,
+                allowedEventTypes,
+            },
+        }, request);
+
+        const connector = await loadAccountingConnectorSettings(db);
+        return reply.send({
+            success: true,
+            endpointPath: '/api/accounting/events',
+            endpointUrl: buildAccountingConnectorEndpointUrl(connector.publicBaseUrl),
+        });
+    });
+
+    // POST /api/admin/settings/accounting-connector/test
+    fastify.post('/settings/accounting-connector/test', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
+        const connector = await loadAccountingConnectorSettings(db);
+        if (!connector.enabled) {
+            return reply.status(400).send({ ok: false, error: 'Connector ist deaktiviert' });
+        }
+        if (!connector.apiKey || !connector.hmacSecret) {
+            return reply.status(400).send({ ok: false, error: 'API-Key oder Signatur-Secret fehlen' });
+        }
+
+        const eventId = `evt_test_${Date.now()}`;
+        const timestamp = new Date().toISOString();
+        const nonce = `nonce_${Date.now()}_${Math.round(Math.random() * 100000)}`;
+        const payload = {
+            event_id: eventId,
+            event_type: 'rechnung.created',
+            occurred_at: timestamp,
+            instance: { name: 'hammer-core-selftest' },
+            document: { id: 0, nummer: 'TEST-0', status: 'finalisiert', datum: timestamp.slice(0, 10), betrag_brutto: 0, waehrung: 'EUR' },
+            customer: { id: 0, customer_number: 'TEST', name: 'Connector Testkunde', kind: 'firma' },
+        };
+        const raw = JSON.stringify(payload);
+        const bodySha = createHash('sha256').update(raw, 'utf8').digest('hex');
+        const signature = createHmac('sha256', connector.hmacSecret)
+            .update(`${timestamp}.${nonce}.${bodySha}`, 'utf8')
+            .digest('hex');
+
+        const headers: Record<string, string> = {
+            'content-type': 'application/json',
+            'x-hammer-event-id': eventId,
+            'x-hammer-timestamp': timestamp,
+            'x-hammer-nonce': nonce,
+            'x-hammer-body-sha256': bodySha,
+            'x-hammer-signature-alg': 'hmac-sha256',
+            'x-hammer-signature': `v1=${signature}`,
+        };
+        headers[connector.apiKeyHeaderName.toLowerCase()] = connector.apiKey;
+
+        const testResponse = await fastify.inject({
+            method: 'POST',
+            url: '/api/accounting/events',
+            payload: raw,
+            headers,
+        });
+
+        let parsed: any = null;
+        try {
+            parsed = JSON.parse(testResponse.body || '{}');
+        } catch {
+            parsed = { raw: testResponse.body };
+        }
+
+        return reply.send({
+            ok: testResponse.statusCode >= 200 && testResponse.statusCode < 300,
+            statusCode: testResponse.statusCode,
+            response: parsed,
+            eventId,
+            endpointPath: '/api/accounting/events',
+            endpointUrl: buildAccountingConnectorEndpointUrl(connector.publicBaseUrl),
+        });
     });
 
     // GET /api/admin/settings/plugin/:pluginId -- Einstellungen eines Plugins (entschlüsselt)
