@@ -438,10 +438,12 @@ async function upsertAccountingDocumentRecord(args: {
         updated_at: now,
     };
 
+    const normalizedEventType = normalizeIncomingEventType(eventType);
     const existing = await trx('accounting_connector_documents')
         .where({ record_key: parsed.recordKey, tenant_id: parsed.tenantId })
         .first(
             'id',
+            'document_id',
             'document_number',
             'document_status',
             'payment_status',
@@ -464,32 +466,72 @@ async function upsertAccountingDocumentRecord(args: {
             'pdf_storage_path',
         );
 
-    if (existing?.id) {
+    let targetExisting = existing;
+    if (!targetExisting?.id && normalizedEventType === 'document.payment_status_changed') {
+        targetExisting = await trx('accounting_connector_documents')
+            .where({ tenant_id: parsed.tenantId, document_category: 'rechnung' })
+            .andWhere(function paymentMatch(this: any) {
+                if (parsed.documentId) this.orWhere('document_id', parsed.documentId);
+                if (parsed.documentNumber) this.orWhere('document_number', parsed.documentNumber);
+                if (parsed.sourceInvoiceId) this.orWhere('document_id', parsed.sourceInvoiceId);
+                if (parsed.relatedInvoiceId) this.orWhere('document_id', parsed.relatedInvoiceId);
+                if (parsed.sourceInvoiceId) this.orWhere('source_invoice_id', parsed.sourceInvoiceId);
+                if (parsed.relatedInvoiceId) this.orWhere('related_invoice_id', parsed.relatedInvoiceId);
+            })
+            .orderBy('updated_at', 'desc')
+            .first(
+                'id',
+                'document_id',
+                'document_number',
+                'document_status',
+                'payment_status',
+                'amount_total',
+                'amount_paid',
+                'amount_open',
+                'currency',
+                'document_date',
+                'due_date',
+                'paid_at',
+                'finalized_at',
+                'entity_id',
+                'customer_id',
+                'customer_number',
+                'source_invoice_id',
+                'related_invoice_id',
+                'source_credit_id',
+                'pdf_file_name',
+                'pdf_sha256',
+                'pdf_storage_path',
+            );
+    }
+
+    if (targetExisting?.id) {
         const mergedRow = {
             ...baseRow,
-            document_number: parsed.documentNumber ?? existing.document_number ?? null,
-            document_status: parsed.documentStatus ?? existing.document_status ?? null,
-            payment_status: parsed.paymentStatus ?? existing.payment_status ?? null,
-            amount_total: parsed.amountTotal ?? existing.amount_total ?? null,
-            amount_paid: parsed.amountPaid ?? existing.amount_paid ?? null,
-            amount_open: parsed.amountOpen ?? existing.amount_open ?? null,
-            currency: parsed.currency ?? existing.currency ?? null,
-            document_date: parsed.documentDate ?? existing.document_date ?? null,
-            due_date: parsed.dueDate ?? existing.due_date ?? null,
-            paid_at: parsed.paidAt ?? existing.paid_at ?? null,
-            finalized_at: parsed.finalizedAt ?? existing.finalized_at ?? null,
-            entity_id: parsed.entityId ?? existing.entity_id ?? null,
-            customer_id: parsed.customerId ?? existing.customer_id ?? null,
-            customer_number: parsed.customerNumber ?? existing.customer_number ?? null,
-            source_invoice_id: parsed.sourceInvoiceId ?? existing.source_invoice_id ?? null,
-            related_invoice_id: parsed.relatedInvoiceId ?? existing.related_invoice_id ?? null,
-            source_credit_id: parsed.sourceCreditId ?? existing.source_credit_id ?? null,
-            pdf_file_name: parsed.pdf?.fileName || existing.pdf_file_name || null,
-            pdf_sha256: parsed.pdf?.sha256 || existing.pdf_sha256 || null,
-            pdf_storage_path: pdfStoragePath || existing.pdf_storage_path || null,
+            document_id: parsed.documentId || targetExisting.document_id || parsed.sourceInvoiceId || parsed.relatedInvoiceId || null,
+            document_number: parsed.documentNumber ?? targetExisting.document_number ?? null,
+            document_status: parsed.documentStatus ?? targetExisting.document_status ?? null,
+            payment_status: parsed.paymentStatus ?? targetExisting.payment_status ?? null,
+            amount_total: parsed.amountTotal ?? targetExisting.amount_total ?? null,
+            amount_paid: parsed.amountPaid ?? targetExisting.amount_paid ?? null,
+            amount_open: parsed.amountOpen ?? targetExisting.amount_open ?? null,
+            currency: parsed.currency ?? targetExisting.currency ?? null,
+            document_date: parsed.documentDate ?? targetExisting.document_date ?? null,
+            due_date: parsed.dueDate ?? targetExisting.due_date ?? null,
+            paid_at: parsed.paidAt ?? targetExisting.paid_at ?? null,
+            finalized_at: parsed.finalizedAt ?? targetExisting.finalized_at ?? null,
+            entity_id: parsed.entityId ?? targetExisting.entity_id ?? null,
+            customer_id: parsed.customerId ?? targetExisting.customer_id ?? null,
+            customer_number: parsed.customerNumber ?? targetExisting.customer_number ?? null,
+            source_invoice_id: parsed.sourceInvoiceId ?? targetExisting.source_invoice_id ?? null,
+            related_invoice_id: parsed.relatedInvoiceId ?? targetExisting.related_invoice_id ?? null,
+            source_credit_id: parsed.sourceCreditId ?? targetExisting.source_credit_id ?? null,
+            pdf_file_name: parsed.pdf?.fileName || targetExisting.pdf_file_name || null,
+            pdf_sha256: parsed.pdf?.sha256 || targetExisting.pdf_sha256 || null,
+            pdf_storage_path: pdfStoragePath || targetExisting.pdf_storage_path || null,
         };
         await trx('accounting_connector_documents')
-            .where({ id: existing.id })
+            .where({ id: targetExisting.id })
             .update(mergedRow);
         return;
     }

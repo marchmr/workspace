@@ -104,6 +104,9 @@ export default function CustomerListPage() {
                 setCustomers(data.items || []);
                 setTotalPages(data.pagination?.totalPages || 1);
                 setTotal(data.pagination?.total || 0);
+            } else {
+                const payload = await res.json().catch(() => ({}));
+                toast.error(payload?.error || `Kundensuche fehlgeschlagen (HTTP ${res.status})`);
             }
 
             // Favoriten laden
