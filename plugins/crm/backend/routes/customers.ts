@@ -125,6 +125,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
     const db = getDatabase();
     let contactsTableAvailable: boolean | null = null;
     let contactsPrimaryFlagAvailable: boolean | null = null;
+    let customersMobileColumnAvailable: boolean | null = null;
 
     async function canJoinPrimaryContacts(): Promise<boolean> {
         if (contactsTableAvailable === null) {
@@ -135,6 +136,13 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             contactsPrimaryFlagAvailable = await db.schema.hasColumn('crm_contacts', 'is_primary').catch(() => false);
         }
         return Boolean(contactsPrimaryFlagAvailable);
+    }
+
+    async function hasCustomersMobileColumn(): Promise<boolean> {
+        if (customersMobileColumnAvailable === null) {
+            customersMobileColumnAvailable = await db.schema.hasColumn('crm_customers', 'mobile').catch(() => false);
+        }
+        return Boolean(customersMobileColumnAvailable);
     }
 
     // ─── GET / — Kundenliste mit Paginierung, Suche, Filter ───
@@ -151,6 +159,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             const category = query.category || '';
             const sortBy = query.sortBy || 'created_at';
             const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+            const hasMobileColumn = await hasCustomersMobileColumn();
 
             let baseQuery = db('crm_customers').where('crm_customers.tenant_id', tenantId);
 
@@ -163,8 +172,11 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
                         .orWhere('first_name', 'like', `%${safeTerm}%`)
                         .orWhere('last_name', 'like', `%${safeTerm}%`)
                         .orWhere('email', 'like', `%${safeTerm}%`)
-                        .orWhere('phone', 'like', `%${safeTerm}%`)
-                        .orWhere('mobile', 'like', `%${safeTerm}%`)
+                        .orWhere('phone', 'like', `%${safeTerm}%`);
+                    if (hasMobileColumn) {
+                        this.orWhere('mobile', 'like', `%${safeTerm}%`);
+                    }
+                    this
                         .orWhere('city', 'like', `%${safeTerm}%`);
                 });
             }
@@ -880,6 +892,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
     fastify.get('/search', { preHandler: [requirePermission('crm.view')] }, async (request: FastifyRequest, reply: FastifyReply) => {
         const tenantId = (request.user as any).tenantId;
         const { q } = request.query as { q?: string };
+        const hasMobileColumn = await hasCustomersMobileColumn();
 
         if (!q || q.length < 2) return reply.send({ results: [] });
 
@@ -893,8 +906,10 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
                     .orWhere('first_name', 'like', `%${safeTerm}%`)
                     .orWhere('last_name', 'like', `%${safeTerm}%`)
                     .orWhere('email', 'like', `%${safeTerm}%`)
-                    .orWhere('phone', 'like', `%${safeTerm}%`)
-                    .orWhere('mobile', 'like', `%${safeTerm}%`);
+                    .orWhere('phone', 'like', `%${safeTerm}%`);
+                if (hasMobileColumn) {
+                    this.orWhere('mobile', 'like', `%${safeTerm}%`);
+                }
             })
             .orderBy('company_name', 'asc')
             .limit(10)
