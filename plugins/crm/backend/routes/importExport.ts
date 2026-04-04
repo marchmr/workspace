@@ -716,7 +716,7 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
 
         // Get all customer events from accounting connector
         const events = await db('accounting_connector_events')
-            .whereIn('event_type', ['customer.created', 'customer.updated'])
+            .whereIn('event_type', ['customer.created', 'customer.updated', 'customer.exported'])
             .orderBy('created_at', 'desc');
 
         const customers: any[] = [];
@@ -731,12 +731,13 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
 
             // Check if customer already exists
             const existingCustomer = await db('crm_customers')
-                .where('customer_number', customerData.id)
+                .where('tenant_id', (request.user as any).tenantId)
+                .where('customer_number', String(customerData.id))
                 .first();
 
             const customer = {
                 customer_number: customerData.id,
-                company: customerData.company || '',
+                company: customerData.company || customerData.name || '',
                 first_name: customerData.first_name || '',
                 last_name: customerData.last_name || '',
                 email: customerData.email || '',
@@ -781,13 +782,18 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
 
         // Get all customer events from accounting connector
         const events = await db('accounting_connector_events')
-            .whereIn('event_type', ['customer.created', 'customer.updated'])
+            .whereIn('event_type', ['customer.created', 'customer.updated', 'customer.exported'])
             .orderBy('created_at', 'desc');
 
         let imported = 0;
         let updated = 0;
         const errors: string[] = [];
         const processed = new Set<string>();
+        const user = request.user as any;
+        const tenantId = Number(user?.tenantId || 0);
+        if (!tenantId) {
+            return reply.status(400).send({ error: 'Mandanten-Kontext fehlt' });
+        }
 
         for (const event of events) {
             try {
@@ -799,20 +805,24 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
 
                 // Check if customer already exists
                 const existingCustomer = await db('crm_customers')
-                    .where('customer_number', customerData.id)
+                    .where('tenant_id', tenantId)
+                    .where('customer_number', String(customerData.id))
                     .first();
 
                 const customerRecord: any = {
-                    customer_number: customerData.id,
-                    company: customerData.company || '',
+                    tenant_id: tenantId,
+                    customer_number: String(customerData.id),
+                    type: (String(customerData.kind || '').toLowerCase() === 'person' || customerData.first_name || customerData.last_name) ? 'person' : 'company',
+                    company_name: customerData.company || customerData.name || null,
                     first_name: customerData.first_name || '',
                     last_name: customerData.last_name || '',
                     email: customerData.email || '',
                     phone: customerData.phone || '',
-                    address: customerData.address?.street || '',
+                    street: customerData.address?.street || (typeof customerData.address === 'string' ? customerData.address : ''),
                     city: customerData.address?.city || '',
                     zip: customerData.address?.zip || '',
                     country: customerData.address?.country || 'Deutschland',
+                    status: 'active',
                     updated_at: new Date()
                 };
 
@@ -831,8 +841,18 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
 
                 // Handle contact person if present
                 if (customerData.contact_person) {
+                    const customerId = existingCustomer
+                        ? existingCustomer.id
+                        : (await db('crm_customers')
+                            .where({ tenant_id: tenantId, customer_number: String(customerData.id) })
+                            .first())?.id;
+                    if (!customerId) {
+                        errors.push(`Error processing customer ${String(customerData.id)}: customer_id not found`);
+                        continue;
+                    }
+
                     const contactRecord: any = {
-                        customer_id: existingCustomer ? existingCustomer.id : (await db('crm_customers').where('customer_number', customerData.id).first()).id,
+                        customer_id: customerId,
                         first_name: customerData.contact_person.first_name || '',
                         last_name: customerData.contact_person.last_name || '',
                         email: customerData.contact_person.email || '',

@@ -32,6 +32,7 @@ interface CustomerData {
 
 export default async function accountingRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
+    console.log('[Accounting] Plugin geladen');
 
     // GET /api/plugins/accounting/documents - Dokumente für einen Kunden
     fastify.get('/documents', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -133,5 +134,4 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             return reply.status(500).send({ error: 'Internal server error' });
         }
     });
-}</content>
-<parameter name="filePath">/Users/marchammer/Documents/workspace webdesign hammer/Hauptseite/plugins/accounting/backend/index.ts
+}
