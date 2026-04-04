@@ -50,13 +50,21 @@ function displayStatus(item: AccountingDocumentItem): string {
     return raw;
 }
 
-export default function CustomerAccountingDocumentsTile({ customerId }: { customerId: number }) {
+export default function CustomerAccountingDocumentsTile({
+    customerId,
+    category,
+    title,
+}: {
+    customerId: number;
+    category: 'rechnung' | 'angebot' | 'gutschrift' | 'mahnung' | 'storno';
+    title: string;
+}) {
     const [items, setItems] = useState<AccountingDocumentItem[]>([]);
     const [loading, setLoading] = useState(true);
 
     const load = useCallback(async () => {
         try {
-            const res = await apiFetch(`/api/plugins/crm/customers/${customerId}/accounting-documents`);
+            const res = await apiFetch(`/api/plugins/crm/customers/${customerId}/accounting-documents?category=${encodeURIComponent(category)}`);
             if (res.ok) {
                 const data = await res.json();
                 setItems(data.items || []);
@@ -67,7 +75,7 @@ export default function CustomerAccountingDocumentsTile({ customerId }: { custom
             setItems([]);
         }
         setLoading(false);
-    }, [customerId]);
+    }, [category, customerId]);
 
     useEffect(() => {
         void load();
@@ -82,7 +90,7 @@ export default function CustomerAccountingDocumentsTile({ customerId }: { custom
     return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderBottom: '1px solid var(--color-border)' }}>
-                <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>Dokumente ({items.length})</span>
+                <span style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)' }}>{title} ({items.length})</span>
                 <button
                     className="btn btn-secondary btn-sm"
                     type="button"
@@ -97,7 +105,7 @@ export default function CustomerAccountingDocumentsTile({ customerId }: { custom
                 {loading ? (
                     <div className="text-muted" style={{ padding: 12, textAlign: 'center', fontSize: 12 }}>Laden...</div>
                 ) : sorted.length === 0 ? (
-                    <div className="text-muted" style={{ padding: 12, textAlign: 'center', fontSize: 12 }}>Keine Accounting-Dokumente für diesen Kunden gefunden</div>
+                    <div className="text-muted" style={{ padding: 12, textAlign: 'center', fontSize: 12 }}>Keine {title.toLowerCase()} für diesen Kunden gefunden</div>
                 ) : sorted.map((item) => (
                     <div key={item.recordKey} style={{ padding: '8px 12px', borderBottom: '1px solid var(--color-border)', fontSize: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>

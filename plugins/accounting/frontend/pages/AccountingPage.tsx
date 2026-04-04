@@ -218,30 +218,31 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
             {/* Kundendaten */}
             {customer && (
                 <div className="bg-white shadow rounded-lg p-6 mb-6">
-                    <h2 className="text-xl font-semibold mb-4">Kundendaten</h2>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                        <h2 className="text-xl font-semibold">Kundendaten</h2>
+                        <span className="text-xs text-gray-500" style={{ padding: '4px 10px', border: '1px solid #e5e7eb', borderRadius: 999 }}>
+                            {customer.kind === 'person' ? 'Person' : 'Firma'}
+                        </span>
+                    </div>
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                            <div>
-                                <dt className="text-xs uppercase tracking-wide text-gray-500">Name</dt>
-                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.name || '-'}</dd>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2 text-sm">
+                            <div className="text-gray-500">Name</div>
+                            <div className="font-medium text-gray-900">{customer.name || '-'}</div>
+
+                            <div className="text-gray-500">Kundennummer</div>
+                            <div className="font-medium text-gray-900">{customer.customerNumber || '-'}</div>
+
+                            <div className="text-gray-500">E-Mail</div>
+                            <div className="font-medium text-gray-900 break-all">{customer.email || '-'}</div>
+
+                            <div className="text-gray-500">Ansprechperson</div>
+                            <div className="font-medium text-gray-900">{customer.contactPerson || '-'}</div>
+
+                            <div className="text-gray-500 md:col-span-2" style={{ marginTop: 6 }}>Adresse</div>
+                            <div className="font-medium text-gray-900 md:col-span-2 whitespace-pre-line">
+                                {customer.address || '-'}
                             </div>
-                            <div>
-                                <dt className="text-xs uppercase tracking-wide text-gray-500">Kundennummer</dt>
-                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.customerNumber || '-'}</dd>
-                            </div>
-                            <div>
-                                <dt className="text-xs uppercase tracking-wide text-gray-500">E-Mail</dt>
-                                <dd className="text-base font-medium text-gray-900 mt-1 break-all">{customer.email || '-'}</dd>
-                            </div>
-                            <div>
-                                <dt className="text-xs uppercase tracking-wide text-gray-500">Ansprechperson</dt>
-                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.contactPerson || '-'}</dd>
-                            </div>
-                            <div className="md:col-span-2">
-                                <dt className="text-xs uppercase tracking-wide text-gray-500">Adresse</dt>
-                                <dd className="text-base font-medium text-gray-900 mt-1 whitespace-pre-line">{customer.address || '-'}</dd>
-                            </div>
-                        </dl>
+                        </div>
                     </div>
                 </div>
             )}

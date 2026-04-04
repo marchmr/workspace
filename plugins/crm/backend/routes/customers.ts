@@ -56,12 +56,18 @@ function resolveAccountingPdfPath(relativePath: string): string {
     return absolutePath;
 }
 
-async function removeAccountingDataForCustomer(db: any, customerId: number, customerNumber: string | null): Promise<{ documentsDeleted: number; filesDeleted: number }> {
+async function removeAccountingDataForCustomer(
+    db: any,
+    tenantId: number,
+    customerId: number,
+    customerNumber: string | null,
+): Promise<{ documentsDeleted: number; filesDeleted: number }> {
     const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
     if (!hasProjection) return { documentsDeleted: 0, filesDeleted: 0 };
 
     const identifiers = [String(customerId), asText(customerNumber)].filter(Boolean);
     const rows = await db('accounting_connector_documents')
+        .where('tenant_id', tenantId)
         .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno', 'customer'])
         .andWhere(function customerFilter(this: any) {
             this.whereIn('customer_id', identifiers)
@@ -88,11 +94,11 @@ async function removeAccountingDataForCustomer(db: any, customerId: number, cust
     const ids = rows.map((row: any) => Number(row.id)).filter((value: number) => Number.isInteger(value) && value > 0);
     if (ids.length === 0) return { documentsDeleted: 0, filesDeleted };
 
-    const documentsDeleted = Number(await db('accounting_connector_documents').whereIn('id', ids).delete() || 0);
+    const documentsDeleted = Number(await db('accounting_connector_documents').where({ tenant_id: tenantId }).whereIn('id', ids).delete() || 0);
     return { documentsDeleted, filesDeleted };
 }
 
-async function syncAccountingCustomerNumber(db: any, oldNumber: string, nextNumber: string): Promise<number> {
+async function syncAccountingCustomerNumber(db: any, tenantId: number, oldNumber: string, nextNumber: string): Promise<number> {
     const previous = asText(oldNumber);
     const next = asText(nextNumber);
     if (!previous || !next || previous === next) return 0;
@@ -101,6 +107,7 @@ async function syncAccountingCustomerNumber(db: any, oldNumber: string, nextNumb
     if (!hasProjection) return 0;
 
     const updated = await db('accounting_connector_documents')
+        .where('tenant_id', tenantId)
         .where('customer_number', previous)
         .update({
             customer_number: next,
@@ -260,7 +267,13 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
     // ─── GET /:id/accounting-documents — Accounting-Dokumente für einen CRM-Kunden ───
     fastify.get('/:id/accounting-documents', { preHandler: [requirePermission('crm.view')] }, async (request: FastifyRequest, reply: FastifyReply) => {
         const { id } = request.params as { id: string };
+        const query = request.query as { category?: string };
         const tenantId = (request.user as any).tenantId;
+        const category = asText(query?.category).toLowerCase();
+        const allowedCategories = ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'];
+        if (category && !allowedCategories.includes(category)) {
+            return reply.status(400).send({ error: 'Ungültige Kategorie' });
+        }
 
         const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
         if (!hasProjection) {
@@ -276,7 +289,8 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
 
         const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
         const rows = await db('accounting_connector_documents')
-            .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
+            .where('tenant_id', tenantId)
+            .whereIn('document_category', category ? [category] : allowedCategories)
             .andWhere(function customerFilter(this: any) {
                 this.whereIn('customer_id', identifiers)
                     .orWhereIn('customer_number', identifiers)
@@ -342,6 +356,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
 
         const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
         const row = await db('accounting_connector_documents')
+            .where('tenant_id', tenantId)
             .where({ record_key: recordKey })
             .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
             .andWhere(function customerFilter(this: any) {
@@ -625,7 +640,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         }
 
         await db('crm_customers').where('id', id).update(update);
-        await syncAccountingCustomerNumber(db, asText(existing.customer_number), nextCustomerNumber);
+        await syncAccountingCustomerNumber(db, Number(tenantId), asText(existing.customer_number), nextCustomerNumber);
         const customer = await db('crm_customers').where('id', id).first();
 
         // Audit-Log
@@ -696,7 +711,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         }
 
         await db('crm_customers').where('id', id).update(update);
-        await syncAccountingCustomerNumber(db, asText(existing.customer_number), nextCustomerNumber);
+        await syncAccountingCustomerNumber(db, Number(tenantId), asText(existing.customer_number), nextCustomerNumber);
 
         // Status-Änderung als Aktivität loggen
         if (update.status && update.status !== existing.status) {
@@ -738,6 +753,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
 
         const accountingCleanup = await removeAccountingDataForCustomer(
             db,
+            Number(tenantId),
             Number(existing.id),
             asText(existing.customer_number) || null,
         );
@@ -833,6 +849,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         for (const customer of customers) {
             const accountingCleanup = await removeAccountingDataForCustomer(
                 db,
+                Number(tenantId),
                 Number(customer.id),
                 asText(customer.customer_number) || null,
             );

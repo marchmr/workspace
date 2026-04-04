@@ -313,6 +313,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
             if (hasProjectionTable) {
                 const rows = await db('accounting_connector_documents')
+                    .where('tenant_id', Number(session.tenant_id))
                     .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
                     .andWhere(function customerFilter(this: any) {
                         this.whereIn('customer_id', identifiers)
@@ -419,6 +420,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
 
             const row = await db('accounting_connector_documents')
                 .where({ record_key: documentRecordId })
+                .where('tenant_id', Number(session.tenant_id))
                 .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
                 .andWhere(function customerFilter(this: any) {
                     this.whereIn('customer_id', identifiers)
@@ -486,6 +488,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
             if (hasProjectionTable) {
                 const customerRecord = await db('accounting_connector_documents')
+                    .where('tenant_id', Number(session.tenant_id))
                     .where('document_category', 'customer')
                     .andWhere(function customerFilter(this: any) {
                         this.whereIn('customer_id', identifiers)

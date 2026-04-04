@@ -25,6 +25,7 @@ type ParsedPdf = {
 };
 
 type ParsedAccountingEvent = {
+    tenantId: number;
     source: string;
     category: AccountingDocumentCategory;
     documentId: string;
@@ -158,6 +159,22 @@ function decodeBase64Strict(input: string): Buffer | null {
     }
 }
 
+async function resolveTenantIdForPayload(db: any, payload: AccountingEventPayload): Promise<number | null> {
+    const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
+    const direct = Number(payload?.tenant_id ?? payload?.tenantId ?? customer?.tenant_id ?? customer?.tenantId ?? 0);
+    if (Number.isInteger(direct) && direct > 0) return direct;
+
+    const activeTenants = await db('tenants')
+        .where('is_active', true)
+        .select('id');
+    const ids = activeTenants
+        .map((row: any) => Number(row.id))
+        .filter((id: number) => Number.isInteger(id) && id > 0);
+    if (ids.length === 1) return ids[0];
+
+    return null;
+}
+
 async function storePdfFile(parsed: ParsedAccountingEvent): Promise<string | null> {
     if (!parsed.pdf) return null;
 
@@ -176,7 +193,7 @@ async function storePdfFile(parsed: ParsedAccountingEvent): Promise<string | nul
     return path.relative(config.app.uploadsDir, absolutePath).replace(/\\/g, '/');
 }
 
-function parseIncomingAccountingPayload(payload: AccountingEventPayload): ParsedAccountingEvent {
+function parseIncomingAccountingPayload(payload: AccountingEventPayload, tenantId: number): ParsedAccountingEvent {
     const document = payload?.document && typeof payload.document === 'object' ? payload.document as Record<string, unknown> : {};
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
     const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
@@ -251,6 +268,7 @@ function parseIncomingAccountingPayload(payload: AccountingEventPayload): Parsed
     }
 
     return {
+        tenantId,
         source,
         category,
         documentId,
@@ -297,6 +315,7 @@ async function upsertAccountingDocumentRecord(args: {
     const now = new Date();
 
     const baseRow = {
+        tenant_id: parsed.tenantId,
         source: parsed.source,
         document_category: parsed.category,
         document_id: parsed.documentId,
@@ -328,7 +347,7 @@ async function upsertAccountingDocumentRecord(args: {
     };
 
     const existing = await trx('accounting_connector_documents')
-        .where({ record_key: parsed.recordKey })
+        .where({ record_key: parsed.recordKey, tenant_id: parsed.tenantId })
         .first('id');
 
     if (existing?.id) {
@@ -471,7 +490,11 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
 
         let parsedPayload: ParsedAccountingEvent;
         try {
-            parsedPayload = parseIncomingAccountingPayload(payload);
+            const tenantId = await resolveTenantIdForPayload(fastify.db, payload);
+            if (!tenantId) {
+                return reply.status(422).send({ ok: false, error: 'tenant_id ist erforderlich oder muss eindeutig ableitbar sein' });
+            }
+            parsedPayload = parseIncomingAccountingPayload(payload, tenantId);
         } catch (error: any) {
             if (error instanceof ProcessingHttpError) {
                 return reply.status(error.statusCode).send({ ok: false, error: error.message });
@@ -580,6 +603,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                 eventTypeOriginal: parsedPayload.eventTypeOriginal,
                 documentCategory: parsedPayload.category,
                 documentId: parsedPayload.documentId,
+                tenantId: parsedPayload.tenantId,
                 occurredAt: typeof payload?.occurred_at === 'string' ? payload.occurred_at : null,
             },
             tenantId: null,

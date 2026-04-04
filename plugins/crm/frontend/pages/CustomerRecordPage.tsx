@@ -285,7 +285,11 @@ const GRID_COLUMNS = 48;
 const TILE_DEFS: TileDef[] = [
     { key: 'crm.activity-timeline', title: 'Aktivitaeten', defaultW: 24, defaultH: 12, defaultVisible: true },
     { key: 'crm.customer-tickets', title: 'Tickets', defaultW: 24, defaultH: 12, defaultVisible: true },
-    { key: 'crm.customer-accounting-documents', title: 'Dokumente', defaultW: 24, defaultH: 12, defaultVisible: true },
+    { key: 'crm.customer-documents-rechnung', title: 'Rechnungen', defaultW: 24, defaultH: 10, defaultVisible: true },
+    { key: 'crm.customer-documents-angebot', title: 'Angebote', defaultW: 24, defaultH: 10, defaultVisible: true },
+    { key: 'crm.customer-documents-gutschrift', title: 'Gutschriften', defaultW: 24, defaultH: 10, defaultVisible: true },
+    { key: 'crm.customer-documents-mahnung', title: 'Mahnungen', defaultW: 24, defaultH: 10, defaultVisible: true },
+    { key: 'crm.customer-documents-storno', title: 'Stornos', defaultW: 24, defaultH: 10, defaultVisible: true },
     { key: 'crm.customer-contacts', title: 'Ansprechpartner', defaultW: 24, defaultH: 10, defaultVisible: true },
     { key: 'crm.customer-addresses', title: 'Adressen', defaultW: 24, defaultH: 10, defaultVisible: true },
     { key: 'crm.customer-notes', title: 'Notizen', defaultW: 24, defaultH: 10, defaultVisible: true },
@@ -519,7 +523,11 @@ export default function CustomerRecordPage() {
                 </div>
             );
         } else if (def.key === 'crm.customer-tickets' && customer) content = <CustomerTicketsTile customerId={customer.id} />;
-        else if (def.key === 'crm.customer-accounting-documents' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} />;
+        else if (def.key === 'crm.customer-documents-rechnung' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} category="rechnung" title="Rechnungen" />;
+        else if (def.key === 'crm.customer-documents-angebot' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} category="angebot" title="Angebote" />;
+        else if (def.key === 'crm.customer-documents-gutschrift' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} category="gutschrift" title="Gutschriften" />;
+        else if (def.key === 'crm.customer-documents-mahnung' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} category="mahnung" title="Mahnungen" />;
+        else if (def.key === 'crm.customer-documents-storno' && customer) content = <CustomerAccountingDocumentsTile customerId={customer.id} category="storno" title="Stornos" />;
         else if (def.key === 'crm.customer-contacts' && customer) content = <CustomerContactsTile customerId={customer.id} />;
         else if (def.key === 'crm.customer-addresses' && customer) content = <CustomerAddressesTile customerId={customer.id} />;
         else if (def.key === 'crm.customer-notes' && customer) content = <CustomerNotesTile customerId={customer.id} />;
