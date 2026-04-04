@@ -1679,6 +1679,109 @@
     flex-wrap: wrap;
 }
 
+.kp-page .kp-acc-shell {
+    width: min(1280px, 100%);
+    margin: 0 auto;
+    padding: clamp(14px, 2vw, 24px);
+    display: grid;
+    gap: 16px;
+}
+
+.kp-page .kp-acc-customer-card {
+    border: 1px solid #dbe3ef;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #ffffff 0%, #f9fbff 100%);
+    box-shadow: 0 6px 18px rgba(17, 24, 39, 0.06);
+    padding: clamp(14px, 2vw, 22px);
+    display: grid;
+    gap: 14px;
+}
+
+.kp-page .kp-acc-customer-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.kp-page .kp-acc-customer-title {
+    margin: 0;
+    font-size: clamp(1.35rem, 2vw, 1.7rem);
+    line-height: 1.15;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: #1f2a44;
+}
+
+.kp-page .kp-acc-customer-kind {
+    border: 1px solid #cdd8e8;
+    border-radius: 999px;
+    background: #f3f7fd;
+    color: #3b4f75;
+    padding: 4px 12px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.kp-page .kp-acc-customer-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.kp-page .kp-acc-customer-pane {
+    border: 1px solid #e2e8f2;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+}
+
+.kp-page .kp-acc-pane-title {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.2;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #4a5a78;
+}
+
+.kp-page .kp-acc-field-list {
+    display: grid;
+    gap: 10px;
+}
+
+.kp-page .kp-acc-field-row {
+    display: grid;
+    gap: 3px;
+}
+
+.kp-page .kp-acc-field-label {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.2;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: #7a8aa6;
+    font-weight: 700;
+}
+
+.kp-page .kp-acc-field-value {
+    margin: 0;
+    font-size: 1.02rem;
+    line-height: 1.35;
+    color: #1f2a44;
+    font-weight: 600;
+}
+
+.kp-page .kp-acc-field-break {
+    overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
     .kp-page .vp-public-shell {
         width: 100%;
@@ -1901,6 +2004,15 @@
 
     .vp-command-row {
         grid-template-columns: 1fr;
+    }
+
+    .kp-page .kp-acc-customer-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .kp-page .kp-acc-customer-kind {
+        font-size: 0.72rem;
+        padding: 3px 10px;
     }
 }
 
