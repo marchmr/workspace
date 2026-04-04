@@ -162,6 +162,80 @@ function mapConnectorRowToDocument(row: AccountingConnectorDocumentRow): Account
     };
 }
 
+function formatCrmAddress(input: { street?: unknown; zip?: unknown; city?: unknown; country?: unknown }): string {
+    const street = asText(input.street);
+    const zip = asText(input.zip);
+    const city = asText(input.city);
+    const country = asText(input.country);
+
+    const lines: string[] = [];
+    if (street) lines.push(street);
+    const zipCity = [zip, city].filter(Boolean).join(' ').trim();
+    if (zipCity) lines.push(zipCity);
+    if (country) lines.push(country);
+    return lines.join('\n');
+}
+
+async function resolveCustomerFromCrm(
+    db: any,
+    tenantId: number,
+    vpCustomerId: number,
+): Promise<CustomerData | null> {
+    const hasVpCustomers = await db.schema.hasTable('vp_customers').catch(() => false);
+    const hasCrmCustomers = await db.schema.hasTable('crm_customers').catch(() => false);
+    if (!hasVpCustomers || !hasCrmCustomers) return null;
+
+    const vpCustomer = await db('vp_customers')
+        .where({ tenant_id: tenantId, id: vpCustomerId })
+        .first('crm_customer_id');
+    const crmCustomerId = Number(vpCustomer?.crm_customer_id || 0);
+    if (!Number.isInteger(crmCustomerId) || crmCustomerId <= 0) return null;
+
+    const crmCustomer = await db('crm_customers')
+        .where({ tenant_id: tenantId, id: crmCustomerId })
+        .first(
+            'id',
+            'type',
+            'customer_number',
+            'company_name',
+            'first_name',
+            'last_name',
+            'email',
+            'street',
+            'zip',
+            'city',
+            'country',
+        );
+    if (!crmCustomer) return null;
+
+    const hasCrmAddresses = await db.schema.hasTable('crm_addresses').catch(() => false);
+    const mainAddress = hasCrmAddresses
+        ? await db('crm_addresses')
+            .where({ tenant_id: tenantId, customer_id: crmCustomerId, address_type: 'main' })
+            .orderBy('is_default', 'desc')
+            .orderBy('id', 'asc')
+            .first('street', 'zip', 'city', 'country')
+        : null;
+
+    const firstName = asText(crmCustomer.first_name);
+    const lastName = asText(crmCustomer.last_name);
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+    const companyName = asText(crmCustomer.company_name);
+    const name = companyName || fullName || `Kunde #${crmCustomerId}`;
+    const contactPerson = fullName || null;
+    const address = formatCrmAddress(mainAddress || crmCustomer);
+
+    return {
+        id: Number(crmCustomer.id),
+        name,
+        customerNumber: asText(crmCustomer.customer_number),
+        address,
+        kind: asText(crmCustomer.type),
+        contactPerson,
+        email: asText(crmCustomer.email) || null,
+    };
+}
+
 function resolveAccountingPdfPath(relativePath: string): string {
     const uploadsRoot = path.resolve(config.app.uploadsDir);
     const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
@@ -394,6 +468,16 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             if (!session) {
                 return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
             }
+
+            const crmCustomer = await resolveCustomerFromCrm(
+                db,
+                Number(session.tenant_id),
+                Number(session.customer_id),
+            );
+            if (crmCustomer) {
+                return reply.send({ customer: crmCustomer });
+            }
+
             const identifiers = await resolveAccountingCustomerIdentifiers(db, Number(session.tenant_id), Number(session.customer_id));
             if (identifiers.length === 0) {
                 return reply.status(404).send({ error: 'Customer not found' });
