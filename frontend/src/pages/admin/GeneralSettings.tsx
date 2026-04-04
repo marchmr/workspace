@@ -117,24 +117,29 @@ export default function GeneralSettings() {
     }, []);
 
     const loadSettings = async () => {
-        const [settingsRes, connectorRes] = await Promise.all([
-            apiFetch('/api/admin/settings'),
-            apiFetch('/api/admin/settings/accounting-connector'),
-        ]);
+        try {
+            const [settingsResult, connectorResult] = await Promise.allSettled([
+                apiFetch('/api/admin/settings'),
+                apiFetch('/api/admin/settings/accounting-connector'),
+            ]);
 
-        if (settingsRes.ok) {
-            setSettings(await settingsRes.json());
+            if (settingsResult.status === 'fulfilled' && settingsResult.value.ok) {
+                setSettings(await settingsResult.value.json());
+            }
+
+            if (connectorResult.status === 'fulfilled' && connectorResult.value.ok) {
+                const payload = await connectorResult.value.json() as AccountingConnectorSettings;
+                setConnector(payload);
+                setConnectorEventTypesInput((payload.allowedEventTypes || []).join(', '));
+            }
+
+            await loadConnectorEvents();
+            await checkExternalConnection(true);
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Einstellungen konnten nicht vollständig geladen werden');
+        } finally {
+            setLoading(false);
         }
-
-        if (connectorRes.ok) {
-            const payload = await connectorRes.json() as AccountingConnectorSettings;
-            setConnector(payload);
-            setConnectorEventTypesInput((payload.allowedEventTypes || []).join(', '));
-        }
-
-        await loadConnectorEvents();
-        await checkExternalConnection(true);
-        setLoading(false);
     };
 
     const loadConnectorEvents = async () => {
@@ -168,8 +173,6 @@ export default function GeneralSettings() {
         ),
         [user]
     );
-
-    if (loading) return <div className="text-muted">Laden...</div>;
 
     const saveAccountingConnector = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -304,6 +307,8 @@ export default function GeneralSettings() {
         if (Number.isNaN(date.getTime())) return '-';
         return date.toLocaleString('de-DE');
     };
+
+    if (loading) return <div className="text-muted">Laden...</div>;
 
     return (
         <div>
