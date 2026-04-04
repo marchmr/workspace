@@ -105,6 +105,15 @@ function asOptionalText(value: unknown): string | null {
     return normalized ? normalized : null;
 }
 
+function normalizePaymentStatus(value: unknown): string | null {
+    const raw = asText(value).toLowerCase();
+    if (!raw) return null;
+    if (raw === 'partial' || raw === 'partially_paid' || raw === 'teilbezahlt') return 'partial';
+    if (raw === 'paid' || raw === 'bezahlt') return 'paid';
+    if (raw === 'open' || raw === 'offen' || raw === 'unpaid') return 'open';
+    return raw;
+}
+
 function asNumberOrNull(value: unknown): number | null {
     if (value === null || value === undefined || value === '') return null;
     const parsed = Number(value);
@@ -124,6 +133,14 @@ function normalizeCategory(value: unknown): AccountingDocumentCategory | null {
     if (raw === 'customer' || raw === 'kunde') return 'customer';
 
     return null;
+}
+
+function isCustomerEventType(eventType: string): boolean {
+    return eventType.startsWith('customer.');
+}
+
+function isDocumentCreatedLikeEvent(eventType: string): boolean {
+    return ['document.created', 'document.finalized', 'document.storno'].includes(eventType);
 }
 
 function normalizeSource(value: unknown): string {
@@ -193,12 +210,22 @@ async function storePdfFile(parsed: ParsedAccountingEvent): Promise<string | nul
     return path.relative(config.app.uploadsDir, absolutePath).replace(/\\/g, '/');
 }
 
-function parseIncomingAccountingPayload(payload: AccountingEventPayload, tenantId: number): ParsedAccountingEvent {
+function parseIncomingAccountingPayload(
+    payload: AccountingEventPayload,
+    tenantId: number,
+    normalizedEventType: string,
+): ParsedAccountingEvent {
     const document = payload?.document && typeof payload.document === 'object' ? payload.document as Record<string, unknown> : {};
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
     const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
+    const eventTypeOriginal = normalizeIncomingEventType(asText(details?.event_type_original));
 
-    const category = normalizeCategory(payload?.document_category ?? document?.category ?? document?.typ);
+    const categoryFromPayload = normalizeCategory(payload?.document_category ?? document?.category ?? document?.typ);
+    const categoryFromOriginalEventType = eventTypeOriginal.includes('storno') ? 'storno' : null;
+    const categoryFromEventType = normalizedEventType === 'document.payment_status_changed'
+        ? 'rechnung'
+        : (isCustomerEventType(normalizedEventType) ? 'customer' : null);
+    const category = categoryFromPayload ?? categoryFromOriginalEventType ?? categoryFromEventType;
     if (!category) {
         throw new ProcessingHttpError(422, 'Ungültige oder fehlende document_category');
     }
@@ -208,7 +235,14 @@ function parseIncomingAccountingPayload(payload: AccountingEventPayload, tenantI
     const customerId = asOptionalText(customer?.id ?? payload?.customer_id ?? entityId);
     const customerNumber = asOptionalText(customer?.customer_number ?? payload?.customer_number);
 
-    let documentId = asText(payload?.document_id ?? document?.id);
+    let documentId = asText(
+        payload?.document_id
+        ?? document?.id
+        ?? payload?.invoice_id
+        ?? payload?.entity_id
+        ?? details?.source_invoice_id
+        ?? details?.related_invoice_id,
+    );
     if (category === 'customer') {
         documentId = entityId || customerId || '';
         if (!documentId) {
@@ -220,7 +254,7 @@ function parseIncomingAccountingPayload(payload: AccountingEventPayload, tenantI
 
     const documentNumber = asOptionalText(payload?.document_number ?? document?.nummer ?? document?.number);
     const documentStatus = asOptionalText(payload?.document_status ?? document?.status);
-    const paymentStatus = asOptionalText(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus);
+    const paymentStatus = normalizePaymentStatus(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus);
 
     const amountTotal = asNumberOrNull(payload?.amount_total ?? document?.betrag_brutto ?? document?.amount_total);
     const amountPaid = asNumberOrNull(payload?.amount_paid ?? document?.betrag_bezahlt ?? document?.amount_paid);
@@ -229,12 +263,44 @@ function parseIncomingAccountingPayload(payload: AccountingEventPayload, tenantI
     if (amountOpen === null && amountTotal !== null) {
         amountOpen = Math.max(0, amountTotal - (amountPaid ?? 0));
     }
+    if (normalizedEventType === 'document.payment_status_changed' && category !== 'rechnung') {
+        throw new ProcessingHttpError(422, 'document.payment_status_changed ist nur für document_category=rechnung erlaubt');
+    }
 
     let parsedPdf: ParsedPdf | null = null;
     if (category !== 'customer') {
+        const requiresPdf = isDocumentCreatedLikeEvent(eventTypeOriginal || normalizedEventType);
         const documentPdf = payload?.document_pdf;
-        if (!documentPdf || typeof documentPdf !== 'object') {
+        if (requiresPdf && (!documentPdf || typeof documentPdf !== 'object')) {
             throw new ProcessingHttpError(422, 'document_pdf ist für Dokument-Events erforderlich');
+        }
+        if (!requiresPdf && (!documentPdf || typeof documentPdf !== 'object')) {
+            return {
+                tenantId,
+                source,
+                category,
+                documentId,
+                recordKey: `${source}:${category}:${documentId}`,
+                documentNumber,
+                documentStatus,
+                paymentStatus,
+                amountTotal,
+                amountPaid,
+                amountOpen,
+                currency: asOptionalText(payload?.currency ?? document?.waehrung ?? document?.currency),
+                documentDate: asOptionalText(payload?.document_date ?? document?.datum),
+                dueDate: asOptionalText(payload?.due_date ?? document?.faellig_am),
+                paidAt: asOptionalText(payload?.paid_at ?? document?.bezahlt_am),
+                finalizedAt: asOptionalText(payload?.finalized_at ?? document?.finalisiert_am),
+                entityId,
+                customerId,
+                customerNumber,
+                sourceInvoiceId: asOptionalText(details?.source_invoice_id),
+                relatedInvoiceId: asOptionalText(details?.related_invoice_id),
+                sourceCreditId: asOptionalText(details?.source_credit_id),
+                eventTypeOriginal: asOptionalText(details?.event_type_original),
+                pdf: null,
+            };
         }
 
         const pdfRecord = documentPdf as Record<string, unknown>;
@@ -487,6 +553,13 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                 status: 'ignored_event_type',
             });
         }
+        if (normalizedEventType === 'customer.test') {
+            return reply.status(202).send({
+                ok: true,
+                event_id: eventId,
+                status: 'ignored_optional_event',
+            });
+        }
 
         let parsedPayload: ParsedAccountingEvent;
         try {
@@ -494,7 +567,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             if (!tenantId) {
                 return reply.status(422).send({ ok: false, error: 'tenant_id ist erforderlich oder muss eindeutig ableitbar sein' });
             }
-            parsedPayload = parseIncomingAccountingPayload(payload, tenantId);
+            parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
         } catch (error: any) {
             if (error instanceof ProcessingHttpError) {
                 return reply.status(error.statusCode).send({ ok: false, error: error.message });

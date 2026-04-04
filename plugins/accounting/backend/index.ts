@@ -78,11 +78,21 @@ function asText(value: unknown): string {
     return String(value || '').trim();
 }
 
-function normalizeDocumentCategory(input: unknown, eventType: string): string {
+function normalizePaymentStatus(input: unknown): string {
+    const raw = asText(input).toLowerCase();
+    if (!raw) return '';
+    if (raw === 'partial' || raw === 'partially_paid' || raw === 'teilbezahlt') return 'partial';
+    if (raw === 'paid' || raw === 'bezahlt') return 'paid';
+    if (raw === 'open' || raw === 'offen' || raw === 'unpaid') return 'open';
+    return raw;
+}
+
+function normalizeDocumentCategory(input: unknown, eventType: string, eventTypeOriginal: string): string {
     const raw = asText(input).toLowerCase();
     const et = asText(eventType).toLowerCase();
+    const eto = asText(eventTypeOriginal).toLowerCase();
 
-    const candidates = [raw, et];
+    const candidates = [raw, eto, et];
     for (const value of candidates) {
         if (!value) continue;
         if (value.includes('rechnung') || value.includes('invoice')) return 'rechnung';
@@ -98,10 +108,12 @@ function normalizeDocumentCategory(input: unknown, eventType: string): string {
 function extractDocumentFromPayload(payload: any, event: any): AccountingDocument | null {
     const document = payload?.document && typeof payload.document === 'object' ? payload.document : {};
     const eventType = asText(event?.event_type);
+    const eventTypeOriginal = asText(payload?.details?.event_type_original);
 
     const category = normalizeDocumentCategory(
         payload?.document_category ?? document?.category ?? document?.typ,
         eventType,
+        eventTypeOriginal,
     );
 
     const documentId = asText(payload?.document_id ?? document?.id);
@@ -129,7 +141,7 @@ function extractDocumentFromPayload(payload: any, event: any): AccountingDocumen
         documentStatus,
         amountTotal,
         currency: asText(payload?.currency ?? document?.waehrung ?? document?.currency) || 'EUR',
-        paymentStatus: asText(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus),
+        paymentStatus: normalizePaymentStatus(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus),
         amountPaid,
         amountOpen,
         documentDate: asText(payload?.document_date ?? document?.datum),

@@ -67,7 +67,7 @@ function extractAddress(payload: any): { street: string | null; zip: string | nu
 }
 
 function isCustomerEventType(eventType: string): boolean {
-    return ['customer.exported', 'customer.created', 'customer.updated'].includes(eventType);
+    return ['customer.exported', 'customer.created', 'customer.updated', 'customer.deleted', 'customer.test'].includes(eventType);
 }
 
 function readCustomerFromPayload(payload: any): any | null {
@@ -155,6 +155,23 @@ function readCustomerNumber(payload: any, customer: any): string {
         if (normalized) return normalized;
     }
     return buildFallbackCustomerNumber(payload, customer);
+}
+
+function readCustomerIdentifier(payload: any, customer: any): string | null {
+    const candidates = [
+        payload?.customer_number,
+        payload?.entity_id,
+        payload?.customer_id,
+        customer?.customer_number,
+        customer?.number,
+        customer?.customer_id,
+        customer?.id,
+    ];
+    for (const value of candidates) {
+        const normalized = String(value ?? '').trim();
+        if (normalized) return normalized;
+    }
+    return null;
 }
 
 export default async function plugin(fastify: FastifyInstance): Promise<void> {
@@ -361,10 +378,44 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         return { inserted, updated };
     }
 
+    async function deactivateCustomerFromAccountingEvent(payload: any): Promise<number> {
+        const customer = readCustomerFromPayload(payload) || {};
+        const customerIdentifier = readCustomerIdentifier(payload, customer);
+        if (!customerIdentifier) return 0;
+
+        const db = getDatabase();
+        const targetTenantIds = await resolveTargetTenantIds(db, payload, customer);
+        if (targetTenantIds.length === 0) return 0;
+
+        let deactivated = 0;
+        for (const tenantId of targetTenantIds) {
+            const updated = await db('crm_customers')
+                .where({ tenant_id: tenantId })
+                .andWhere(function customerFilter(this: any) {
+                    this.where('customer_number', customerIdentifier)
+                        .orWhere('id', Number(customerIdentifier) || -1);
+                })
+                .update({
+                    status: 'inactive',
+                    updated_at: new Date(),
+                });
+            deactivated += Number(updated || 0);
+        }
+        return deactivated;
+    }
+
     fastify.events.on('accounting.connector.event.received', async (incoming: any) => {
         try {
             const eventType = String(incoming?.eventType || '').trim().toLowerCase();
             if (!isCustomerEventType(eventType)) return;
+            if (eventType === 'customer.deleted') {
+                const deactivated = await deactivateCustomerFromAccountingEvent(incoming?.payload || {});
+                if (deactivated > 0) {
+                    console.log(`[CRM] Accounting Live-Import: ~${deactivated} Kunden deaktiviert (customer.deleted)`);
+                }
+                return;
+            }
+
             const result = await upsertCustomerFromAccountingEvent(incoming?.payload || {});
             if (result.inserted > 0 || result.updated > 0) {
                 console.log(`[CRM] Accounting Live-Import: +${result.inserted} neu, ~${result.updated} aktualisiert`);
@@ -379,20 +430,22 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     try {
         const db = getDatabase();
         const rows = await db('accounting_connector_events')
-            .whereIn('event_type', ['customer.exported', 'customer.created', 'customer.updated'])
+            .whereIn('event_type', ['customer.exported', 'customer.created', 'customer.updated', 'customer.deleted', 'customer.test'])
             .orderBy('created_at', 'desc')
             .limit(2000)
-            .select('payload_json');
+            .select('event_type', 'payload_json');
 
-        const newestByCustomer = new Map<string, any>();
+        const newestByCustomer = new Map<string, { eventType: string; payload: any }>();
         for (const row of rows) {
             try {
+                const eventType = String(row.event_type || '').trim().toLowerCase();
                 const payload = JSON.parse(String(row.payload_json || '{}'));
                 const backfillCustomer = readCustomerFromPayload(payload);
-                if (!backfillCustomer) continue;
-                const customerKey = readCustomerNumber(payload, backfillCustomer);
+                const customerKey = readCustomerIdentifier(payload, backfillCustomer || {}) || (
+                    eventType === 'customer.deleted' ? null : (backfillCustomer ? readCustomerNumber(payload, backfillCustomer) : null)
+                );
                 if (!customerKey || newestByCustomer.has(customerKey)) continue;
-                newestByCustomer.set(customerKey, payload);
+                newestByCustomer.set(customerKey, { eventType, payload });
             } catch {
                 // kaputte Einzelpayloads ignorieren
             }
@@ -400,14 +453,19 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         let inserted = 0;
         let updated = 0;
-        for (const payload of newestByCustomer.values()) {
-            const result = await upsertCustomerFromAccountingEvent(payload);
+        let deactivated = 0;
+        for (const eventData of newestByCustomer.values()) {
+            if (eventData.eventType === 'customer.deleted') {
+                deactivated += await deactivateCustomerFromAccountingEvent(eventData.payload);
+                continue;
+            }
+            const result = await upsertCustomerFromAccountingEvent(eventData.payload);
             inserted += result.inserted;
             updated += result.updated;
         }
 
         if (newestByCustomer.size > 0) {
-            console.log(`[CRM] Accounting-Backfill verarbeitet: ${newestByCustomer.size} Kunden-Events, +${inserted} neu, ~${updated} aktualisiert`);
+            console.log(`[CRM] Accounting-Backfill verarbeitet: ${newestByCustomer.size} Kunden-Events, +${inserted} neu, ~${updated} aktualisiert, ~${deactivated} deaktiviert`);
         }
     } catch (error) {
         console.error('[CRM] Accounting-Backfill fehlgeschlagen:', error);
