@@ -18,6 +18,7 @@ interface AccountingDocument {
     paidAt: string | null;
     finalizedAt: string | null;
     createdAt: string;
+    hasPdf?: boolean;
 }
 
 interface CustomerData {
@@ -61,7 +62,18 @@ function getStatusColor(status: string): string {
     }
 }
 
-function DocumentTable({ documents, category }: { documents: AccountingDocument[], category: string }) {
+function displayPaymentStatus(doc: AccountingDocument): string {
+    const payment = String(doc.paymentStatus || '').trim();
+    if (payment) {
+        if (payment.toLowerCase() === 'finalized') return 'gebucht';
+        return payment;
+    }
+    const status = String(doc.documentStatus || '').trim();
+    if (status.toLowerCase() === 'finalized') return 'gebucht';
+    return status || '-';
+}
+
+function DocumentTable({ documents, category, sessionToken }: { documents: AccountingDocument[], category: string, sessionToken?: string }) {
     const filteredDocs = documents.filter(doc => doc.documentCategory === category);
 
     if (filteredDocs.length === 0) {
@@ -76,6 +88,7 @@ function DocumentTable({ documents, category }: { documents: AccountingDocument[
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Nummer</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Datum</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Bezahlt am</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Betrag</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Bezahlt</th>
                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Offen</th>
@@ -87,8 +100,11 @@ function DocumentTable({ documents, category }: { documents: AccountingDocument[
                         <tr key={doc.id} className="hover:bg-gray-50">
                             <td className="px-4 py-2 text-sm text-gray-900">{doc.documentNumber}</td>
                             <td className="px-4 py-2 text-sm text-gray-900">{formatDate(doc.documentDate)}</td>
-                            <td className={`px-4 py-2 text-sm ${getStatusColor(doc.documentStatus)}`}>
-                                {doc.documentStatus}
+                            <td className={`px-4 py-2 text-sm ${getStatusColor(displayPaymentStatus(doc))}`}>
+                                {displayPaymentStatus(doc)}
+                            </td>
+                            <td className="px-4 py-2 text-sm text-gray-900">
+                                {formatDate(doc.paidAt)}
                             </td>
                             <td className="px-4 py-2 text-sm text-gray-900">
                                 {formatCurrency(doc.amountTotal, doc.currency)}
@@ -100,11 +116,14 @@ function DocumentTable({ documents, category }: { documents: AccountingDocument[
                                 {formatCurrency(doc.amountOpen, doc.currency)}
                             </td>
                             <td className="px-4 py-2 text-sm">
-                                {doc.documentStatus === 'finalized' && (
-                                    <button className="btn btn-secondary btn-sm" type="button">
+                                {doc.hasPdf && sessionToken ? (
+                                    <a
+                                        className="btn btn-secondary btn-sm"
+                                        href={`${API_BASE}/documents/${encodeURIComponent(doc.id)}/pdf?sessionToken=${encodeURIComponent(sessionToken)}`}
+                                    >
                                         Download
-                                    </button>
-                                )}
+                                    </a>
+                                ) : null}
                             </td>
                         </tr>
                     ))}
@@ -222,7 +241,7 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
                 </div>
 
                 <div className="p-6">
-                    <DocumentTable documents={documents} category={activeTab} />
+                    <DocumentTable documents={documents} category={activeTab} sessionToken={sessionToken} />
                 </div>
             </div>
         </div>

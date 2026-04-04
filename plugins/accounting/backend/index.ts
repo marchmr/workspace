@@ -1,5 +1,9 @@
 import { createHash } from 'crypto';
+import { createReadStream } from 'fs';
+import { stat } from 'fs/promises';
+import path from 'path';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { config } from '../../../backend/src/core/config.js';
 import { getDatabase } from '../../../backend/src/core/database.js';
 
 interface AccountingDocument {
@@ -19,6 +23,7 @@ interface AccountingDocument {
     paidAt: string | null;
     finalizedAt: string | null;
     createdAt: string;
+    hasPdf?: boolean;
 }
 
 interface AccountingConnectorDocumentRow {
@@ -37,6 +42,7 @@ interface AccountingConnectorDocumentRow {
     due_date: string | null;
     paid_at: string | null;
     finalized_at: string | null;
+    pdf_storage_path: string | null;
     updated_at: string | null;
     created_at: string | null;
 }
@@ -152,7 +158,19 @@ function mapConnectorRowToDocument(row: AccountingConnectorDocumentRow): Account
         paidAt: asText(row.paid_at) || null,
         finalizedAt: asText(row.finalized_at) || null,
         createdAt: String(row.updated_at || row.created_at || ''),
+        hasPdf: Boolean(asText(row.pdf_storage_path)),
     };
+}
+
+function resolveAccountingPdfPath(relativePath: string): string {
+    const uploadsRoot = path.resolve(config.app.uploadsDir);
+    const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const absolutePath = path.resolve(uploadsRoot, normalized);
+    const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+    if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) {
+        throw new Error('Ungültiger PDF-Pfad');
+    }
+    return absolutePath;
 }
 
 async function verifyPublicSessionByToken(db: any, token: string): Promise<PublicSessionRecord | null> {
@@ -244,6 +262,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                         'due_date',
                         'paid_at',
                         'finalized_at',
+                        'pdf_storage_path',
                         'updated_at',
                         'created_at',
                     ) as AccountingConnectorDocumentRow[];
@@ -282,6 +301,78 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             return reply.send({ documents });
         } catch (error) {
             console.error('Error fetching accounting documents:', error);
+            return reply.status(500).send({ error: 'Internal server error' });
+        }
+    });
+
+    // GET /api/plugins/accounting/documents/:documentRecordId/pdf - PDF Download
+    fastify.get('/documents/:documentRecordId/pdf', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request: FastifyRequest, reply: FastifyReply) => {
+        const query = request.query as { sessionToken?: string };
+        const params = request.params as { documentRecordId?: string };
+        const sessionToken = String(query?.sessionToken || '').trim();
+        const documentRecordId = String(params?.documentRecordId || '').trim();
+
+        if (!sessionToken) {
+            return reply.status(400).send({ error: 'Session-Token ist erforderlich' });
+        }
+        if (!documentRecordId) {
+            return reply.status(400).send({ error: 'Dokument-ID ist erforderlich' });
+        }
+
+        try {
+            const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (!hasProjectionTable) {
+                return reply.status(404).send({ error: 'Dokument-PDF nicht verfügbar' });
+            }
+
+            const session = await verifyPublicSessionByToken(db, sessionToken);
+            if (!session) {
+                return reply.status(401).send({ error: 'Session ungültig oder abgelaufen' });
+            }
+
+            const identifiers = await resolveAccountingCustomerIdentifiers(
+                db,
+                Number(session.tenant_id),
+                Number(session.customer_id),
+            );
+            if (identifiers.length === 0) {
+                return reply.status(404).send({ error: 'Dokument nicht gefunden' });
+            }
+
+            const row = await db('accounting_connector_documents')
+                .where({ record_key: documentRecordId })
+                .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
+                .andWhere(function customerFilter(this: any) {
+                    this.whereIn('customer_id', identifiers)
+                        .orWhereIn('customer_number', identifiers)
+                        .orWhereIn('entity_id', identifiers);
+                })
+                .first('pdf_storage_path', 'pdf_file_name');
+
+            if (!row?.pdf_storage_path) {
+                return reply.status(404).send({ error: 'PDF nicht gefunden' });
+            }
+
+            const absolutePath = resolveAccountingPdfPath(String(row.pdf_storage_path));
+            await stat(absolutePath);
+
+            const fileName = asText(row.pdf_file_name) || 'dokument.pdf';
+            const encodedName = encodeURIComponent(fileName)
+                .replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+                .replace(/\*/g, '%2A');
+
+            reply
+                .header('Content-Type', 'application/pdf')
+                .header('Content-Disposition', `attachment; filename*=UTF-8''${encodedName}`)
+                .header('Cache-Control', 'private, max-age=0, must-revalidate');
+
+            return reply.send(createReadStream(absolutePath));
+        } catch (error) {
+            console.error('Error downloading accounting PDF:', error);
             return reply.status(500).send({ error: 'Internal server error' });
         }
     });
