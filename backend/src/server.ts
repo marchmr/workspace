@@ -33,6 +33,7 @@ import adminRoutes from './routes/admin.js';
 import documentsRoutes from './routes/documents.js';
 import healthRoutes from './routes/health.js';
 import subdomainProvisioningRoutes from './routes/subdomainProvisioning.js';
+import accountingConnectorRoutes from './routes/accountingConnector.js';
 
 const fastify = Fastify({
     logger: {
@@ -130,6 +131,7 @@ async function start(): Promise<void> {
         await fastify.register(emailRoutes, { prefix: '/api/admin' });
         await fastify.register(documentsRoutes, { prefix: '/api/documents' });
         await fastify.register(lockRoutes, { prefix: '/api/locks' });
+        await fastify.register(accountingConnectorRoutes, { prefix: '/api/accounting' });
 
         // Dynamisch Plugins laden
         await loadPlugins(fastify);

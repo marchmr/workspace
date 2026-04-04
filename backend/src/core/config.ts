@@ -163,6 +163,15 @@ export const config = {
         uploadsDir: path.resolve(__dirname, '../../../uploads'),
     },
 
+    accountingConnector: {
+        apiKeyHeaderName: optionalEnv('ACCOUNTING_CONNECTOR_API_KEY_HEADER', 'X-API-Key'),
+        apiKey: optionalEnv('ACCOUNTING_CONNECTOR_API_KEY', ''),
+        hmacSecret: optionalEnv('ACCOUNTING_CONNECTOR_HMAC_SECRET', ''),
+        timestampToleranceSec: optionalIntEnv('ACCOUNTING_CONNECTOR_TIMESTAMP_TOLERANCE_SEC', 300),
+        nonceTtlSec: optionalIntEnv('ACCOUNTING_CONNECTOR_NONCE_TTL_SEC', 300),
+        maxPayloadBytes: optionalIntEnv('ACCOUNTING_CONNECTOR_MAX_PAYLOAD_BYTES', 1048576),
+    },
+
     subdomainProvisioning: {
         enabled: optionalBoolEnv('SUBDOMAIN_PROVISIONING_ENABLED', true),
         useSudo: optionalBoolEnv('SUBDOMAIN_PROVISIONING_USE_SUDO', true),
