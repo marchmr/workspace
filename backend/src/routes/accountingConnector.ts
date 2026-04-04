@@ -136,11 +136,19 @@ function normalizeCategory(value: unknown): AccountingDocumentCategory | null {
 }
 
 function isCustomerEventType(eventType: string): boolean {
-    return eventType.startsWith('customer.');
+    return ['customer.created', 'customer.updated', 'customer.deleted', 'customer.exported', 'customer.test'].includes(eventType);
 }
 
 function isDocumentCreatedLikeEvent(eventType: string): boolean {
     return ['document.created', 'document.finalized', 'document.storno'].includes(eventType);
+}
+
+function isSupportedAccountingEventType(eventType: string): boolean {
+    return isCustomerEventType(eventType)
+        || eventType === 'document.created'
+        || eventType === 'document.finalized'
+        || eventType === 'document.storno'
+        || eventType === 'document.payment_status_changed';
 }
 
 function normalizeSource(value: unknown): string {
@@ -231,7 +239,15 @@ function parseIncomingAccountingPayload(
     }
 
     const source = normalizeSource(payload?.source ?? details?.source);
-    const entityId = asOptionalText(payload?.entity_id ?? payload?.entityId ?? customer?.id ?? payload?.customer_id);
+    const entityId = asOptionalText(
+        payload?.entity_id
+        ?? payload?.entityId
+        ?? customer?.id
+        ?? payload?.customer_id
+        ?? payload?.customer_number
+        ?? customer?.customer_number
+        ?? customer?.number,
+    );
     const customerId = asOptionalText(customer?.id ?? payload?.customer_id ?? entityId);
     const customerNumber = asOptionalText(customer?.customer_number ?? payload?.customer_number);
 
@@ -537,16 +553,29 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         const payloadEventId = String(payload?.event_id || '').trim();
         const eventType = String(payload?.event_type || '').trim();
         const normalizedEventType = normalizeIncomingEventType(eventType);
+        const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
+        const normalizedOriginalEventType = normalizeIncomingEventType(asText(details?.event_type_original));
         const eventId = payloadEventId || eventIdHeader;
 
         if (!eventId || !eventType) {
             return reply.status(400).send({ ok: false, error: 'event_id und event_type sind erforderlich' });
         }
 
+        if (!isSupportedAccountingEventType(normalizedEventType)) {
+            return reply.status(422).send({ ok: false, error: `Nicht unterstützter event_type: ${normalizedEventType}` });
+        }
+        if (normalizedOriginalEventType && !isSupportedAccountingEventType(normalizedOriginalEventType)) {
+            return reply.status(422).send({ ok: false, error: `Nicht unterstützter details.event_type_original: ${normalizedOriginalEventType}` });
+        }
+
         if (eventIdHeader && payloadEventId && eventIdHeader !== payloadEventId) {
             return reply.status(400).send({ ok: false, error: 'event_id header/body mismatch' });
         }
-        if (runtimeConfig.allowedEventTypes.length > 0 && !runtimeConfig.allowedEventTypes.includes(normalizedEventType)) {
+        if (
+            runtimeConfig.allowedEventTypes.length > 0
+            && !runtimeConfig.allowedEventTypes.includes(normalizedEventType)
+            && (!normalizedOriginalEventType || !runtimeConfig.allowedEventTypes.includes(normalizedOriginalEventType))
+        ) {
             return reply.status(202).send({
                 ok: true,
                 event_id: eventId,
