@@ -50,6 +50,20 @@ interface ConnectorEventLogResponse {
     };
 }
 
+interface ExternalConnectionCheckResult {
+    ok: boolean;
+    reason: string;
+    lookbackHours: number;
+    checkedAt: string;
+    message?: string;
+    lastExternalEvent?: {
+        eventId: string;
+        eventType: string;
+        createdAt: string | null;
+        sourceIp: string | null;
+    } | null;
+}
+
 const DEFAULT_CONNECTOR_SETTINGS: AccountingConnectorSettings = {
     enabled: true,
     apiKeyHeaderName: 'X-API-Key',
@@ -74,6 +88,7 @@ export default function GeneralSettings() {
     const [connectorEventTypesInput, setConnectorEventTypesInput] = useState('');
     const [savingConnector, setSavingConnector] = useState(false);
     const [testingConnector, setTestingConnector] = useState(false);
+    const [checkingExternalConnection, setCheckingExternalConnection] = useState(false);
     const [loadingConnectorEvents, setLoadingConnectorEvents] = useState(false);
     const [connectorEvents, setConnectorEvents] = useState<ConnectorEventLogItem[]>([]);
     const [connectorEventSummary, setConnectorEventSummary] = useState<ConnectorEventLogResponse['summary']>({
@@ -87,6 +102,7 @@ export default function GeneralSettings() {
         eventId: string;
         status: string;
     } | null>(null);
+    const [lastExternalConnectionCheck, setLastExternalConnectionCheck] = useState<ExternalConnectionCheckResult | null>(null);
     const [loading, setLoading] = useState(true);
 
     const generateRandomSecret = (length: number): string => {
@@ -117,6 +133,7 @@ export default function GeneralSettings() {
         }
 
         await loadConnectorEvents();
+        await checkExternalConnection(true);
         setLoading(false);
     };
 
@@ -205,7 +222,7 @@ export default function GeneralSettings() {
                 status: String(payload?.response?.status || 'processed'),
             });
             await loadConnectorEvents();
-            toast.success(`Connector-Test erfolgreich (${payload?.response?.status || 'processed'})`);
+            toast.success(`Selbsttest erfolgreich (${payload?.response?.status || 'processed'})`);
         } catch (err) {
             setLastConnectorTestResult({
                 ok: false,
@@ -213,9 +230,34 @@ export default function GeneralSettings() {
                 eventId: '',
                 status: 'failed',
             });
-            toast.error(err instanceof Error ? err.message : 'Connector-Test fehlgeschlagen');
+            toast.error(err instanceof Error ? err.message : 'Selbsttest fehlgeschlagen');
         } finally {
             setTestingConnector(false);
+        }
+    };
+
+    const checkExternalConnection = async (silent = false) => {
+        setCheckingExternalConnection(true);
+        try {
+            const res = await apiFetch('/api/admin/settings/accounting-connector/external-check', { method: 'POST' });
+            const payload = await res.json().catch(() => ({})) as ExternalConnectionCheckResult;
+            if (!res.ok) {
+                throw new Error((payload as any)?.error || `Prüfung fehlgeschlagen (HTTP ${res.status})`);
+            }
+            setLastExternalConnectionCheck(payload);
+            if (!silent) {
+                if (payload.ok) {
+                    toast.success('Externe Verbindung bestätigt');
+                } else {
+                    toast.error(payload.message || 'Externe Verbindung noch nicht bestätigt');
+                }
+            }
+        } catch (err) {
+            if (!silent) {
+                toast.error(err instanceof Error ? err.message : 'Externe Verbindungsprüfung fehlgeschlagen');
+            }
+        } finally {
+            setCheckingExternalConnection(false);
         }
     };
 
@@ -283,7 +325,7 @@ export default function GeneralSettings() {
                     </span>
                     {lastConnectorTestResult && (
                         <span className={`badge ${lastConnectorTestResult.ok ? 'badge-success' : 'badge-danger'}`}>
-                            Letzter Test: {lastConnectorTestResult.ok ? 'OK' : 'Fehlgeschlagen'}
+                            Letzter Selbsttest: {lastConnectorTestResult.ok ? 'OK' : 'Fehlgeschlagen'}
                         </span>
                     )}
                 </div>
@@ -313,7 +355,7 @@ export default function GeneralSettings() {
                             <button type="button" className="btn btn-secondary" onClick={copyEndpoint}>Kopieren</button>
                         </div>
 
-                        <label className="label">Öffentliche Base URL (optional, muss https:// sein)</label>
+                        <label className="label">Öffentliche Base URL dieser Core-Instanz (optional, muss https:// sein)</label>
                         <input
                             className="input"
                             value={connector.publicBaseUrl}
@@ -409,15 +451,29 @@ export default function GeneralSettings() {
                                 {savingConnector ? 'Speichert...' : 'Connector speichern'}
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={testAccountingConnector} disabled={testingConnector}>
-                                {testingConnector ? 'Teste...' : 'Verbindung testen'}
+                                {testingConnector ? 'Teste...' : 'Selbsttest ausführen'}
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={loadConnectorEvents} disabled={loadingConnectorEvents}>
                                 {loadingConnectorEvents ? 'Lädt...' : 'Events aktualisieren'}
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={() => checkExternalConnection()} disabled={checkingExternalConnection}>
+                                {checkingExternalConnection ? 'Prüfe...' : 'Externe Verbindung prüfen'}
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={generateBothSecrets}>
                                 API-Key + HMAC neu generieren
                             </button>
                         </div>
+                        <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>
+                            Hinweis: Der Selbsttest prüft nur deinen Core-Endpunkt lokal. Die echte Verbindung zum Buchhaltungsprogramm ist erst aktiv, wenn dort URL + Keys eingetragen sind.
+                        </div>
+                        {lastExternalConnectionCheck && (
+                            <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>
+                                Externe Prüfung: {lastExternalConnectionCheck.ok ? 'Verbunden' : 'Nicht bestätigt'} ({lastExternalConnectionCheck.message || lastExternalConnectionCheck.reason})
+                                {lastExternalConnectionCheck.lastExternalEvent?.createdAt
+                                    ? ` · Letztes externes Event: ${formatDateTime(lastExternalConnectionCheck.lastExternalEvent.createdAt)}`
+                                    : ''}
+                            </div>
+                        )}
                     </div>
                 </form>
             </div>

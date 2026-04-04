@@ -1192,6 +1192,101 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         });
     });
 
+    // POST /api/admin/settings/accounting-connector/external-check
+    fastify.post('/settings/accounting-connector/external-check', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
+        const connector = await loadAccountingConnectorSettings(db);
+        const lookbackHours = 24;
+        const since = new Date(Date.now() - (lookbackHours * 60 * 60 * 1000));
+
+        if (!connector.enabled) {
+            return reply.send({
+                ok: false,
+                reason: 'connector_disabled',
+                lookbackHours,
+                checkedAt: new Date().toISOString(),
+                message: 'Connector ist deaktiviert.',
+            });
+        }
+
+        if (!connector.apiKey || !connector.hmacSecret) {
+            return reply.send({
+                ok: false,
+                reason: 'connector_not_configured',
+                lookbackHours,
+                checkedAt: new Date().toISOString(),
+                message: 'API-Key oder HMAC-Secret fehlen.',
+            });
+        }
+
+        const hasEventsTable = await db.schema.hasTable('accounting_connector_events');
+        if (!hasEventsTable) {
+            return reply.send({
+                ok: false,
+                reason: 'events_table_missing',
+                lookbackHours,
+                checkedAt: new Date().toISOString(),
+                message: 'Keine Event-Tabelle vorhanden.',
+            });
+        }
+
+        const baseQuery = db('accounting_connector_events')
+            .whereNot('event_id', 'like', 'evt_test_%');
+
+        const recentExternal = await baseQuery
+            .clone()
+            .where('created_at', '>=', since)
+            .select('event_id', 'event_type', 'created_at', 'source_ip')
+            .orderBy('id', 'desc')
+            .first() as any;
+
+        const latestExternal = recentExternal || await baseQuery
+            .clone()
+            .select('event_id', 'event_type', 'created_at', 'source_ip')
+            .orderBy('id', 'desc')
+            .first() as any;
+
+        if (!latestExternal) {
+            return reply.send({
+                ok: false,
+                reason: 'no_external_events_received',
+                lookbackHours,
+                checkedAt: new Date().toISOString(),
+                message: 'Noch kein externes Event empfangen.',
+                lastExternalEvent: null,
+            });
+        }
+
+        if (!recentExternal) {
+            return reply.send({
+                ok: false,
+                reason: 'no_recent_external_events',
+                lookbackHours,
+                checkedAt: new Date().toISOString(),
+                message: 'Es gab externe Events, aber nicht in den letzten 24 Stunden.',
+                lastExternalEvent: {
+                    eventId: String(latestExternal.event_id || ''),
+                    eventType: String(latestExternal.event_type || ''),
+                    createdAt: latestExternal.created_at ? new Date(latestExternal.created_at).toISOString() : null,
+                    sourceIp: latestExternal.source_ip ? String(latestExternal.source_ip) : null,
+                },
+            });
+        }
+
+        return reply.send({
+            ok: true,
+            reason: 'external_events_received_recently',
+            lookbackHours,
+            checkedAt: new Date().toISOString(),
+            message: 'Mindestens ein externes Event wurde in den letzten 24 Stunden empfangen.',
+            lastExternalEvent: {
+                eventId: String(recentExternal.event_id || ''),
+                eventType: String(recentExternal.event_type || ''),
+                createdAt: recentExternal.created_at ? new Date(recentExternal.created_at).toISOString() : null,
+                sourceIp: recentExternal.source_ip ? String(recentExternal.source_ip) : null,
+            },
+        });
+    });
+
     // GET /api/admin/settings/accounting-connector/events
     fastify.get('/settings/accounting-connector/events', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const query = request.query as { limit?: string };
