@@ -25,6 +25,29 @@ function firstText(...values: unknown[]): string | null {
     return null;
 }
 
+function readPhone(value: any): string | null {
+    if (!value) return null;
+    if (typeof value === 'string' || typeof value === 'number') return textOrNull(String(value));
+    if (Array.isArray(value)) {
+        for (const entry of value) {
+            const candidate = readPhone(entry);
+            if (candidate) return candidate;
+        }
+        return null;
+    }
+    return firstText(
+        value.phone,
+        value.telefon,
+        value.mobile,
+        value.cell,
+        value.number,
+        value.value,
+        value.work,
+        value.main,
+        value.office,
+    );
+}
+
 function extractAddress(payload: any): { street: string | null; zip: string | null; city: string | null; country: string | null } {
     const address = payload?.address ?? payload?.main_address ?? payload?.billing_address ?? payload?.shipping_address;
     if (typeof address === 'string') {
@@ -63,6 +86,20 @@ function readPrimaryContact(customer: any): any | null {
     if (Array.isArray(contacts)) {
         const preferred = contacts.find((entry: any) => entry?.is_primary || entry?.primary) ?? contacts[0];
         if (preferred && typeof preferred === 'object') return preferred;
+    }
+
+    const synthesized = {
+        first_name: firstText(customer?.contact_first_name, customer?.ansprechpartner_vorname),
+        last_name: firstText(customer?.contact_last_name, customer?.ansprechpartner_nachname, customer?.contact_name, customer?.ansprechpartner),
+        email: firstText(customer?.contact_email, customer?.ansprechpartner_email),
+        phone: firstText(
+            customer?.contact_phone,
+            customer?.ansprechpartner_telefon,
+            readPhone(customer?.contact_phones),
+        ),
+    };
+    if (synthesized.first_name || synthesized.last_name || synthesized.email || synthesized.phone) {
+        return synthesized;
     }
     return null;
 }
@@ -205,8 +242,18 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 position: firstText(primaryContact.position, primaryContact.role, primaryContact.job_title),
                 department: firstText(primaryContact.department, primaryContact.team),
                 email: firstText(primaryContact.email, primaryContact.mail),
-                phone: firstText(primaryContact.phone, primaryContact.telefon),
-                mobile: firstText(primaryContact.mobile, primaryContact.cellphone),
+                phone: firstText(
+                    readPhone(primaryContact.phone),
+                    readPhone(primaryContact.telefon),
+                    readPhone(primaryContact.phone_numbers),
+                    readPhone(primaryContact.phones),
+                    readPhone(primaryContact.phoneNumbers),
+                ),
+                mobile: firstText(
+                    readPhone(primaryContact.mobile),
+                    readPhone(primaryContact.cellphone),
+                    readPhone(primaryContact.handy),
+                ),
                 is_primary: true,
                 updated_at: new Date(),
             };
@@ -265,7 +312,14 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 first_name: firstName,
                 last_name: lastName,
                 email: textOrNull(customer.email),
-                phone: textOrNull(customer.phone),
+                phone: firstText(
+                    readPhone(customer.phone),
+                    readPhone(customer.telefon),
+                    readPhone(customer.phone_numbers),
+                    readPhone(customer.phones),
+                    readPhone(customer.phoneNumbers),
+                    readPhone(customer.contact?.phone),
+                ),
                 street: addr.street,
                 zip: addr.zip,
                 city: addr.city,

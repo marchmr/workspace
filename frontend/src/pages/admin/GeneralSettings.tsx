@@ -90,6 +90,7 @@ export default function GeneralSettings() {
     const [testingConnector, setTestingConnector] = useState(false);
     const [checkingExternalConnection, setCheckingExternalConnection] = useState(false);
     const [loadingConnectorEvents, setLoadingConnectorEvents] = useState(false);
+    const [deletingConnectorEvents, setDeletingConnectorEvents] = useState(false);
     const [connectorEvents, setConnectorEvents] = useState<ConnectorEventLogItem[]>([]);
     const [connectorEventSummary, setConnectorEventSummary] = useState<ConnectorEventLogResponse['summary']>({
         total: 0,
@@ -158,6 +159,32 @@ export default function GeneralSettings() {
             }
         } finally {
             setLoadingConnectorEvents(false);
+        }
+    };
+
+    const deleteConnectorEvents = async (mode: 'older24h' | 'all') => {
+        const confirmationText = mode === 'all'
+            ? 'Alle Connector-Events wirklich löschen?'
+            : 'Alle Connector-Events älter als 24h löschen?';
+        if (!window.confirm(confirmationText)) return;
+
+        setDeletingConnectorEvents(true);
+        try {
+            const payload = mode === 'all'
+                ? { confirm: true }
+                : { confirm: true, olderThanHours: 24 };
+            const res = await apiFetch('/api/admin/settings/accounting-connector/events', {
+                method: 'DELETE',
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || `Löschen fehlgeschlagen (HTTP ${res.status})`);
+            toast.success(`${Number(data?.deleted || 0)} Event(s) gelöscht`);
+            await loadConnectorEvents();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Connector-Events konnten nicht gelöscht werden');
+        } finally {
+            setDeletingConnectorEvents(false);
         }
     };
 
@@ -460,6 +487,22 @@ export default function GeneralSettings() {
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={loadConnectorEvents} disabled={loadingConnectorEvents}>
                                 {loadingConnectorEvents ? 'Lädt...' : 'Events aktualisieren'}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => deleteConnectorEvents('older24h')}
+                                disabled={deletingConnectorEvents}
+                            >
+                                {deletingConnectorEvents ? 'Löscht...' : 'Events >24h löschen'}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-danger"
+                                onClick={() => deleteConnectorEvents('all')}
+                                disabled={deletingConnectorEvents}
+                            >
+                                {deletingConnectorEvents ? 'Löscht...' : 'Alle Events löschen'}
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={() => checkExternalConnection()} disabled={checkingExternalConnection}>
                                 {checkingExternalConnection ? 'Prüfe...' : 'Externe Verbindung prüfen'}

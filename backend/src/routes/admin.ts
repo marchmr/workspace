@@ -1364,6 +1364,70 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         });
     });
 
+    // DELETE /api/admin/settings/accounting-connector/events
+    fastify.delete('/settings/accounting-connector/events', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const body = (request.body || {}) as {
+            confirm?: boolean;
+            olderThanHours?: number;
+            eventType?: string;
+            sourceIp?: string;
+            status?: 'processed' | 'failed';
+        };
+
+        if (body.confirm !== true) {
+            return reply.status(400).send({ error: 'Löschen erfordert confirm=true' });
+        }
+
+        const hasEventsTable = await db.schema.hasTable('accounting_connector_events');
+        if (!hasEventsTable) {
+            return reply.send({ deleted: 0 });
+        }
+
+        const query = db('accounting_connector_events');
+        const appliedFilters: Record<string, any> = {};
+
+        const olderThanHours = Number(body.olderThanHours);
+        if (Number.isFinite(olderThanHours) && olderThanHours > 0) {
+            const cutoff = new Date(Date.now() - Math.round(olderThanHours * 60 * 60 * 1000));
+            query.where('created_at', '<', cutoff);
+            appliedFilters.olderThanHours = Math.round(olderThanHours);
+        }
+
+        const eventType = String(body.eventType || '').trim().toLowerCase();
+        if (eventType) {
+            query.where('event_type', eventType);
+            appliedFilters.eventType = eventType;
+        }
+
+        const sourceIp = String(body.sourceIp || '').trim();
+        if (sourceIp) {
+            query.where('source_ip', sourceIp);
+            appliedFilters.sourceIp = sourceIp;
+        }
+
+        const status = String(body.status || '').trim().toLowerCase();
+        if (status === 'processed' || status === 'failed') {
+            query.where('status', status);
+            appliedFilters.status = status;
+        }
+
+        const deleted = await query.delete();
+
+        await fastify.audit.log({
+            action: 'admin.settings.accounting_connector.events.deleted',
+            category: 'admin',
+            entityType: 'accounting_connector_events',
+            entityId: 'bulk-delete',
+            newState: {
+                deleted,
+                filters: appliedFilters,
+            },
+            tenantId: null,
+        }, request);
+
+        return reply.send({ deleted: Number(deleted || 0), filters: appliedFilters });
+    });
+
     // GET /api/admin/settings/plugin/:pluginId -- Einstellungen eines Plugins (entschlüsselt)
     fastify.get('/settings/plugin/:pluginId', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { pluginId } = request.params as { pluginId: string };
