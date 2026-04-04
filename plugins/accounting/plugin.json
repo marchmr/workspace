@@ -1,0 +1,16 @@
+{
+  "id": "accounting",
+  "name": "Accounting Portal",
+  "version": "1.0.0",
+  "description": "Anzeige von Rechnungen, Angeboten, Gutschriften, Stornos und Mahnungen im Kundenportal",
+  "author": "Hammer Team",
+  "dependencies": ["kundenportal"],
+  "backend_entry": "backend/index.ts",
+  "frontend_entry": "frontend/index.tsx",
+  "nav_icon": "file-text",
+  "nav_label": "Accounting",
+  "nav_order": 35,
+  "permissions": [],
+  "settings_page": false
+}</content>
+<parameter name="filePath">/Users/marchammer/Documents/workspace webdesign hammer/Hauptseite/plugins/accounting/plugin.json

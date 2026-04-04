@@ -674,4 +674,195 @@ export default async function importExportRoutes(fastify: FastifyInstance): Prom
             doc.end();
         });
     });
+
+    // ══════════════════════════════════════════
+    // POST /import/accounting/preview — Accounting data preview
+    // ══════════════════════════════════════════
+    fastify.post('/import/accounting/preview', {
+        preHandler: [requirePermission('crm.create')],
+        schema: {
+            description: 'Preview accounting customer data import',
+            tags: ['CRM', 'Import'],
+            response: {
+                200: {
+                    type: 'object',
+                    properties: {
+                        customers: {
+                            type: 'array',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    customer_number: { type: 'string' },
+                                    company: { type: 'string' },
+                                    first_name: { type: 'string' },
+                                    last_name: { type: 'string' },
+                                    email: { type: 'string' },
+                                    phone: { type: 'string' },
+                                    address: { type: 'string' },
+                                    city: { type: 'string' },
+                                    zip: { type: 'string' },
+                                    country: { type: 'string' },
+                                    action: { type: 'string', enum: ['create', 'update'] }
+                                }
+                            }
+                        },
+                        total: { type: 'number' }
+                    }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const db = getDatabase();
+
+        // Get all customer events from accounting connector
+        const events = await db('accounting_connector_events')
+            .whereIn('event_type', ['customer.created', 'customer.updated'])
+            .orderBy('created_at', 'desc');
+
+        const customers: any[] = [];
+        const processed = new Set<string>();
+
+        for (const event of events) {
+            const payload = JSON.parse(event.payload_json);
+            const customerData = payload.customer;
+
+            if (!customerData || processed.has(customerData.id)) continue;
+            processed.add(customerData.id);
+
+            // Check if customer already exists
+            const existingCustomer = await db('crm_customers')
+                .where('customer_number', customerData.id)
+                .first();
+
+            const customer = {
+                customer_number: customerData.id,
+                company: customerData.company || '',
+                first_name: customerData.first_name || '',
+                last_name: customerData.last_name || '',
+                email: customerData.email || '',
+                phone: customerData.phone || '',
+                address: customerData.address?.street || '',
+                city: customerData.address?.city || '',
+                zip: customerData.address?.zip || '',
+                country: customerData.address?.country || 'Deutschland',
+                action: existingCustomer ? 'update' : 'create'
+            };
+
+            customers.push(customer);
+        }
+
+        return { customers, total: customers.length };
+    });
+
+    // ══════════════════════════════════════════
+    // POST /import/accounting/execute — Execute accounting data import
+    // ══════════════════════════════════════════
+    fastify.post('/import/accounting/execute', {
+        preHandler: [requirePermission('crm.create')],
+        schema: {
+            description: 'Execute accounting customer data import',
+            tags: ['CRM', 'Import'],
+            response: {
+                200: {
+                    type: 'object',
+                    properties: {
+                        imported: { type: 'number' },
+                        updated: { type: 'number' },
+                        errors: {
+                            type: 'array',
+                            items: { type: 'string' }
+                        }
+                    }
+                }
+            }
+        }
+    }, async (request, reply) => {
+        const db = getDatabase();
+
+        // Get all customer events from accounting connector
+        const events = await db('accounting_connector_events')
+            .whereIn('event_type', ['customer.created', 'customer.updated'])
+            .orderBy('created_at', 'desc');
+
+        let imported = 0;
+        let updated = 0;
+        const errors: string[] = [];
+        const processed = new Set<string>();
+
+        for (const event of events) {
+            try {
+                const payload = JSON.parse(event.payload_json);
+                const customerData = payload.customer;
+
+                if (!customerData || processed.has(customerData.id)) continue;
+                processed.add(customerData.id);
+
+                // Check if customer already exists
+                const existingCustomer = await db('crm_customers')
+                    .where('customer_number', customerData.id)
+                    .first();
+
+                const customerRecord: any = {
+                    customer_number: customerData.id,
+                    company: customerData.company || '',
+                    first_name: customerData.first_name || '',
+                    last_name: customerData.last_name || '',
+                    email: customerData.email || '',
+                    phone: customerData.phone || '',
+                    address: customerData.address?.street || '',
+                    city: customerData.address?.city || '',
+                    zip: customerData.address?.zip || '',
+                    country: customerData.address?.country || 'Deutschland',
+                    updated_at: new Date()
+                };
+
+                if (existingCustomer) {
+                    // Update existing customer
+                    await db('crm_customers')
+                        .where('id', existingCustomer.id)
+                        .update(customerRecord);
+                    updated++;
+                } else {
+                    // Create new customer
+                    customerRecord.created_at = new Date();
+                    await db('crm_customers').insert(customerRecord);
+                    imported++;
+                }
+
+                // Handle contact person if present
+                if (customerData.contact_person) {
+                    const contactRecord: any = {
+                        customer_id: existingCustomer ? existingCustomer.id : (await db('crm_customers').where('customer_number', customerData.id).first()).id,
+                        first_name: customerData.contact_person.first_name || '',
+                        last_name: customerData.contact_person.last_name || '',
+                        email: customerData.contact_person.email || '',
+                        phone: customerData.contact_person.phone || '',
+                        position: customerData.contact_person.position || '',
+                        is_primary: true,
+                        updated_at: new Date()
+                    };
+
+                    // Check if contact already exists
+                    const existingContact = await db('crm_contacts')
+                        .where('customer_id', contactRecord.customer_id)
+                        .where('email', contactRecord.email)
+                        .first();
+
+                    if (existingContact) {
+                        await db('crm_contacts')
+                            .where('id', existingContact.id)
+                            .update(contactRecord);
+                    } else {
+                        contactRecord.created_at = new Date();
+                        await db('crm_contacts').insert(contactRecord);
+                    }
+                }
+
+            } catch (error: any) {
+                errors.push(`Error processing customer ${event.id}: ${error.message}`);
+            }
+        }
+
+        return { imported, updated, errors };
+    });
 }
