@@ -140,13 +140,15 @@ function buildFallbackCustomerNumber(payload: any, customer: any): string {
 
 function readCustomerNumber(payload: any, customer: any): string {
     const candidates = [
-        customer?.id,
-        customer?.customer_id,
         customer?.customer_number,
         customer?.number,
-        customer?.uuid,
-        payload?.customer_id,
         payload?.customer_number,
+        payload?.entity_id,
+        customer?.customer_id,
+        customer?.id,
+        customer?.number,
+        payload?.customer_id,
+        customer?.uuid,
     ];
     for (const value of candidates) {
         const normalized = String(value ?? '').trim();

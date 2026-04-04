@@ -1374,6 +1374,8 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
             eventType?: string;
             sourceIp?: string;
             status?: 'processed' | 'failed';
+            includeDocuments?: boolean;
+            includeFiles?: boolean;
         };
 
         if (body.confirm !== true) {
@@ -1387,6 +1389,8 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
 
         const query = db('accounting_connector_events');
         const appliedFilters: Record<string, any> = {};
+        const includeDocuments = body.includeDocuments === true;
+        const includeFiles = body.includeFiles === true;
 
         const olderThanHours = Number(body.olderThanHours);
         if (Number.isFinite(olderThanHours) && olderThanHours > 0) {
@@ -1413,7 +1417,51 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
             appliedFilters.status = status;
         }
 
+        const matchingEvents = await query.clone().select('id', 'event_id');
+        const eventIds = matchingEvents.map((row: any) => String(row.event_id || '')).filter(Boolean);
         const deleted = await query.delete();
+
+        let projectionDeleted = 0;
+        let filesDeleted = 0;
+        if (includeDocuments && eventIds.length > 0) {
+            const hasDocumentsTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (hasDocumentsTable) {
+                const chunkSize = 500;
+                for (let start = 0; start < eventIds.length; start += chunkSize) {
+                    const chunk = eventIds.slice(start, start + chunkSize);
+                    if (chunk.length === 0) continue;
+
+                    if (includeFiles) {
+                        const paths = await db('accounting_connector_documents')
+                            .whereIn('event_id', chunk)
+                            .whereNotNull('pdf_storage_path')
+                            .pluck('pdf_storage_path');
+
+                        for (const rawPath of paths) {
+                            const normalized = String(rawPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+                            if (!normalized) continue;
+                            try {
+                                const uploadsRoot = path.resolve(config.app.uploadsDir);
+                                const absolutePath = path.resolve(uploadsRoot, normalized);
+                                const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+                                if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) {
+                                    continue;
+                                }
+                                await fs.rm(absolutePath, { force: true });
+                                filesDeleted += 1;
+                            } catch {
+                                // Datei-Löschfehler sind nicht blockierend
+                            }
+                        }
+                    }
+
+                    const chunkDeleted = await db('accounting_connector_documents')
+                        .whereIn('event_id', chunk)
+                        .delete();
+                    projectionDeleted += Number(chunkDeleted || 0);
+                }
+            }
+        }
 
         await fastify.audit.log({
             action: 'admin.settings.accounting_connector.events.deleted',
@@ -1423,11 +1471,22 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
             newState: {
                 deleted,
                 filters: appliedFilters,
+                includeDocuments,
+                includeFiles,
+                projectionDeleted,
+                filesDeleted,
             },
             tenantId: null,
         }, request);
 
-        return reply.send({ deleted: Number(deleted || 0), filters: appliedFilters });
+        return reply.send({
+            deleted: Number(deleted || 0),
+            filters: appliedFilters,
+            includeDocuments,
+            includeFiles,
+            projectionDeleted,
+            filesDeleted,
+        });
     });
 
     // GET /api/admin/settings/plugin/:pluginId -- Einstellungen eines Plugins (entschlüsselt)

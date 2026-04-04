@@ -1,4 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { createReadStream } from 'fs';
+import { rm, stat } from 'fs/promises';
+import path from 'path';
+import { config } from '../../../../backend/src/core/config.js';
 import { getDatabase } from '../../../../backend/src/core/database.js';
 import { requirePermission } from '../../../../backend/src/core/permissions.js';
 
@@ -30,6 +34,80 @@ function getDisplayName(customer: any): string {
         return customer.company_name;
     }
     return [customer.first_name, customer.last_name].filter(Boolean).join(' ') || 'Unbenannt';
+}
+
+function asText(value: unknown): string {
+    return String(value ?? '').trim();
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function resolveAccountingPdfPath(relativePath: string): string {
+    const uploadsRoot = path.resolve(config.app.uploadsDir);
+    const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+    const absolutePath = path.resolve(uploadsRoot, normalized);
+    const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+    if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) {
+        throw new Error('Ungültiger PDF-Pfad');
+    }
+    return absolutePath;
+}
+
+async function removeAccountingDataForCustomer(db: any, customerId: number, customerNumber: string | null): Promise<{ documentsDeleted: number; filesDeleted: number }> {
+    const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+    if (!hasProjection) return { documentsDeleted: 0, filesDeleted: 0 };
+
+    const identifiers = [String(customerId), asText(customerNumber)].filter(Boolean);
+    const rows = await db('accounting_connector_documents')
+        .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno', 'customer'])
+        .andWhere(function customerFilter(this: any) {
+            this.whereIn('customer_id', identifiers)
+                .orWhereIn('customer_number', identifiers)
+                .orWhereIn('entity_id', identifiers);
+        })
+        .select('id', 'pdf_storage_path');
+
+    if (rows.length === 0) return { documentsDeleted: 0, filesDeleted: 0 };
+
+    let filesDeleted = 0;
+    for (const row of rows) {
+        const storagePath = asText(row.pdf_storage_path);
+        if (!storagePath) continue;
+        try {
+            const absolutePath = resolveAccountingPdfPath(storagePath);
+            await rm(absolutePath, { force: true });
+            filesDeleted += 1;
+        } catch {
+            // Datei-Fehler nicht blockierend
+        }
+    }
+
+    const ids = rows.map((row: any) => Number(row.id)).filter((value: number) => Number.isInteger(value) && value > 0);
+    if (ids.length === 0) return { documentsDeleted: 0, filesDeleted };
+
+    const documentsDeleted = Number(await db('accounting_connector_documents').whereIn('id', ids).delete() || 0);
+    return { documentsDeleted, filesDeleted };
+}
+
+async function syncAccountingCustomerNumber(db: any, oldNumber: string, nextNumber: string): Promise<number> {
+    const previous = asText(oldNumber);
+    const next = asText(nextNumber);
+    if (!previous || !next || previous === next) return 0;
+
+    const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+    if (!hasProjection) return 0;
+
+    const updated = await db('accounting_connector_documents')
+        .where('customer_number', previous)
+        .update({
+            customer_number: next,
+            updated_at: new Date(),
+        });
+
+    return Number(updated || 0);
 }
 
 /* ════════════════════════════════════════════
@@ -177,6 +255,120 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         const tenantId = (request.user as any).tenantId;
         const nextNumber = await generateCustomerNumber(tenantId);
         return reply.send({ nextNumber });
+    });
+
+    // ─── GET /:id/accounting-documents — Accounting-Dokumente für einen CRM-Kunden ───
+    fastify.get('/:id/accounting-documents', { preHandler: [requirePermission('crm.view')] }, async (request: FastifyRequest, reply: FastifyReply) => {
+        const { id } = request.params as { id: string };
+        const tenantId = (request.user as any).tenantId;
+
+        const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (!hasProjection) {
+            return reply.send({ items: [] });
+        }
+
+        const customer = await db('crm_customers')
+            .where({ id, tenant_id: tenantId })
+            .first('id', 'customer_number');
+        if (!customer) {
+            return reply.status(404).send({ error: 'Kunde nicht gefunden' });
+        }
+
+        const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
+        const rows = await db('accounting_connector_documents')
+            .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
+            .andWhere(function customerFilter(this: any) {
+                this.whereIn('customer_id', identifiers)
+                    .orWhereIn('customer_number', identifiers)
+                    .orWhereIn('entity_id', identifiers);
+            })
+            .orderBy('updated_at', 'desc')
+            .select(
+                'record_key',
+                'document_category',
+                'document_id',
+                'document_number',
+                'document_status',
+                'payment_status',
+                'amount_total',
+                'amount_paid',
+                'amount_open',
+                'currency',
+                'document_date',
+                'due_date',
+                'paid_at',
+                'pdf_file_name',
+                'pdf_storage_path',
+                'updated_at',
+            );
+
+        const items = rows.map((row: any) => ({
+            recordKey: asText(row.record_key),
+            category: asText(row.document_category),
+            documentId: asText(row.document_id),
+            documentNumber: asText(row.document_number),
+            documentStatus: asText(row.document_status),
+            paymentStatus: asText(row.payment_status),
+            amountTotal: asNumber(row.amount_total, 0),
+            amountPaid: asNumber(row.amount_paid, 0),
+            amountOpen: asNumber(row.amount_open, 0),
+            currency: asText(row.currency) || 'EUR',
+            documentDate: asText(row.document_date) || null,
+            dueDate: asText(row.due_date) || null,
+            paidAt: asText(row.paid_at) || null,
+            hasPdf: Boolean(asText(row.pdf_storage_path)),
+            updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+        }));
+
+        return reply.send({ items });
+    });
+
+    // ─── GET /:id/accounting-documents/:recordKey/pdf — PDF aus CRM-Kundenakte ───
+    fastify.get('/:id/accounting-documents/:recordKey/pdf', { preHandler: [requirePermission('crm.view')] }, async (request: FastifyRequest, reply: FastifyReply) => {
+        const { id, recordKey } = request.params as { id: string; recordKey: string };
+        const tenantId = (request.user as any).tenantId;
+
+        const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (!hasProjection) {
+            return reply.status(404).send({ error: 'PDF nicht verfügbar' });
+        }
+
+        const customer = await db('crm_customers')
+            .where({ id, tenant_id: tenantId })
+            .first('id', 'customer_number');
+        if (!customer) {
+            return reply.status(404).send({ error: 'Kunde nicht gefunden' });
+        }
+
+        const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
+        const row = await db('accounting_connector_documents')
+            .where({ record_key: recordKey })
+            .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
+            .andWhere(function customerFilter(this: any) {
+                this.whereIn('customer_id', identifiers)
+                    .orWhereIn('customer_number', identifiers)
+                    .orWhereIn('entity_id', identifiers);
+            })
+            .first('pdf_storage_path', 'pdf_file_name');
+
+        if (!row?.pdf_storage_path) {
+            return reply.status(404).send({ error: 'PDF nicht gefunden' });
+        }
+
+        const absolutePath = resolveAccountingPdfPath(String(row.pdf_storage_path));
+        await stat(absolutePath);
+
+        const fileName = asText(row.pdf_file_name) || 'dokument.pdf';
+        const encodedName = encodeURIComponent(fileName)
+            .replace(/['()]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+            .replace(/\*/g, '%2A');
+
+        reply
+            .header('Content-Type', 'application/pdf')
+            .header('Content-Disposition', `attachment; filename*=UTF-8''${encodedName}`)
+            .header('Cache-Control', 'private, max-age=0, must-revalidate');
+
+        return reply.send(createReadStream(absolutePath));
     });
 
     // ─── POST /check-duplicates — Duplikat-Warnung ───
@@ -402,6 +594,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         const update: any = { updated_at: new Date() };
 
         const fields = [
+            'customer_number',
             'type', 'company_name', 'salutation', 'first_name', 'last_name', 'email',
             'phone', 'mobile', 'fax', 'website', 'street', 'zip', 'city', 'country',
             'vat_id', 'industry', 'category', 'status', 'payment_terms', 'notes_internal',
@@ -417,7 +610,22 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             update.custom_fields = body.custom_fields ? JSON.stringify(body.custom_fields) : null;
         }
 
+        const nextCustomerNumber = asText(update.customer_number);
+        if (Object.prototype.hasOwnProperty.call(update, 'customer_number') && !nextCustomerNumber) {
+            return reply.status(400).send({ error: 'Kundennummer darf nicht leer sein' });
+        }
+        if (nextCustomerNumber && nextCustomerNumber !== asText(existing.customer_number)) {
+            const duplicate = await db('crm_customers')
+                .where({ tenant_id: tenantId, customer_number: nextCustomerNumber })
+                .whereNot('id', id)
+                .first('id');
+            if (duplicate) {
+                return reply.status(400).send({ error: 'Kundennummer bereits vergeben' });
+            }
+        }
+
         await db('crm_customers').where('id', id).update(update);
+        await syncAccountingCustomerNumber(db, asText(existing.customer_number), nextCustomerNumber);
         const customer = await db('crm_customers').where('id', id).first();
 
         // Audit-Log
@@ -449,6 +657,7 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
         }
 
         const allowedFields = [
+            'customer_number',
             'type', 'company_name', 'salutation', 'first_name', 'last_name', 'email',
             'phone', 'mobile', 'fax', 'website', 'street', 'zip', 'city', 'country',
             'vat_id', 'industry', 'category', 'status', 'payment_terms', 'notes_internal',
@@ -472,7 +681,22 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             return reply.status(400).send({ error: 'Kein gültiges Feld angegeben' });
         }
 
+        const nextCustomerNumber = asText(update.customer_number);
+        if (Object.prototype.hasOwnProperty.call(update, 'customer_number') && !nextCustomerNumber) {
+            return reply.status(400).send({ error: 'Kundennummer darf nicht leer sein' });
+        }
+        if (nextCustomerNumber && nextCustomerNumber !== asText(existing.customer_number)) {
+            const duplicate = await db('crm_customers')
+                .where({ tenant_id: tenantId, customer_number: nextCustomerNumber })
+                .whereNot('id', id)
+                .first('id');
+            if (duplicate) {
+                return reply.status(400).send({ error: 'Kundennummer bereits vergeben' });
+            }
+        }
+
         await db('crm_customers').where('id', id).update(update);
+        await syncAccountingCustomerNumber(db, asText(existing.customer_number), nextCustomerNumber);
 
         // Status-Änderung als Aktivität loggen
         if (update.status && update.status !== existing.status) {
@@ -512,6 +736,12 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             return reply.status(404).send({ error: 'Kunde nicht gefunden' });
         }
 
+        const accountingCleanup = await removeAccountingDataForCustomer(
+            db,
+            Number(existing.id),
+            asText(existing.customer_number) || null,
+        );
+
         // Cascading: activities, favorites, recent werden per FK CASCADE gelöscht
         await db('crm_customers').where('id', id).delete();
 
@@ -521,10 +751,11 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             entityType: 'crm_customers',
             entityId: String(id),
             previousState: { customer_number: existing.customer_number, company_name: existing.company_name, type: existing.type },
+            newState: accountingCleanup,
             pluginId: 'crm',
         }, request);
 
-        return reply.send({ success: true });
+        return reply.send({ success: true, accountingCleanup });
     });
 
     // ─── PATCH /bulk/status — Status für mehrere Kunden ändern ───
@@ -597,7 +828,17 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             .whereIn('id', ids)
             .select('id', 'customer_number', 'company_name', 'type');
 
+        let documentsDeleted = 0;
+        let filesDeleted = 0;
         for (const customer of customers) {
+            const accountingCleanup = await removeAccountingDataForCustomer(
+                db,
+                Number(customer.id),
+                asText(customer.customer_number) || null,
+            );
+            documentsDeleted += accountingCleanup.documentsDeleted;
+            filesDeleted += accountingCleanup.filesDeleted;
+
             await db('crm_customers').where('id', customer.id).delete();
 
             await fastify.audit.log({
@@ -606,11 +847,16 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
                 entityType: 'crm_customers',
                 entityId: String(customer.id),
                 previousState: { customer_number: customer.customer_number, company_name: customer.company_name },
+                newState: accountingCleanup,
                 pluginId: 'crm',
             }, request);
         }
 
-        return reply.send({ success: true, deleted: customers.length });
+        return reply.send({
+            success: true,
+            deleted: customers.length,
+            accountingCleanup: { documentsDeleted, filesDeleted },
+        });
     });
 
     // ─── GET /search — Globale Suche ───

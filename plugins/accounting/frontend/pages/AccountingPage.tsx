@@ -49,13 +49,19 @@ function formatDate(dateStr: string | null): string {
 }
 
 function getStatusColor(status: string): string {
-    switch (status.toLowerCase()) {
+    const normalized = status.toLowerCase();
+    switch (normalized) {
         case 'finalized':
+        case 'gebucht':
         case 'paid':
+        case 'bezahlt':
             return 'text-green-600';
         case 'open':
+        case 'offen':
+        case 'teilbezahlt':
             return 'text-yellow-600';
         case 'overdue':
+        case 'überfällig':
             return 'text-red-600';
         default:
             return 'text-gray-600';
@@ -63,21 +69,33 @@ function getStatusColor(status: string): string {
 }
 
 function displayPaymentStatus(doc: AccountingDocument): string {
-    const payment = String(doc.paymentStatus || '').trim();
-    if (payment) {
-        if (payment.toLowerCase() === 'finalized') return 'gebucht';
-        return payment;
+    const raw = String(doc.paymentStatus || doc.documentStatus || '').trim().toLowerCase();
+    if (!raw) return '-';
+
+    if (raw === 'finalized') return 'gebucht';
+    if (raw === 'paid') return 'bezahlt';
+    if (raw === 'partially_paid' || raw === 'partial' || raw === 'partly_paid') return 'teilbezahlt';
+    if (raw === 'open') return 'offen';
+    if (raw === 'overdue') return 'überfällig';
+    if (raw === 'cancelled') return 'storniert';
+    if (raw === 'draft') return 'entwurf';
+    if (raw === 'sent') return 'versendet';
+
+    if (doc.amountOpen > 0 && doc.amountPaid > 0) {
+        return 'teilbezahlt';
     }
-    const status = String(doc.documentStatus || '').trim();
-    if (status.toLowerCase() === 'finalized') return 'gebucht';
-    return status || '-';
+    if (doc.amountOpen <= 0 && doc.amountPaid > 0) {
+        return 'bezahlt';
+    }
+
+    return raw;
 }
 
 function DocumentTable({ documents, category, sessionToken }: { documents: AccountingDocument[], category: string, sessionToken?: string }) {
     const filteredDocs = documents.filter(doc => doc.documentCategory === category);
 
     if (filteredDocs.length === 0) {
-        return <p className="text-gray-500">Keine {category} gefunden.</p>;
+        return <p className="text-gray-500">Keine Dokumente in dieser Kategorie gefunden.</p>;
     }
 
     return (
@@ -121,7 +139,7 @@ function DocumentTable({ documents, category, sessionToken }: { documents: Accou
                                         className="btn btn-secondary btn-sm"
                                         href={`${API_BASE}/documents/${encodeURIComponent(doc.id)}/pdf?sessionToken=${encodeURIComponent(sessionToken)}`}
                                     >
-                                        Download
+                                        Herunterladen
                                     </a>
                                 ) : null}
                             </td>
@@ -157,7 +175,7 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
 
                 // Dokumente laden
                 const docsResponse = await fetch(`${API_BASE}/documents?${qs}`);
-                if (!docsResponse.ok) throw new Error(`Failed to load documents (${docsResponse.status})`);
+                if (!docsResponse.ok) throw new Error(`Dokumente konnten nicht geladen werden (${docsResponse.status})`);
                 const docsData = await docsResponse.json();
                 setDocuments(docsData.documents || []);
 
@@ -169,7 +187,7 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
                 }
 
             } catch (err) {
-                setError(err instanceof Error ? err.message : 'Unknown error');
+                setError(err instanceof Error ? err.message : 'Unbekannter Fehler');
             } finally {
                 setLoading(false);
             }
@@ -201,23 +219,29 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
             {customer && (
                 <div className="bg-white shadow rounded-lg p-6 mb-6">
                     <h2 className="text-xl font-semibold mb-4">Kundendaten</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <p className="text-sm text-gray-600">Name</p>
-                            <p className="font-medium">{customer.name}</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">Kundennummer</p>
-                            <p className="font-medium">{customer.customerNumber}</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">Adresse</p>
-                            <p className="font-medium whitespace-pre-line">{customer.address}</p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">E-Mail</p>
-                            <p className="font-medium">{customer.email || '-'}</p>
-                        </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                        <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                            <div>
+                                <dt className="text-xs uppercase tracking-wide text-gray-500">Name</dt>
+                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.name || '-'}</dd>
+                            </div>
+                            <div>
+                                <dt className="text-xs uppercase tracking-wide text-gray-500">Kundennummer</dt>
+                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.customerNumber || '-'}</dd>
+                            </div>
+                            <div>
+                                <dt className="text-xs uppercase tracking-wide text-gray-500">E-Mail</dt>
+                                <dd className="text-base font-medium text-gray-900 mt-1 break-all">{customer.email || '-'}</dd>
+                            </div>
+                            <div>
+                                <dt className="text-xs uppercase tracking-wide text-gray-500">Ansprechperson</dt>
+                                <dd className="text-base font-medium text-gray-900 mt-1">{customer.contactPerson || '-'}</dd>
+                            </div>
+                            <div className="md:col-span-2">
+                                <dt className="text-xs uppercase tracking-wide text-gray-500">Adresse</dt>
+                                <dd className="text-base font-medium text-gray-900 mt-1 whitespace-pre-line">{customer.address || '-'}</dd>
+                            </div>
+                        </dl>
                     </div>
                 </div>
             )}
