@@ -1145,10 +1145,11 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         const nonce = `nonce_${Date.now()}_${Math.round(Math.random() * 100000)}`;
         const payload = {
             event_id: eventId,
-            event_type: 'rechnung.created',
+            event_type: 'customer.updated',
             occurred_at: timestamp,
             instance: { name: 'hammer-core-selftest' },
-            document: { id: 0, nummer: 'TEST-0', status: 'finalisiert', datum: timestamp.slice(0, 10), betrag_brutto: 0, waehrung: 'EUR' },
+            document_category: 'customer',
+            entity_id: 'TEST-CUSTOMER-1',
             customer: { id: 0, customer_number: 'TEST', name: 'Connector Testkunde', kind: 'firma' },
         };
         const raw = JSON.stringify(payload);
@@ -1159,6 +1160,7 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
 
         const headers: Record<string, string> = {
             'content-type': 'application/json',
+            'x-hammer-api-key': connector.apiKey,
             'x-hammer-event-id': eventId,
             'x-hammer-timestamp': timestamp,
             'x-hammer-nonce': nonce,

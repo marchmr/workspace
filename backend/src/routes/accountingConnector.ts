@@ -1,5 +1,8 @@
 import crypto from 'crypto';
+import { mkdir, writeFile } from 'fs/promises';
+import path from 'path';
 import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { config } from '../core/config.js';
 import {
     loadAccountingConnectorSettings,
     normalizeIncomingEventType,
@@ -9,8 +12,52 @@ type AccountingEventPayload = {
     event_id?: unknown;
     event_type?: unknown;
     occurred_at?: unknown;
+    details?: unknown;
     [key: string]: unknown;
 };
+
+type AccountingDocumentCategory = 'rechnung' | 'angebot' | 'mahnung' | 'gutschrift' | 'storno' | 'customer';
+
+type ParsedPdf = {
+    fileName: string;
+    sha256: string;
+    buffer: Buffer;
+};
+
+type ParsedAccountingEvent = {
+    source: string;
+    category: AccountingDocumentCategory;
+    documentId: string;
+    recordKey: string;
+    documentNumber: string | null;
+    documentStatus: string | null;
+    paymentStatus: string | null;
+    amountTotal: number | null;
+    amountPaid: number | null;
+    amountOpen: number | null;
+    currency: string | null;
+    documentDate: string | null;
+    dueDate: string | null;
+    paidAt: string | null;
+    finalizedAt: string | null;
+    entityId: string | null;
+    customerId: string | null;
+    customerNumber: string | null;
+    sourceInvoiceId: string | null;
+    relatedInvoiceId: string | null;
+    sourceCreditId: string | null;
+    eventTypeOriginal: string | null;
+    pdf: ParsedPdf | null;
+};
+
+class ProcessingHttpError extends Error {
+    statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+        super(message);
+        this.statusCode = statusCode;
+    }
+}
 
 function readHeader(request: FastifyRequest, headerName: string): string {
     const value = request.headers[headerName.toLowerCase()];
@@ -48,6 +95,256 @@ function parseSignature(headerValue: string): string | null {
     return match ? match[1].toLowerCase() : null;
 }
 
+function asText(value: unknown): string {
+    return String(value ?? '').trim();
+}
+
+function asOptionalText(value: unknown): string | null {
+    const normalized = asText(value);
+    return normalized ? normalized : null;
+}
+
+function asNumberOrNull(value: unknown): number | null {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed;
+}
+
+function normalizeCategory(value: unknown): AccountingDocumentCategory | null {
+    const raw = asText(value).toLowerCase();
+    if (!raw) return null;
+
+    if (raw === 'rechnung' || raw === 'invoice') return 'rechnung';
+    if (raw === 'angebot' || raw === 'offer' || raw === 'quote') return 'angebot';
+    if (raw === 'mahnung' || raw === 'dunning' || raw === 'reminder') return 'mahnung';
+    if (raw === 'gutschrift' || raw === 'credit' || raw === 'credit_note') return 'gutschrift';
+    if (raw === 'storno' || raw === 'cancel' || raw === 'cancellation') return 'storno';
+    if (raw === 'customer' || raw === 'kunde') return 'customer';
+
+    return null;
+}
+
+function normalizeSource(value: unknown): string {
+    const raw = asText(value).toLowerCase();
+    if (!raw) return 'hammer';
+    return raw.slice(0, 120);
+}
+
+function sanitizeFileName(fileName: string): string {
+    const clean = fileName.replace(/[\\/:*?"<>|]+/g, '_').trim();
+    return clean || 'document.pdf';
+}
+
+function sanitizePathSegment(input: string): string {
+    const safe = input.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^_+|_+$/g, '');
+    return safe || 'unknown';
+}
+
+function decodeBase64Strict(input: string): Buffer | null {
+    const normalized = input.replace(/\s+/g, '');
+    if (!normalized || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+        return null;
+    }
+
+    try {
+        const decoded = Buffer.from(normalized, 'base64');
+        if (decoded.length === 0) return null;
+        const check = decoded.toString('base64').replace(/=+$/g, '');
+        const expected = normalized.replace(/=+$/g, '');
+        return check === expected ? decoded : null;
+    } catch {
+        return null;
+    }
+}
+
+async function storePdfFile(parsed: ParsedAccountingEvent): Promise<string | null> {
+    if (!parsed.pdf) return null;
+
+    const targetDir = path.resolve(
+        config.app.uploadsDir,
+        'accounting-connector',
+        sanitizePathSegment(parsed.source),
+        sanitizePathSegment(parsed.category),
+        sanitizePathSegment(parsed.documentId),
+    );
+    await mkdir(targetDir, { recursive: true });
+
+    const absolutePath = path.join(targetDir, parsed.pdf.fileName);
+    await writeFile(absolutePath, parsed.pdf.buffer);
+
+    return path.relative(config.app.uploadsDir, absolutePath).replace(/\\/g, '/');
+}
+
+function parseIncomingAccountingPayload(payload: AccountingEventPayload): ParsedAccountingEvent {
+    const document = payload?.document && typeof payload.document === 'object' ? payload.document as Record<string, unknown> : {};
+    const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
+    const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
+
+    const category = normalizeCategory(payload?.document_category ?? document?.category ?? document?.typ);
+    if (!category) {
+        throw new ProcessingHttpError(422, 'Ungültige oder fehlende document_category');
+    }
+
+    const source = normalizeSource(payload?.source ?? details?.source);
+    const entityId = asOptionalText(payload?.entity_id ?? payload?.entityId ?? customer?.id ?? payload?.customer_id);
+    const customerId = asOptionalText(customer?.id ?? payload?.customer_id ?? entityId);
+    const customerNumber = asOptionalText(customer?.customer_number ?? payload?.customer_number);
+
+    let documentId = asText(payload?.document_id ?? document?.id);
+    if (category === 'customer') {
+        documentId = entityId || customerId || '';
+        if (!documentId) {
+            throw new ProcessingHttpError(422, 'Für customer-Events ist entity_id oder customer.id erforderlich');
+        }
+    } else if (!documentId) {
+        throw new ProcessingHttpError(422, 'document_id ist für Dokument-Events erforderlich');
+    }
+
+    const documentNumber = asOptionalText(payload?.document_number ?? document?.nummer ?? document?.number);
+    const documentStatus = asOptionalText(payload?.document_status ?? document?.status);
+    const paymentStatus = asOptionalText(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus);
+
+    const amountTotal = asNumberOrNull(payload?.amount_total ?? document?.betrag_brutto ?? document?.amount_total);
+    const amountPaid = asNumberOrNull(payload?.amount_paid ?? document?.betrag_bezahlt ?? document?.amount_paid);
+    const explicitAmountOpen = payload?.amount_open ?? document?.betrag_offen ?? document?.amount_open;
+    let amountOpen = asNumberOrNull(explicitAmountOpen);
+    if (amountOpen === null && amountTotal !== null) {
+        amountOpen = Math.max(0, amountTotal - (amountPaid ?? 0));
+    }
+
+    let parsedPdf: ParsedPdf | null = null;
+    if (category !== 'customer') {
+        const documentPdf = payload?.document_pdf;
+        if (!documentPdf || typeof documentPdf !== 'object') {
+            throw new ProcessingHttpError(422, 'document_pdf ist für Dokument-Events erforderlich');
+        }
+
+        const pdfRecord = documentPdf as Record<string, unknown>;
+        const contentBase64 = asText(pdfRecord.content_base64);
+        const declaredSha = asText(pdfRecord.sha256).toLowerCase();
+        const fileName = sanitizeFileName(asText(pdfRecord.filename));
+
+        if (!contentBase64 || !declaredSha || !fileName) {
+            throw new ProcessingHttpError(422, 'document_pdf.content_base64, sha256 und filename sind erforderlich');
+        }
+
+        if (!/^[a-f0-9]{64}$/.test(declaredSha)) {
+            throw new ProcessingHttpError(422, 'document_pdf.sha256 muss ein SHA256-Hash sein');
+        }
+
+        const decoded = decodeBase64Strict(contentBase64);
+        if (!decoded) {
+            throw new ProcessingHttpError(422, 'document_pdf.content_base64 ist ungültig');
+        }
+
+        const actualSha = crypto.createHash('sha256').update(decoded).digest('hex');
+        if (!constantTimeEqual(actualSha, declaredSha)) {
+            throw new ProcessingHttpError(422, 'document_pdf sha256 mismatch');
+        }
+
+        parsedPdf = {
+            fileName,
+            sha256: declaredSha,
+            buffer: decoded,
+        };
+    }
+
+    return {
+        source,
+        category,
+        documentId,
+        recordKey: `${source}:${category}:${documentId}`,
+        documentNumber,
+        documentStatus,
+        paymentStatus,
+        amountTotal,
+        amountPaid,
+        amountOpen,
+        currency: asOptionalText(payload?.currency ?? document?.waehrung ?? document?.currency),
+        documentDate: asOptionalText(payload?.document_date ?? document?.datum),
+        dueDate: asOptionalText(payload?.due_date ?? document?.faellig_am),
+        paidAt: asOptionalText(payload?.paid_at ?? document?.bezahlt_am),
+        finalizedAt: asOptionalText(payload?.finalized_at ?? document?.finalisiert_am),
+        entityId,
+        customerId,
+        customerNumber,
+        sourceInvoiceId: asOptionalText(details?.source_invoice_id),
+        relatedInvoiceId: asOptionalText(details?.related_invoice_id),
+        sourceCreditId: asOptionalText(details?.source_credit_id),
+        eventTypeOriginal: asOptionalText(details?.event_type_original),
+        pdf: parsedPdf,
+    };
+}
+
+async function upsertAccountingDocumentRecord(args: {
+    trx: any;
+    eventId: string;
+    eventType: string;
+    payload: AccountingEventPayload;
+    parsed: ParsedAccountingEvent;
+    pdfStoragePath: string | null;
+}): Promise<void> {
+    const {
+        trx,
+        eventId,
+        eventType,
+        payload,
+        parsed,
+        pdfStoragePath,
+    } = args;
+
+    const now = new Date();
+
+    const baseRow = {
+        source: parsed.source,
+        document_category: parsed.category,
+        document_id: parsed.documentId,
+        document_number: parsed.documentNumber,
+        event_id: eventId,
+        event_type: eventType,
+        event_type_original: parsed.eventTypeOriginal,
+        document_status: parsed.documentStatus,
+        payment_status: parsed.paymentStatus,
+        amount_total: parsed.amountTotal,
+        amount_paid: parsed.amountPaid,
+        amount_open: parsed.amountOpen,
+        currency: parsed.currency,
+        document_date: parsed.documentDate,
+        due_date: parsed.dueDate,
+        paid_at: parsed.paidAt,
+        finalized_at: parsed.finalizedAt,
+        entity_id: parsed.entityId,
+        customer_id: parsed.customerId,
+        customer_number: parsed.customerNumber,
+        source_invoice_id: parsed.sourceInvoiceId,
+        related_invoice_id: parsed.relatedInvoiceId,
+        source_credit_id: parsed.sourceCreditId,
+        pdf_file_name: parsed.pdf?.fileName || null,
+        pdf_sha256: parsed.pdf?.sha256 || null,
+        pdf_storage_path: pdfStoragePath,
+        payload_json: JSON.stringify(payload),
+        updated_at: now,
+    };
+
+    const existing = await trx('accounting_connector_documents')
+        .where({ record_key: parsed.recordKey })
+        .first('id');
+
+    if (existing?.id) {
+        await trx('accounting_connector_documents')
+            .where({ id: existing.id })
+            .update(baseRow);
+        return;
+    }
+
+    await trx('accounting_connector_documents').insert({
+        record_key: parsed.recordKey,
+        ...baseRow,
+        created_at: now,
+    });
+}
+
 export default async function accountingConnectorRoutes(fastify: FastifyInstance): Promise<void> {
     fastify.addContentTypeParser(
         /^application\/(?:json|[a-zA-Z0-9!#$&^_.+-]+\+json)(?:;|$)/,
@@ -65,7 +362,6 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         },
     }, async (request: FastifyRequest, reply: FastifyReply) => {
         const runtimeConfig = await loadAccountingConnectorSettings(fastify.db);
-        const apiKeyHeaderLookup = runtimeConfig.apiKeyHeaderName.toLowerCase();
         const expectedApiKey = runtimeConfig.apiKey;
         const expectedHmacSecret = runtimeConfig.hmacSecret;
         const timestampToleranceSec = normalizePositiveInt(runtimeConfig.timestampToleranceSec, 300);
@@ -80,7 +376,12 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             return reply.status(503).send({ ok: false, error: 'Connector not configured' });
         }
 
-        const apiKey = readHeader(request, apiKeyHeaderLookup);
+        const apiKeyCandidates = [
+            readHeader(request, 'x-hammer-api-key'),
+            readHeader(request, runtimeConfig.apiKeyHeaderName),
+            readHeader(request, 'x-api-key'),
+        ].map((value) => value.trim()).filter(Boolean);
+        const apiKey = apiKeyCandidates[0] || '';
         if (!apiKey || !constantTimeEqual(apiKey, expectedApiKey)) {
             return reply.status(401).send({ ok: false, error: 'Invalid API key' });
         }
@@ -168,7 +469,23 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             });
         }
 
+        let parsedPayload: ParsedAccountingEvent;
+        try {
+            parsedPayload = parseIncomingAccountingPayload(payload);
+        } catch (error: any) {
+            if (error instanceof ProcessingHttpError) {
+                return reply.status(error.statusCode).send({ ok: false, error: error.message });
+            }
+            request.log.error({ err: error }, 'Accounting-Event Payload konnte nicht geparst werden');
+            return reply.status(500).send({ ok: false, error: 'Internal error while parsing event payload' });
+        }
+
         const db = fastify.db;
+        const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (!hasProjectionTable) {
+            request.log.error('Accounting-Connector Dokument-Projection-Tabelle fehlt (Migration 019 nicht ausgeführt)');
+            return reply.status(503).send({ ok: false, error: 'Connector storage not ready (migration missing)' });
+        }
         const now = new Date();
         const nonceCutoff = new Date(now.getTime() - (nonceTtlSec * 1000));
 
@@ -207,6 +524,16 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                     isDuplicateEvent = true;
                     return;
                 }
+
+                const pdfStoragePath = await storePdfFile(parsedPayload);
+                await upsertAccountingDocumentRecord({
+                    trx,
+                    eventId,
+                    eventType,
+                    payload,
+                    parsed: parsedPayload,
+                    pdfStoragePath,
+                });
 
                 await trx('accounting_connector_events').insert({
                     event_id: eventId,
@@ -250,6 +577,9 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             entityId: eventId,
             newState: {
                 eventType,
+                eventTypeOriginal: parsedPayload.eventTypeOriginal,
+                documentCategory: parsedPayload.category,
+                documentId: parsedPayload.documentId,
                 occurredAt: typeof payload?.occurred_at === 'string' ? payload.occurred_at : null,
             },
             tenantId: null,

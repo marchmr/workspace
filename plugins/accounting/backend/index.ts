@@ -21,6 +21,26 @@ interface AccountingDocument {
     createdAt: string;
 }
 
+interface AccountingConnectorDocumentRow {
+    record_key: string;
+    event_id: string;
+    document_category: string;
+    document_id: string;
+    document_number: string | null;
+    document_status: string | null;
+    amount_total: number | string | null;
+    currency: string | null;
+    payment_status: string | null;
+    amount_paid: number | string | null;
+    amount_open: number | string | null;
+    document_date: string | null;
+    due_date: string | null;
+    paid_at: string | null;
+    finalized_at: string | null;
+    updated_at: string | null;
+    created_at: string | null;
+}
+
 interface CustomerData {
     id: number;
     name: string;
@@ -41,6 +61,98 @@ type PublicSessionRecord = {
 
 function hashValue(value: string): string {
     return createHash('sha256').update(String(value || ''), 'utf8').digest('hex');
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asText(value: unknown): string {
+    return String(value || '').trim();
+}
+
+function normalizeDocumentCategory(input: unknown, eventType: string): string {
+    const raw = asText(input).toLowerCase();
+    const et = asText(eventType).toLowerCase();
+
+    const candidates = [raw, et];
+    for (const value of candidates) {
+        if (!value) continue;
+        if (value.includes('rechnung') || value.includes('invoice')) return 'rechnung';
+        if (value.includes('angebot') || value.includes('offer') || value.includes('quote')) return 'angebot';
+        if (value.includes('gutschrift') || value.includes('credit')) return 'gutschrift';
+        if (value.includes('storno') || value.includes('cancel')) return 'storno';
+        if (value.includes('mahnung') || value.includes('dunn')) return 'mahnung';
+    }
+
+    return raw || 'rechnung';
+}
+
+function extractDocumentFromPayload(payload: any, event: any): AccountingDocument | null {
+    const document = payload?.document && typeof payload.document === 'object' ? payload.document : {};
+    const eventType = asText(event?.event_type);
+
+    const category = normalizeDocumentCategory(
+        payload?.document_category ?? document?.category ?? document?.typ,
+        eventType,
+    );
+
+    const documentId = asText(payload?.document_id ?? document?.id);
+    const documentNumber = asText(payload?.document_number ?? document?.nummer ?? document?.number);
+    const documentStatus = asText(payload?.document_status ?? document?.status);
+
+    // Relevantes Dokument erkennen, auch wenn nur verschachteltes legacy payload vorhanden ist.
+    if (!documentId && !documentNumber && !documentStatus && !asText(payload?.document_category) && !asText(document?.id)) {
+        return null;
+    }
+
+    const amountTotal = asNumber(payload?.amount_total ?? document?.betrag_brutto ?? document?.amount_total, 0);
+    const amountPaid = asNumber(payload?.amount_paid ?? document?.betrag_bezahlt ?? document?.amount_paid, 0);
+    const explicitOpen = payload?.amount_open ?? document?.betrag_offen ?? document?.amount_open;
+    const amountOpen = explicitOpen !== undefined && explicitOpen !== null
+        ? asNumber(explicitOpen, 0)
+        : Math.max(0, amountTotal - amountPaid);
+
+    return {
+        id: documentId || asText(event?.event_id),
+        eventId: asText(event?.event_id),
+        documentCategory: category,
+        documentId,
+        documentNumber,
+        documentStatus,
+        amountTotal,
+        currency: asText(payload?.currency ?? document?.waehrung ?? document?.currency) || 'EUR',
+        paymentStatus: asText(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus),
+        amountPaid,
+        amountOpen,
+        documentDate: asText(payload?.document_date ?? document?.datum),
+        dueDate: asText(payload?.due_date ?? document?.faellig_am) || null,
+        paidAt: asText(payload?.paid_at ?? document?.bezahlt_am) || null,
+        finalizedAt: asText(payload?.finalized_at ?? document?.finalisiert_am) || null,
+        createdAt: String(event?.created_at || ''),
+    };
+}
+
+function mapConnectorRowToDocument(row: AccountingConnectorDocumentRow): AccountingDocument {
+    return {
+        id: asText(row.record_key) || asText(row.event_id) || asText(row.document_id),
+        eventId: asText(row.event_id),
+        documentCategory: asText(row.document_category),
+        documentId: asText(row.document_id),
+        documentNumber: asText(row.document_number),
+        documentStatus: asText(row.document_status),
+        amountTotal: asNumber(row.amount_total, 0),
+        currency: asText(row.currency) || 'EUR',
+        paymentStatus: asText(row.payment_status),
+        amountPaid: asNumber(row.amount_paid, 0),
+        amountOpen: asNumber(row.amount_open, 0),
+        documentDate: asText(row.document_date),
+        dueDate: asText(row.due_date) || null,
+        paidAt: asText(row.paid_at) || null,
+        finalizedAt: asText(row.finalized_at) || null,
+        createdAt: String(row.updated_at || row.created_at || ''),
+    };
 }
 
 async function verifyPublicSessionByToken(db: any, token: string): Promise<PublicSessionRecord | null> {
@@ -106,48 +218,62 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                 return reply.send({ documents: [] });
             }
 
-            // Accounting Events für diesen Kunden abrufen
+            const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (hasProjectionTable) {
+                const rows = await db('accounting_connector_documents')
+                    .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
+                    .andWhere(function customerFilter(this: any) {
+                        this.whereIn('customer_id', identifiers)
+                            .orWhereIn('customer_number', identifiers)
+                            .orWhereIn('entity_id', identifiers);
+                    })
+                    .orderBy('updated_at', 'desc')
+                    .select(
+                        'record_key',
+                        'event_id',
+                        'document_category',
+                        'document_id',
+                        'document_number',
+                        'document_status',
+                        'amount_total',
+                        'currency',
+                        'payment_status',
+                        'amount_paid',
+                        'amount_open',
+                        'document_date',
+                        'due_date',
+                        'paid_at',
+                        'finalized_at',
+                        'updated_at',
+                        'created_at',
+                    ) as AccountingConnectorDocumentRow[];
+
+                return reply.send({
+                    documents: rows.map(mapConnectorRowToDocument),
+                });
+            }
+
+            // Dokument-Events fuer den Kunden abrufen (neues und legacy Payload-Format).
             const events = await db('accounting_connector_events')
-                .whereIn('event_type', [
-                    'document.finalized',
-                    'document.created',
-                    'document.storno',
-                    'document.payment_status_changed'
-                ])
                 .andWhere(function customerFilter(this: any) {
                     this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.id'))"), identifiers)
                         .orWhereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
                 })
+                .andWhere(function documentPayloadFilter(this: any) {
+                    this.whereNotNull(db.raw("JSON_EXTRACT(payload_json, '$.document')"))
+                        .orWhereNotNull(db.raw("JSON_EXTRACT(payload_json, '$.document_id')"))
+                        .orWhereNotNull(db.raw("JSON_EXTRACT(payload_json, '$.document_category')"));
+                })
                 .orderBy('created_at', 'desc')
-                .select('event_id', 'payload_json', 'created_at');
+                .select('event_id', 'event_type', 'payload_json', 'created_at');
 
             const documents: AccountingDocument[] = [];
 
             for (const event of events) {
                 try {
                     const payload = JSON.parse(event.payload_json);
-
-                    if (payload.document_category && payload.document) {
-                        const doc: AccountingDocument = {
-                            id: payload.document_id || event.event_id,
-                            eventId: event.event_id,
-                            documentCategory: payload.document_category,
-                            documentId: payload.document_id || '',
-                            documentNumber: payload.document_number || '',
-                            documentStatus: payload.document_status || '',
-                            amountTotal: payload.amount_total || 0,
-                            currency: payload.currency || 'EUR',
-                            paymentStatus: payload.payment_status || '',
-                            amountPaid: payload.amount_paid || 0,
-                            amountOpen: payload.amount_open || 0,
-                            documentDate: payload.document_date || '',
-                            dueDate: payload.due_date || null,
-                            paidAt: payload.paid_at || null,
-                            finalizedAt: payload.finalized_at || null,
-                            createdAt: event.created_at,
-                        };
-                        documents.push(doc);
-                    }
+                    const doc = extractDocumentFromPayload(payload, event);
+                    if (doc) documents.push(doc);
                 } catch (parseError) {
                     console.error('Error parsing accounting event payload:', parseError);
                 }
@@ -182,9 +308,39 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                 return reply.status(404).send({ error: 'Customer not found' });
             }
 
-            // Neuestes Customer-Event für diesen Kunden abrufen
+            const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (hasProjectionTable) {
+                const customerRecord = await db('accounting_connector_documents')
+                    .where('document_category', 'customer')
+                    .andWhere(function customerFilter(this: any) {
+                        this.whereIn('customer_id', identifiers)
+                            .orWhereIn('customer_number', identifiers)
+                            .orWhereIn('entity_id', identifiers);
+                    })
+                    .orderBy('updated_at', 'desc')
+                    .select('payload_json')
+                    .first();
+
+                if (customerRecord?.payload_json) {
+                    const payload = JSON.parse(String(customerRecord.payload_json || '{}'));
+                    if (payload?.customer && typeof payload.customer === 'object') {
+                        const customer: CustomerData = {
+                            id: Number(payload.customer.id || 0),
+                            name: payload.customer.name || '',
+                            customerNumber: payload.customer.customer_number || '',
+                            address: payload.customer.address || '',
+                            kind: payload.customer.kind || '',
+                            contactPerson: payload.customer.contact_person || null,
+                            email: payload.customer.email || null,
+                        };
+                        return reply.send({ customer });
+                    }
+                }
+            }
+
+            // Neuestes Customer-Event fuer diesen Kunden abrufen.
             const event = await db('accounting_connector_events')
-                .where('event_type', 'customer.updated')
+                .whereIn('event_type', ['customer.updated', 'customer.created', 'customer.exported'])
                 .andWhere(function customerFilter(this: any) {
                     this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.id'))"), identifiers)
                         .orWhereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
