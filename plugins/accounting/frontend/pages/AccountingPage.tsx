@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import '../kundenportal.css'; // Stil vom Kundenportal übernehmen
+import '../../../kundenportal/frontend/kundenportal.css'; // Stil vom Kundenportal uebernehmen
 
 interface AccountingDocument {
     id: string;
