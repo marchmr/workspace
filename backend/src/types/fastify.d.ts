@@ -1,17 +1,8 @@
-import '@fastify/jwt';
+import 'fastify';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 
-// Erweitert den JWT-Payload-Typ von @fastify/jwt
-// damit request.user die richtigen Felder hat
-declare module '@fastify/jwt' {
-    interface FastifyJWT {
-        payload: {
-            userId: number;
-            username: string;
-            permissions: string[];
-            tenantId: number;
-            tenantIds: number[];
-            sessionId: number;
-        };
+declare module 'fastify' {
+    interface FastifyRequest {
         user: {
             userId: number;
             username: string;
@@ -21,9 +12,7 @@ declare module '@fastify/jwt' {
             sessionId: number;
         };
     }
-}
 
-declare module 'fastify' {
     interface FastifyInstance {
         authenticate: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
         db: import('knex').Knex;

@@ -482,7 +482,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             sessionId,
         };
 
-        const accessToken = generateAccessToken(fastify, payload);
+        const accessToken = generateAccessToken(payload);
 
         setAuthCookies(request, reply, accessToken, refreshToken);
 
@@ -565,7 +565,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             sessionId,
         };
 
-        const newAccessToken = generateAccessToken(fastify, payload);
+        const newAccessToken = generateAccessToken(payload);
 
         setAuthCookies(request, reply, newAccessToken, newRefreshToken);
 
@@ -603,17 +603,14 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
     // GET /api/auth/ws-token – Kurzlebiges Token fuer WebSocket-Verbindung
     fastify.get('/ws-token', { preHandler: [fastify.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-            const token = fastify.jwt.sign(
-                {
-                    userId: request.user.userId,
-                    username: request.user.username || '',
-                    tenantId: request.user.tenantId,
-                    tenantIds: request.user.tenantIds || [],
-                    permissions: request.user.permissions || [],
-                    sessionId: request.user.sessionId || 0,
-                },
-                { expiresIn: '5m' }
-            );
+            const token = generateAccessToken({
+                userId: request.user.userId,
+                username: request.user.username || '',
+                tenantId: request.user.tenantId,
+                tenantIds: request.user.tenantIds || [],
+                permissions: request.user.permissions || [],
+                sessionId: request.user.sessionId || 0,
+            }, '5m');
             return reply.send({ token });
         } catch (error) {
             request.log.error({ err: error }, 'ws-token konnte nicht erstellt werden');
@@ -948,7 +945,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             return reply.status(403).send({ error: 'Dem Benutzer ist kein aktiver Mandant zugewiesen' });
         }
 
-        const accessToken = generateAccessToken(fastify, {
+        const accessToken = generateAccessToken({
             userId: user.id,
             username: user.username,
             permissions: context.permissions,
@@ -1265,7 +1262,7 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
             sessionId,
         };
 
-        const accessToken = generateAccessToken(fastify, payload);
+        const accessToken = generateAccessToken(payload);
 
         setAuthCookies(request, reply, accessToken, newRefreshToken);
 

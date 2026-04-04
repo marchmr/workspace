@@ -2,10 +2,20 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import bcrypt from 'bcrypt';
 import { randomBytes, createHash } from 'crypto';
+import jwt, { type JwtPayload, type SignOptions } from 'jsonwebtoken';
 import { config } from './config.js';
 
 const BCRYPT_ROUNDS = 12;
 const REFRESH_TOKEN_BYTES = 64;
+
+export type AuthTokenPayload = {
+    userId: number;
+    username: string;
+    permissions: string[];
+    tenantId: number;
+    tenantIds: number[];
+    sessionId: number;
+};
 
 export async function hashPassword(password: string): Promise<string> {
     return bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -23,20 +33,64 @@ export function generateRefreshToken(): string {
     return randomBytes(REFRESH_TOKEN_BYTES).toString('hex');
 }
 
+export function verifyAccessToken(token: string): AuthTokenPayload {
+    const decoded = jwt.decode(token, { complete: true });
+    if (!decoded || typeof decoded !== 'object' || typeof decoded.header !== 'object') {
+        throw new Error('Invalid token header');
+    }
+    const header = decoded.header as unknown as Record<string, unknown>;
+    if (header.alg !== 'HS256') {
+        throw new Error('Unsupported JWT algorithm');
+    }
+    if (Array.isArray(header.crit) && header.crit.length > 0) {
+        throw new Error('Unsupported JWT critical header');
+    }
+
+    const verified = jwt.verify(token, config.jwt.secret, { algorithms: ['HS256'] });
+    if (!verified || typeof verified !== 'object') {
+        throw new Error('Invalid token payload');
+    }
+
+    const payload = verified as JwtPayload & Partial<AuthTokenPayload>;
+    const parsedUser: AuthTokenPayload = {
+        userId: Number(payload.userId),
+        username: String(payload.username || ''),
+        permissions: Array.isArray(payload.permissions)
+            ? payload.permissions.map((entry) => String(entry))
+            : [],
+        tenantId: Number(payload.tenantId),
+        tenantIds: Array.isArray(payload.tenantIds)
+            ? payload.tenantIds.map((entry) => Number(entry)).filter((entry) => Number.isInteger(entry) && entry > 0)
+            : [],
+        sessionId: Number(payload.sessionId),
+    };
+    if (
+        !Number.isInteger(parsedUser.userId) || parsedUser.userId <= 0
+        || !Number.isInteger(parsedUser.sessionId) || parsedUser.sessionId <= 0
+        || !Number.isInteger(parsedUser.tenantId) || parsedUser.tenantId <= 0
+    ) {
+        throw new Error('Invalid auth payload');
+    }
+
+    return parsedUser;
+}
+
 
 
 async function authPlugin(fastify: FastifyInstance): Promise<void> {
-    await fastify.register(import('@fastify/jwt'), {
-        secret: config.jwt.secret,
-        cookie: {
-            cookieName: 'access_token',
-            signed: false,
-        },
-    });
-
     fastify.decorate('authenticate', async function (request: FastifyRequest, reply: FastifyReply) {
         try {
-            await request.jwtVerify();
+            const authHeader = String(request.headers.authorization || '').trim();
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+                ? authHeader.slice(7).trim()
+                : '';
+            const token = String((request.cookies as any)?.access_token || bearerToken || '').trim();
+            if (!token) {
+                clearAuthCookies(request, reply);
+                return reply.status(401).send({ error: 'Nicht autorisiert' });
+            }
+            const parsedUser = verifyAccessToken(token);
+            (request as any).user = parsedUser;
 
             const sessionId = Number((request.user as any)?.sessionId);
             const userId = Number((request.user as any)?.userId);
@@ -65,10 +119,14 @@ async function authPlugin(fastify: FastifyInstance): Promise<void> {
 }
 
 export function generateAccessToken(
-    fastify: FastifyInstance,
-    payload: { userId: number; username: string; permissions: string[]; tenantId: number; tenantIds: number[]; sessionId: number }
+    payload: AuthTokenPayload,
+    expiresIn?: SignOptions['expiresIn']
 ): string {
-    return fastify.jwt.sign(payload, { expiresIn: config.jwt.accessExpiry });
+    const effectiveExpiresIn = expiresIn ?? (config.jwt.accessExpiry as unknown as SignOptions['expiresIn']);
+    return jwt.sign(payload, config.jwt.secret, {
+        algorithm: 'HS256',
+        expiresIn: effectiveExpiresIn,
+    });
 }
 
 function shouldUseSecureCookies(request: FastifyRequest): boolean {

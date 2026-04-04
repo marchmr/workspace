@@ -12,6 +12,7 @@
 
 import { FastifyInstance } from 'fastify';
 import fp from 'fastify-plugin';
+import { verifyAccessToken } from '../core/auth.js';
 
 interface WebSocketLike {
     readyState: number;
@@ -46,7 +47,7 @@ async function websocketPlugin(fastify: FastifyInstance): Promise<void> {
 
             let user: any;
             try {
-                user = fastify.jwt.verify(token);
+                user = verifyAccessToken(String(token));
             } catch {
                 socket.close(4001, 'Ungueltiger Token');
                 return;
