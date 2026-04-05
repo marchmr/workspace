@@ -31,6 +31,7 @@ interface ConnectorEventLogItem {
     id: number;
     eventId: string;
     eventType: string;
+    eventTypeOriginal: string | null;
     status: string;
     duplicateCount: number;
     sourceIp: string | null;
@@ -38,7 +39,16 @@ interface ConnectorEventLogItem {
     processedAt: string | null;
     lastSeenAt: string | null;
     documentNumber: string | null;
+    documentId: string | null;
+    entityId: string | null;
+    customerNumber: string | null;
     customerName: string | null;
+    paymentStatus: string | null;
+    amountPaid: number | string | null;
+    amountOpen: number | string | null;
+    paidAt: string | null;
+    dueDate: string | null;
+    payloadPreview: string | null;
 }
 
 interface ConnectorEventLogResponse {
@@ -561,6 +571,24 @@ export default function GeneralSettings() {
                                     <td>
                                         <div>{item.documentNumber || '-'}</div>
                                         <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>{item.customerName || '-'}</div>
+                                        <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>
+                                            {item.eventTypeOriginal ? `orig: ${item.eventTypeOriginal}` : 'orig: -'}
+                                            {item.documentId ? ` · docId: ${item.documentId}` : ''}
+                                            {item.entityId ? ` · entity: ${item.entityId}` : ''}
+                                        </div>
+                                        <div className="text-muted" style={{ fontSize: 'var(--font-size-xs)' }}>
+                                            {item.paymentStatus ? `payment: ${item.paymentStatus}` : 'payment: -'}
+                                            {item.amountPaid !== null && item.amountPaid !== undefined ? ` · paid: ${item.amountPaid}` : ''}
+                                            {item.amountOpen !== null && item.amountOpen !== undefined ? ` · open: ${item.amountOpen}` : ''}
+                                        </div>
+                                        {item.payloadPreview ? (
+                                            <details style={{ marginTop: 4 }}>
+                                                <summary style={{ cursor: 'pointer', fontSize: 'var(--font-size-xs)' }}>Payload</summary>
+                                                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', maxHeight: 180, overflow: 'auto', fontSize: 11 }}>
+                                                    {item.payloadPreview}
+                                                </pre>
+                                            </details>
+                                        ) : null}
                                     </td>
                                     <td>
                                         <span className={`badge ${item.status === 'processed' ? 'badge-success' : 'badge-warning'}`}>

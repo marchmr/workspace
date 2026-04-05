@@ -676,6 +676,40 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             && !runtimeConfig.allowedEventTypes.includes(normalizedEventType)
             && (!normalizedOriginalEventType || !runtimeConfig.allowedEventTypes.includes(normalizedOriginalEventType))
         ) {
+            const db = fastify.db;
+            const now = new Date();
+            try {
+                const existing = await db('accounting_connector_events')
+                    .where({ event_id: eventId })
+                    .first('id');
+                if (existing?.id) {
+                    await db('accounting_connector_events')
+                        .where({ id: existing.id })
+                        .update({
+                            last_seen_at: now,
+                            duplicate_count: db.raw('duplicate_count + 1'),
+                        });
+                } else {
+                    await db('accounting_connector_events').insert({
+                        event_id: eventId,
+                        event_type: eventType,
+                        nonce: nonceHeader,
+                        timestamp_header: timestampHeader,
+                        body_sha256: calculatedBodySha,
+                        payload_json: JSON.stringify(payload),
+                        status: 'ignored_event_type',
+                        source_ip: request.ip || null,
+                        processed_at: now,
+                        last_seen_at: now,
+                        created_at: now,
+                        duplicate_count: 0,
+                    });
+                }
+            } catch (error: any) {
+                if (error?.code !== 'ER_DUP_ENTRY') {
+                    request.log.error({ err: error, eventId, eventType }, 'Ignored event could not be persisted');
+                }
+            }
             return reply.status(202).send({
                 ok: true,
                 event_id: eventId,

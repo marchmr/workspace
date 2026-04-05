@@ -1336,23 +1336,48 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
 
         const items = rows.map((row: any) => {
             let payload: any = null;
+            let payloadRaw = '';
             try {
-                payload = row.payload_json ? JSON.parse(String(row.payload_json)) : null;
+                payloadRaw = String(row.payload_json || '');
+                payload = row.payload_json ? JSON.parse(payloadRaw) : null;
             } catch {
                 payload = null;
             }
+            const details = payload?.details && typeof payload.details === 'object' ? payload.details : null;
+            const document = payload?.document && typeof payload.document === 'object' ? payload.document : null;
+            const payloadPreview = payloadRaw
+                ? (payloadRaw.length > 2500 ? `${payloadRaw.slice(0, 2500)}…` : payloadRaw)
+                : null;
             return {
                 id: Number(row.id),
                 eventId: String(row.event_id || ''),
                 eventType: String(row.event_type || ''),
+                eventTypeOriginal: details?.event_type_original ? String(details.event_type_original) : null,
                 status: String(row.status || 'processed'),
                 duplicateCount: Number(row.duplicate_count || 0),
                 sourceIp: row.source_ip ? String(row.source_ip) : null,
                 createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
                 processedAt: row.processed_at ? new Date(row.processed_at).toISOString() : null,
                 lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at).toISOString() : null,
-                documentNumber: payload?.document?.nummer ? String(payload.document.nummer) : null,
+                documentNumber: payload?.document_number
+                    ? String(payload.document_number)
+                    : (document?.nummer ? String(document.nummer) : (document?.number ? String(document.number) : null)),
+                documentId: payload?.document_id
+                    ? String(payload.document_id)
+                    : (document?.id ? String(document.id) : null),
+                entityId: payload?.entity_id ? String(payload.entity_id) : null,
+                customerNumber: payload?.customer_number
+                    ? String(payload.customer_number)
+                    : (payload?.customer?.customer_number ? String(payload.customer.customer_number) : null),
                 customerName: payload?.customer?.name ? String(payload.customer.name) : null,
+                paymentStatus: payload?.payment_status
+                    ? String(payload.payment_status)
+                    : (document?.payment_status ? String(document.payment_status) : null),
+                amountPaid: payload?.amount_paid ?? document?.amount_paid ?? null,
+                amountOpen: payload?.amount_open ?? document?.amount_open ?? null,
+                paidAt: payload?.paid_at ? String(payload.paid_at) : (document?.paid_at ? String(document.paid_at) : null),
+                dueDate: payload?.due_date ? String(payload.due_date) : (document?.due_date ? String(document.due_date) : null),
+                payloadPreview,
             };
         });
 
