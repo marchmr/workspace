@@ -665,142 +665,35 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             return reply.status(400).send({ ok: false, error: 'event_id und event_type sind erforderlich' });
         }
 
-        if (!isSupportedAccountingEventType(normalizedEventType)) {
-            const db = fastify.db;
-            const now = new Date();
-            try {
-                const existing = await db('accounting_connector_events')
-                    .where({ event_id: eventId })
-                    .first('id');
-                if (existing?.id) {
-                    await db('accounting_connector_events')
-                        .where({ id: existing.id })
-                        .update({
-                            last_seen_at: now,
-                            duplicate_count: db.raw('duplicate_count + 1'),
-                        });
-                } else {
-                    const debugPayload = {
-                        ...(payload as Record<string, unknown>),
-                        _core_debug: {
-                            reason: 'unsupported_event_type',
-                            normalizedEventType,
-                            normalizedOriginalEventType,
-                            loggedAt: new Date().toISOString(),
-                        },
-                    };
-                    await db('accounting_connector_events').insert({
-                        event_id: eventId,
-                        event_type: eventType,
-                        nonce: nonceHeader,
-                        timestamp_header: timestampHeader,
-                        body_sha256: calculatedBodySha,
-                        payload_json: JSON.stringify(debugPayload),
-                        status: 'failed',
-                        source_ip: request.ip || null,
-                        processed_at: now,
-                        last_seen_at: now,
-                        created_at: now,
-                        duplicate_count: 0,
-                    });
-                }
-            } catch (error: any) {
-                if (error?.code !== 'ER_DUP_ENTRY') {
-                    request.log.error({ err: error, eventId, eventType }, 'Unsupported event could not be persisted');
-                }
-            }
-            return reply.status(202).send({
-                ok: true,
-                event_id: eventId,
-                status: 'ignored_unsupported_event_type',
-            });
-        }
         if (eventIdHeader && payloadEventId && eventIdHeader !== payloadEventId) {
             return reply.status(400).send({ ok: false, error: 'event_id header/body mismatch' });
         }
-        if (
-            runtimeConfig.allowedEventTypes.length > 0
-            && !runtimeConfig.allowedEventTypes.includes(normalizedEventType)
-            && (!normalizedOriginalEventType || !runtimeConfig.allowedEventTypes.includes(normalizedOriginalEventType))
-        ) {
-            const db = fastify.db;
-            const now = new Date();
-            try {
-                const existing = await db('accounting_connector_events')
-                    .where({ event_id: eventId })
-                    .first('id');
-                if (existing?.id) {
-                    await db('accounting_connector_events')
-                        .where({ id: existing.id })
-                        .update({
-                            last_seen_at: now,
-                            duplicate_count: db.raw('duplicate_count + 1'),
-                        });
-                } else {
-                    const debugPayload = {
-                        ...(payload as Record<string, unknown>),
-                        _core_debug: {
-                            reason: 'ignored_by_allowed_event_types',
-                            normalizedEventType,
-                            normalizedOriginalEventType,
-                            allowedEventTypes: runtimeConfig.allowedEventTypes,
-                            loggedAt: new Date().toISOString(),
-                        },
-                    };
-                    await db('accounting_connector_events').insert({
-                        event_id: eventId,
-                        event_type: eventType,
-                        nonce: nonceHeader,
-                        timestamp_header: timestampHeader,
-                        body_sha256: calculatedBodySha,
-                        payload_json: JSON.stringify(debugPayload),
-                        status: 'failed',
-                        source_ip: request.ip || null,
-                        processed_at: now,
-                        last_seen_at: now,
-                        created_at: now,
-                        duplicate_count: 0,
-                    });
-                }
-            } catch (error: any) {
-                if (error?.code !== 'ER_DUP_ENTRY') {
-                    request.log.error({ err: error, eventId, eventType }, 'Ignored event could not be persisted');
-                }
-            }
-            return reply.status(202).send({
-                ok: true,
-                event_id: eventId,
-                status: 'ignored_event_type',
-            });
-        }
-        if (normalizedEventType === 'customer.test') {
-            return reply.status(202).send({
-                ok: true,
-                event_id: eventId,
-                status: 'ignored_optional_event',
-            });
-        }
+        const isSupportedEventType = isSupportedAccountingEventType(normalizedEventType)
+            || (normalizedOriginalEventType && isSupportedAccountingEventType(normalizedOriginalEventType));
 
-        let parsedPayload: ParsedAccountingEvent;
-        try {
-            const tenantId = await resolveTenantIdForPayload(fastify.db, payload);
-            if (!tenantId) {
-                return reply.status(422).send({ ok: false, error: 'tenant_id ist erforderlich oder muss eindeutig ableitbar sein' });
-            }
-            parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
-        } catch (error: any) {
-            if (error instanceof ProcessingHttpError) {
-                return reply.status(error.statusCode).send({ ok: false, error: error.message });
-            }
-            request.log.error({ err: error }, 'Accounting-Event Payload konnte nicht geparst werden');
-            return reply.status(500).send({ ok: false, error: 'Internal error while parsing event payload' });
-        }
-
+        let parsedPayload: ParsedAccountingEvent | null = null;
         const db = fastify.db;
-        const hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
-        if (!hasProjectionTable) {
-            request.log.error('Accounting-Connector Dokument-Projection-Tabelle fehlt (Migration 019 nicht ausgeführt)');
-            return reply.status(503).send({ ok: false, error: 'Connector storage not ready (migration missing)' });
+        let hasProjectionTable = false;
+        if (isSupportedEventType) {
+            try {
+                const tenantId = await resolveTenantIdForPayload(fastify.db, payload);
+                if (!tenantId) {
+                    return reply.status(422).send({ ok: false, error: 'tenant_id ist erforderlich oder muss eindeutig ableitbar sein' });
+                }
+                parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
+            } catch (error: any) {
+                if (error instanceof ProcessingHttpError) {
+                    return reply.status(error.statusCode).send({ ok: false, error: error.message });
+                }
+                request.log.error({ err: error }, 'Accounting-Event Payload konnte nicht geparst werden');
+                return reply.status(500).send({ ok: false, error: 'Internal error while parsing event payload' });
+            }
+
+            hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (!hasProjectionTable) {
+                request.log.error('Accounting-Connector Dokument-Projection-Tabelle fehlt (Migration 019 nicht ausgeführt)');
+                return reply.status(503).send({ ok: false, error: 'Connector storage not ready (migration missing)' });
+            }
         }
         const now = new Date();
         const nonceCutoff = new Date(now.getTime() - (nonceTtlSec * 1000));
@@ -841,15 +734,17 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                     return;
                 }
 
-                const pdfStoragePath = await storePdfFile(parsedPayload);
-                await upsertAccountingDocumentRecord({
-                    trx,
-                    eventId,
-                    eventType,
-                    payload,
-                    parsed: parsedPayload,
-                    pdfStoragePath,
-                });
+                if (isSupportedEventType && parsedPayload) {
+                    const pdfStoragePath = await storePdfFile(parsedPayload);
+                    await upsertAccountingDocumentRecord({
+                        trx,
+                        eventId,
+                        eventType,
+                        payload,
+                        parsed: parsedPayload,
+                        pdfStoragePath,
+                    });
+                }
 
                 await trx('accounting_connector_events').insert({
                     event_id: eventId,
@@ -893,10 +788,10 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             entityId: eventId,
             newState: {
                 eventType,
-                eventTypeOriginal: parsedPayload.eventTypeOriginal,
-                documentCategory: parsedPayload.category,
-                documentId: parsedPayload.documentId,
-                tenantId: parsedPayload.tenantId,
+                eventTypeOriginal: parsedPayload?.eventTypeOriginal || asOptionalText(details?.event_type_original),
+                documentCategory: parsedPayload?.category || null,
+                documentId: parsedPayload?.documentId || asOptionalText(payload?.document_id),
+                tenantId: parsedPayload?.tenantId || null,
                 occurredAt: typeof payload?.occurred_at === 'string' ? payload.occurred_at : null,
             },
             tenantId: null,
