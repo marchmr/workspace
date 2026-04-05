@@ -672,27 +672,29 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             || (normalizedOriginalEventType && isSupportedAccountingEventType(normalizedOriginalEventType));
 
         let parsedPayload: ParsedAccountingEvent | null = null;
+        let projectionFailureReason: string | null = null;
         const db = fastify.db;
         let hasProjectionTable = false;
         if (isSupportedEventType) {
+            hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (!hasProjectionTable && !projectionFailureReason) {
+                projectionFailureReason = 'projection_table_missing';
+            }
+
             try {
                 const tenantId = await resolveTenantIdForPayload(fastify.db, payload);
                 if (!tenantId) {
-                    return reply.status(422).send({ ok: false, error: 'tenant_id ist erforderlich oder muss eindeutig ableitbar sein' });
+                    projectionFailureReason = projectionFailureReason || 'tenant_id_missing_or_ambiguous';
+                } else if (hasProjectionTable) {
+                    parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
                 }
-                parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
             } catch (error: any) {
                 if (error instanceof ProcessingHttpError) {
-                    return reply.status(error.statusCode).send({ ok: false, error: error.message });
+                    projectionFailureReason = projectionFailureReason || error.message;
+                } else {
+                    request.log.error({ err: error }, 'Accounting-Event Payload konnte nicht geparst werden');
+                    projectionFailureReason = projectionFailureReason || 'payload_parse_failed';
                 }
-                request.log.error({ err: error }, 'Accounting-Event Payload konnte nicht geparst werden');
-                return reply.status(500).send({ ok: false, error: 'Internal error while parsing event payload' });
-            }
-
-            hasProjectionTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
-            if (!hasProjectionTable) {
-                request.log.error('Accounting-Connector Dokument-Projection-Tabelle fehlt (Migration 019 nicht ausgeführt)');
-                return reply.status(503).send({ ok: false, error: 'Connector storage not ready (migration missing)' });
             }
         }
         const now = new Date();
@@ -734,7 +736,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                     return;
                 }
 
-                if (isSupportedEventType && parsedPayload) {
+                if (isSupportedEventType && parsedPayload && hasProjectionTable) {
                     const pdfStoragePath = await storePdfFile(parsedPayload);
                     await upsertAccountingDocumentRecord({
                         trx,
@@ -746,14 +748,26 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                     });
                 }
 
+                const payloadToStore = projectionFailureReason ? {
+                    ...(payload as Record<string, unknown>),
+                    _core_debug: {
+                        reason: 'projection_skipped',
+                        projectionFailureReason,
+                        normalizedEventType,
+                        normalizedOriginalEventType,
+                        isSupportedEventType,
+                        loggedAt: new Date().toISOString(),
+                    },
+                } : payload;
+
                 await trx('accounting_connector_events').insert({
                     event_id: eventId,
                     event_type: eventType,
                     nonce: nonceHeader,
                     timestamp_header: timestampHeader,
                     body_sha256: calculatedBodySha,
-                    payload_json: JSON.stringify(payload),
-                    status: 'processed',
+                    payload_json: JSON.stringify(payloadToStore),
+                    status: projectionFailureReason ? 'failed' : 'processed',
                     source_ip: request.ip || null,
                     processed_at: now,
                     last_seen_at: now,
@@ -792,6 +806,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                 documentCategory: parsedPayload?.category || null,
                 documentId: parsedPayload?.documentId || asOptionalText(payload?.document_id),
                 tenantId: parsedPayload?.tenantId || null,
+                projectionFailureReason,
                 occurredAt: typeof payload?.occurred_at === 'string' ? payload.occurred_at : null,
             },
             tenantId: null,
@@ -810,7 +825,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         return reply.status(202).send({
             ok: true,
             event_id: eventId,
-            status: 'processed',
+            status: projectionFailureReason ? 'accepted_unprojected' : 'processed',
         });
     });
 }
