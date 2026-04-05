@@ -680,14 +680,23 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                             duplicate_count: db.raw('duplicate_count + 1'),
                         });
                 } else {
+                    const debugPayload = {
+                        ...(payload as Record<string, unknown>),
+                        _core_debug: {
+                            reason: 'unsupported_event_type',
+                            normalizedEventType,
+                            normalizedOriginalEventType,
+                            loggedAt: new Date().toISOString(),
+                        },
+                    };
                     await db('accounting_connector_events').insert({
                         event_id: eventId,
                         event_type: eventType,
                         nonce: nonceHeader,
                         timestamp_header: timestampHeader,
                         body_sha256: calculatedBodySha,
-                        payload_json: JSON.stringify(payload),
-                        status: 'ignored_unsupported_event_type',
+                        payload_json: JSON.stringify(debugPayload),
+                        status: 'failed',
                         source_ip: request.ip || null,
                         processed_at: now,
                         last_seen_at: now,
@@ -728,14 +737,24 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                             duplicate_count: db.raw('duplicate_count + 1'),
                         });
                 } else {
+                    const debugPayload = {
+                        ...(payload as Record<string, unknown>),
+                        _core_debug: {
+                            reason: 'ignored_by_allowed_event_types',
+                            normalizedEventType,
+                            normalizedOriginalEventType,
+                            allowedEventTypes: runtimeConfig.allowedEventTypes,
+                            loggedAt: new Date().toISOString(),
+                        },
+                    };
                     await db('accounting_connector_events').insert({
                         event_id: eventId,
                         event_type: eventType,
                         nonce: nonceHeader,
                         timestamp_header: timestampHeader,
                         body_sha256: calculatedBodySha,
-                        payload_json: JSON.stringify(payload),
-                        status: 'ignored_event_type',
+                        payload_json: JSON.stringify(debugPayload),
+                        status: 'failed',
                         source_ip: request.ip || null,
                         processed_at: now,
                         last_seen_at: now,
