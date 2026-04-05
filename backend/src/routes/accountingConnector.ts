@@ -151,6 +151,11 @@ function isSupportedAccountingEventType(eventType: string): boolean {
         || eventType === 'document.payment_status_changed';
 }
 
+function isPaymentStatusLikeEventType(normalizedEventType: string, normalizedOriginalEventType: string): boolean {
+    return normalizedEventType === 'document.payment_status_changed'
+        || normalizedOriginalEventType === 'document.payment_status_changed';
+}
+
 function normalizeSource(value: unknown): string {
     const raw = asText(value).toLowerCase();
     if (!raw) return 'hammer';
@@ -200,6 +205,56 @@ async function resolveTenantIdForPayload(db: any, payload: AccountingEventPayloa
     return null;
 }
 
+async function recoverDocumentIdForPaymentEvent(
+    db: any,
+    tenantId: number,
+    payload: AccountingEventPayload,
+    normalizedEventType: string,
+    normalizedOriginalEventType: string,
+): Promise<{ documentId: string | null; matchedBy: string | null }> {
+    if (!isPaymentStatusLikeEventType(normalizedEventType, normalizedOriginalEventType)) {
+        return { documentId: null, matchedBy: null };
+    }
+
+    const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
+    const candidates = [
+        asOptionalText(payload?.document_id),
+        asOptionalText(payload?.invoice_id),
+        asOptionalText(details?.source_invoice_id),
+        asOptionalText(details?.related_invoice_id),
+    ].filter(Boolean) as string[];
+    if (candidates.length > 0) {
+        return { documentId: candidates[0], matchedBy: 'explicit_identifier' };
+    }
+
+    const paymentDelta = asNumberOrNull(details?.payment_delta);
+    if (paymentDelta === null || paymentDelta <= 0) {
+        return { documentId: null, matchedBy: null };
+    }
+
+    const min = Math.max(0, paymentDelta - 0.02);
+    const max = paymentDelta + 0.02;
+
+    const rows = await db('accounting_connector_documents')
+        .where({ tenant_id: tenantId, document_category: 'rechnung' })
+        .andWhere(function amountMatch(this: any) {
+            this.whereBetween('amount_open', [min, max])
+                .orWhereBetween('amount_total', [min, max]);
+        })
+        .orderBy('updated_at', 'desc')
+        .limit(3)
+        .select('document_id');
+
+    const ids = rows
+        .map((row: any) => asOptionalText(row.document_id))
+        .filter(Boolean) as string[];
+
+    if (ids.length === 1) {
+        return { documentId: ids[0], matchedBy: 'payment_delta_unique_match' };
+    }
+    return { documentId: null, matchedBy: null };
+}
+
 async function storePdfFile(parsed: ParsedAccountingEvent): Promise<string | null> {
     if (!parsed.pdf) return null;
 
@@ -227,8 +282,7 @@ function parseIncomingAccountingPayload(
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
     const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
     const eventTypeOriginal = normalizeIncomingEventType(asText(details?.event_type_original));
-    const isPaymentStatusLikeEvent = normalizedEventType === 'document.payment_status_changed'
-        || eventTypeOriginal === 'document.payment_status_changed';
+    const isPaymentStatusLikeEvent = isPaymentStatusLikeEventType(normalizedEventType, eventTypeOriginal);
 
     const categoryFromPayload = normalizeCategory(payload?.document_category ?? document?.category ?? document?.typ);
     const categoryFromOriginalEventType = eventTypeOriginal.includes('storno')
@@ -673,6 +727,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
 
         let parsedPayload: ParsedAccountingEvent | null = null;
         let projectionFailureReason: string | null = null;
+        let projectionRecovery: { documentId: string | null; matchedBy: string | null } | null = null;
         const db = fastify.db;
         let hasProjectionTable = false;
         if (isSupportedEventType) {
@@ -686,7 +741,20 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                 if (!tenantId) {
                     projectionFailureReason = projectionFailureReason || 'tenant_id_missing_or_ambiguous';
                 } else if (hasProjectionTable) {
-                    parsedPayload = parseIncomingAccountingPayload(payload, tenantId, normalizedEventType);
+                    projectionRecovery = await recoverDocumentIdForPaymentEvent(
+                        db,
+                        tenantId,
+                        payload,
+                        normalizedEventType,
+                        normalizedOriginalEventType,
+                    );
+                    const payloadForProjection = projectionRecovery.documentId
+                        ? {
+                            ...(payload as Record<string, unknown>),
+                            document_id: projectionRecovery.documentId,
+                        }
+                        : payload;
+                    parsedPayload = parseIncomingAccountingPayload(payloadForProjection, tenantId, normalizedEventType);
                 }
             } catch (error: any) {
                 if (error instanceof ProcessingHttpError) {
@@ -748,17 +816,32 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                     });
                 }
 
-                const payloadToStore = projectionFailureReason ? {
-                    ...(payload as Record<string, unknown>),
-                    _core_debug: {
-                        reason: 'projection_skipped',
-                        projectionFailureReason,
-                        normalizedEventType,
-                        normalizedOriginalEventType,
-                        isSupportedEventType,
-                        loggedAt: new Date().toISOString(),
-                    },
-                } : payload;
+                let payloadToStore: Record<string, unknown> | AccountingEventPayload = payload;
+                if (projectionFailureReason) {
+                    payloadToStore = {
+                        ...(payload as Record<string, unknown>),
+                        _core_debug: {
+                            reason: 'projection_skipped',
+                            projectionFailureReason,
+                            normalizedEventType,
+                            normalizedOriginalEventType,
+                            isSupportedEventType,
+                            loggedAt: new Date().toISOString(),
+                        },
+                    };
+                } else if (projectionRecovery?.documentId) {
+                    payloadToStore = {
+                        ...(payload as Record<string, unknown>),
+                        _core_debug: {
+                            reason: 'projection_recovered_identifier',
+                            recoveredDocumentId: projectionRecovery.documentId,
+                            matchedBy: projectionRecovery.matchedBy,
+                            normalizedEventType,
+                            normalizedOriginalEventType,
+                            loggedAt: new Date().toISOString(),
+                        },
+                    };
+                }
 
                 await trx('accounting_connector_events').insert({
                     event_id: eventId,
@@ -812,20 +895,33 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             tenantId: null,
         }, request);
 
-        await fastify.events.emit({
-            event: 'accounting.connector.event.received',
-            data: {
+        if (isSupportedEventType) {
+            await fastify.events.emit({
+                event: 'accounting.connector.event.received',
+                data: {
+                    eventId,
+                    eventType,
+                    payload,
+                },
+                tenantId: null,
+            });
+        } else {
+            request.log.info({
                 eventId,
                 eventType,
-                payload,
-            },
-            tenantId: null,
-        });
+                normalizedEventType,
+                normalizedOriginalEventType,
+            }, 'Accounting-Event nicht an Plugin-Bus gesendet (unsupported event type)');
+        }
+
+        const responseStatus = !isSupportedEventType
+            ? 'ignored_unsupported_event_type'
+            : (projectionFailureReason ? 'accepted_unprojected' : 'processed');
 
         return reply.status(202).send({
             ok: true,
             event_id: eventId,
-            status: projectionFailureReason ? 'accepted_unprojected' : 'processed',
+            status: responseStatus,
         });
     });
 }
