@@ -24,6 +24,19 @@ type ListResponse = {
     usedBytes?: number | null;
 };
 
+type ProviderUploadSession = {
+    provider: 'google_drive' | 'sharepoint';
+    uploadUrl: string;
+    method: 'PUT';
+    chunkSizeBytes: number | null;
+};
+
+function getPortalSessionToken(): string {
+    const fromSession = sessionStorage.getItem(STORAGE_SESSION_KEY) || '';
+    if (fromSession) return fromSession;
+    return localStorage.getItem(STORAGE_SESSION_KEY) || '';
+}
+
 function getExt(name: string): string {
     const dot = String(name || '').lastIndexOf('.');
     if (dot < 0) return '';
@@ -104,7 +117,9 @@ function isRetryableUploadError(message: string): boolean {
         || lower.includes('network error')
         || lower.includes('load failed')
         || lower.includes('timeout')
+        || lower.includes('http 408')
         || lower.includes('http 429')
+        || lower.includes('http 500')
         || lower.includes('http 502')
         || lower.includes('http 503')
         || lower.includes('http 504')
@@ -133,7 +148,7 @@ const ICONS = {
 };
 
 export default function PublicGoogleDriveModule() {
-    const sessionToken = useMemo(() => localStorage.getItem(STORAGE_SESSION_KEY) || '', []);
+    const sessionToken = useMemo(() => getPortalSessionToken(), []);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const loadRequestIdRef = useRef(0);
     const [entries, setEntries] = useState<Entry[]>([]);
@@ -252,6 +267,101 @@ export default function PublicGoogleDriveModule() {
         [selectedFiles],
     );
 
+    async function uploadViaBackend(file: File): Promise<void> {
+        const formData = new FormData();
+        formData.append('file', file, file.name);
+        const uploadRes = await requestPluginApi('/public/files/upload', {
+            method: 'POST',
+            headers: {
+                'x-public-session-token': sessionToken,
+            },
+            body: formData,
+        });
+        const payload = await uploadRes.json().catch(() => ({}));
+        if (!uploadRes.ok) {
+            throw new Error(payload?.error || `Upload fehlgeschlagen (HTTP ${uploadRes.status}).`);
+        }
+    }
+
+    async function createUploadSession(file: File): Promise<ProviderUploadSession> {
+        const mimeType = String(file.type || 'application/octet-stream').trim() || 'application/octet-stream';
+        const res = await requestPluginApi('/public/files/upload/session', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-public-session-token': sessionToken,
+            },
+            body: JSON.stringify({
+                fileName: file.name,
+                mimeType,
+                sizeBytes: Number(file.size || 0),
+            }),
+        });
+
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            throw new Error(payload?.error || `Upload-Session konnte nicht erstellt werden (HTTP ${res.status}).`);
+        }
+
+        const session = payload?.session || {};
+        const uploadUrl = String(session.uploadUrl || '').trim();
+        const provider = session.provider === 'sharepoint' ? 'sharepoint' : 'google_drive';
+        const method = String(session.method || '').toUpperCase() === 'PUT' ? 'PUT' : '';
+
+        if (!uploadUrl || method !== 'PUT') {
+            throw new Error('Upload-Session ist ungültig.');
+        }
+
+        return {
+            provider,
+            uploadUrl,
+            method: 'PUT',
+            chunkSizeBytes: Number.isFinite(Number(session.chunkSizeBytes))
+                ? Number(session.chunkSizeBytes)
+                : null,
+        };
+    }
+
+    async function uploadViaProviderSession(file: File): Promise<void> {
+        const session = await createUploadSession(file);
+
+        if (session.provider === 'sharepoint') {
+            const chunkSizeBytes = Math.max(256 * 1024, Number(session.chunkSizeBytes) || (8 * 1024 * 1024));
+            let offset = 0;
+            while (offset < file.size) {
+                const next = Math.min(offset + chunkSizeBytes, file.size);
+                const chunk = file.slice(offset, next);
+                const res = await fetch(session.uploadUrl, {
+                    method: session.method,
+                    headers: {
+                        'Content-Range': `bytes ${offset}-${next - 1}/${file.size}`,
+                    },
+                    body: chunk,
+                });
+
+                if (!(res.ok || res.status === 202)) {
+                    const detail = await res.text().catch(() => '');
+                    throw new Error(`Cloud-Upload fehlgeschlagen (HTTP ${res.status}). ${detail}`.trim());
+                }
+                offset = next;
+            }
+            return;
+        }
+
+        const mimeType = String(file.type || 'application/octet-stream').trim() || 'application/octet-stream';
+        const res = await fetch(session.uploadUrl, {
+            method: session.method,
+            headers: {
+                'Content-Type': mimeType,
+            },
+            body: file,
+        });
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            throw new Error(`Cloud-Upload fehlgeschlagen (HTTP ${res.status}). ${detail}`.trim());
+        }
+    }
+
     async function onUpload(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!sessionToken || selectedFiles.length === 0) return;
@@ -265,6 +375,7 @@ export default function PublicGoogleDriveModule() {
             const uploadedNames: string[] = [];
             const failedNames: string[] = [];
             const failedReasons: string[] = [];
+            let directUploadEnabled = true;
 
             for (let index = 0; index < queue.length; index += 1) {
                 const file = queue[index];
@@ -273,18 +384,15 @@ export default function PublicGoogleDriveModule() {
 
                 for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                     try {
-                        const formData = new FormData();
-                        formData.append('file', file, file.name);
-                        const uploadRes = await requestPluginApi('/public/files/upload', {
-                            method: 'POST',
-                            headers: {
-                                'x-public-session-token': sessionToken,
-                            },
-                            body: formData,
-                        });
-                        const payload = await uploadRes.json().catch(() => ({}));
-                        if (!uploadRes.ok) {
-                            throw new Error(payload?.error || `Upload fehlgeschlagen (HTTP ${uploadRes.status}).`);
+                        if (directUploadEnabled) {
+                            try {
+                                await uploadViaProviderSession(file);
+                            } catch {
+                                directUploadEnabled = false;
+                                await uploadViaBackend(file);
+                            }
+                        } else {
+                            await uploadViaBackend(file);
                         }
                         uploaded = true;
                         uploadedNames.push(file.name);

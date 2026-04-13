@@ -270,8 +270,8 @@ async function readGlobalEncryptedSetting(
 
 async function readPublicSubdomain(db: any): Promise<string> {
     const encrypted = await readGlobalEncryptedSetting(db, [
-        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_SUBDOMAIN_SETTING_KEY },
         { pluginId: PLUGIN_ID, key: PUBLIC_SUBDOMAIN_SETTING_KEY },
+        { pluginId: KUNDENPORTAL_PLUGIN_ID, key: KUNDENPORTAL_PUBLIC_SUBDOMAIN_SETTING_KEY },
     ]);
     if (!encrypted) return DEFAULT_PUBLIC_SUBDOMAIN;
 

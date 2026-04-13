@@ -1591,7 +1591,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.post('/public/files/upload/session', {
-        config: { policy: { public: true }, rateLimit: { max: 20, timeWindow: '1 minute' } },
+        config: { policy: { public: true }, rateLimit: { max: 60, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
         try {
@@ -1677,7 +1677,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     });
 
     fastify.post('/public/files/upload', {
-        config: { policy: { public: true }, rateLimit: { max: 6, timeWindow: '1 minute' } },
+        config: { policy: { public: true }, rateLimit: { max: 30, timeWindow: '1 minute' } },
         policy: { public: true },
     }, async (request, reply) => {
         const sessionToken = resolvePublicSessionToken(request);
