@@ -320,6 +320,9 @@ export default function DateiaustauschDriveSettingsPage() {
     }
 
     async function onTest() {
+        const persisted = await persistSettings(false);
+        if (!persisted) return;
+
         setTesting(true);
         try {
             const res = await apiFetch('/api/plugins/dateiaustausch_drive/admin/connector/test', { method: 'POST' });
