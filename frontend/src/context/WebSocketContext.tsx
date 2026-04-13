@@ -85,56 +85,48 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         function connect() {
             if (!mountedRef.current) return;
 
-            // Get JWT token from cookie or fallback
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+            try {
+                const ws = new WebSocket(wsUrl);
+                wsRef.current = ws;
 
-            // We need a token for WS auth - fetch it
-            fetch('/api/auth/ws-token', { credentials: 'include' })
-                .then(res => res.ok ? res.json() : Promise.reject('No token'))
-                .then(data => {
+                ws.onopen = () => {
                     if (!mountedRef.current) return;
+                    setConnected(true);
+                    reconnectDelayRef.current = 1000; // Reset backoff
+                };
 
-                    const ws = new WebSocket(`${wsUrl}?token=${data.token}`);
-                    wsRef.current = ws;
+                ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type) {
+                            dispatch(msg.type, msg.data);
+                        }
+                    } catch { /* ignore malformed messages */ }
+                };
 
-                    ws.onopen = () => {
-                        if (!mountedRef.current) return;
-                        setConnected(true);
-                        reconnectDelayRef.current = 1000; // Reset backoff
-                    };
-
-                    ws.onmessage = (event) => {
-                        try {
-                            const msg = JSON.parse(event.data);
-                            if (msg.type) {
-                                dispatch(msg.type, msg.data);
-                            }
-                        } catch { /* ignore malformed messages */ }
-                    };
-
-                    ws.onclose = () => {
-                        if (!mountedRef.current) return;
-                        setConnected(false);
-                        wsRef.current = null;
-
-                        // Reconnect with exponential backoff (max 30s)
-                        const delay = reconnectDelayRef.current;
-                        reconnectDelayRef.current = Math.min(delay * 1.5, 30000);
-                        reconnectTimeoutRef.current = setTimeout(connect, delay);
-                    };
-
-                    ws.onerror = () => {
-                        // onclose will fire after onerror
-                    };
-                })
-                .catch(() => {
+                ws.onclose = () => {
                     if (!mountedRef.current) return;
-                    // Retry after delay
+                    setConnected(false);
+                    wsRef.current = null;
+
+                    // Reconnect with exponential backoff (max 30s)
                     const delay = reconnectDelayRef.current;
                     reconnectDelayRef.current = Math.min(delay * 1.5, 30000);
                     reconnectTimeoutRef.current = setTimeout(connect, delay);
-                });
+                };
+
+                ws.onerror = () => {
+                    // onclose will fire after onerror
+                };
+            } catch {
+                if (!mountedRef.current) return;
+                // Retry after delay
+                const delay = reconnectDelayRef.current;
+                reconnectDelayRef.current = Math.min(delay * 1.5, 30000);
+                reconnectTimeoutRef.current = setTimeout(connect, delay);
+            }
         }
 
         connect();

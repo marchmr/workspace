@@ -157,7 +157,8 @@ async function start(): Promise<void> {
         await fastify.register(healthRoutes);
 
         // Server starten
-        await fastify.listen({ port: config.server.port, host: '0.0.0.0' });
+        const listenHost = config.server.env === 'production' ? '127.0.0.1' : '0.0.0.0';
+        await fastify.listen({ port: config.server.port, host: listenHost });
         console.log(`[Server] Hammer WorkSpace v${config.app.version} laeuft auf Port ${config.server.port}`);
 
         // Update-Erkennung: Bei Versions-/Commit-Änderung Audit-Log schreiben

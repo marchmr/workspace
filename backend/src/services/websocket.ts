@@ -6,7 +6,7 @@
  * - Dashboard-Updates
  * - Audit-Log Live-Feed
  *
- * Client verbindet: ws://host/api/ws?token=<jwt>
+ * Client verbindet: ws://host/api/ws (Auth per access_token Cookie)
  * Server sendet JSON: { type: string, data: any }
  */
 
@@ -37,9 +37,15 @@ async function websocketPlugin(fastify: FastifyInstance): Promise<void> {
 
     // WebSocket Route mit JWT-Auth
     fastify.register(async function wsRoutes(wsApp) {
-        wsApp.get('/api/ws', { websocket: true, config: { policy: { public: true } } }, (socket, request) => {
-            // Token aus Query oder Header
-            const token = (request.query as any)?.token;
+        wsApp.get('/api/ws', {
+            websocket: true,
+            logLevel: 'silent',
+            config: { policy: { public: true } },
+        }, (socket, request) => {
+            // Primär aus httpOnly Cookie, Fallback für Legacy-Clients via Query.
+            const cookieToken = String((request.cookies as any)?.access_token || '').trim();
+            const queryToken = String((request.query as any)?.token || '').trim();
+            const token = cookieToken || queryToken;
             if (!token) {
                 socket.close(4001, 'Token erforderlich');
                 return;

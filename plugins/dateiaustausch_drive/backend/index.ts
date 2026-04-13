@@ -161,6 +161,11 @@ type CustomerProfile = {
     companyName: string | null;
 };
 
+type CustomerFolderResolution = {
+    preferredName: string;
+    lookupCandidates: string[];
+};
+
 function base64Url(input: Buffer | string): string {
     return Buffer.from(input)
         .toString('base64')
@@ -228,6 +233,29 @@ function sanitizeCloudFolderName(folderName: string): string {
         .replace(/\.+$/, '')
         .trim();
     return (cleaned || 'Unbenannt').slice(0, 120);
+}
+
+function buildCustomerFolderResolution(settings: ConnectorSettings, session: SessionRow, profile: CustomerProfile): CustomerFolderResolution {
+    const fallbackName = sanitizeCloudFolderName(
+        profile.companyName || profile.displayName || `${settings.customerFolderPrefix}-${session.customer_id}`,
+    );
+    const idName = sanitizeCloudFolderName(`${settings.customerFolderPrefix}-${session.customer_id}`);
+
+    const normalizedEmail = String(session.email_normalized || '').trim().toLowerCase();
+    const emailHash = hashValue(normalizedEmail || `customer-${session.customer_id}`).slice(0, 10);
+    const preferredName = sanitizeCloudFolderName(`${settings.customerFolderPrefix}-K${session.customer_id}-${emailHash}`);
+    const emailOnlyName = normalizedEmail
+        ? sanitizeCloudFolderName(`${settings.customerFolderPrefix}-M${emailHash}`)
+        : '';
+
+    const lookupCandidates = Array.from(new Set([
+        fallbackName,
+        idName,
+        emailOnlyName,
+        preferredName,
+    ].filter(Boolean)));
+
+    return { preferredName, lookupCandidates };
 }
 
 function parseRelativeFolderPath(input: unknown): string[] {
@@ -724,6 +752,26 @@ async function ensureGoogleChildFolder(
     return { id: created.id, name: created.name || folderName };
 }
 
+async function findGoogleChildFolder(
+    accessToken: string,
+    settings: ConnectorSettings['google'],
+    parentFolderId: string,
+    folderName: string,
+): Promise<{ id: string; name: string } | null> {
+    const q = `mimeType='application/vnd.google-apps.folder' and trashed=false and name='${escapeDriveQuery(folderName)}' and '${escapeDriveQuery(parentFolderId)}' in parents`;
+    const listUrl = googleDriveUrl('/drive/v3/files', settings, {
+        q,
+        fields: 'files(id,name)',
+        pageSize: '1',
+        corpora: settings.sharedDriveId ? 'drive' : 'user',
+        driveId: settings.sharedDriveId || '',
+    });
+    const list = await googleJson<{ files?: Array<{ id: string; name: string }> }>(accessToken, listUrl);
+    const existing = list.files?.[0];
+    if (!existing?.id) return null;
+    return { id: existing.id, name: existing.name || folderName };
+}
+
 async function resolveGoogleEffectiveSharedDriveId(
     accessToken: string,
     settings: ConnectorSettings['google'],
@@ -778,11 +826,25 @@ async function resolveSharePointCustomerFolder(
     return { id: created.id, name: created.name || folderName };
 }
 
+async function findSharePointChildFolder(
+    accessToken: string,
+    settings: ConnectorSettings['sharepoint'],
+    parentFolderId: string,
+    folderName: string,
+): Promise<{ id: string; name: string } | null> {
+    const listUrl = graphUrl(`/v1.0/sites/${encodeURIComponent(settings.siteId)}/drives/${encodeURIComponent(settings.driveId)}/items/${encodeURIComponent(parentFolderId)}/children`, {
+        $top: '200',
+        $select: 'id,name,folder',
+    });
+    const list = await graphJson<{ value?: GraphItem[] }>(accessToken, listUrl);
+    const existing = (list.value || []).find((item) => item.folder && item.name === folderName);
+    if (!existing?.id) return null;
+    return { id: existing.id, name: existing.name || folderName };
+}
+
 async function resolveProviderContext(db: any, settings: ConnectorSettings, session: SessionRow): Promise<ProviderContext> {
     const profile = await resolveCustomerProfile(db, session);
-    const customerFolderName = sanitizeCloudFolderName(
-        profile.companyName || profile.displayName || `${settings.customerFolderPrefix}-${session.customer_id}`,
-    );
+    const folderResolution = buildCustomerFolderResolution(settings, session, profile);
     const dateFolderName = getCurrentUploadDateFolderName();
 
     if (settings.provider === 'sharepoint') {
@@ -793,12 +855,24 @@ async function resolveProviderContext(db: any, settings: ConnectorSettings, sess
             settings.sharepoint.rootFolderId,
             CUSTOMER_UPLOADS_ROOT_NAME,
         );
-        const customerFolder = await resolveSharePointCustomerFolder(
-            accessToken,
-            settings.sharepoint,
-            kundenuploads.id,
-            customerFolderName,
-        );
+        let customerFolder: { id: string; name: string } | null = null;
+        for (const candidate of folderResolution.lookupCandidates) {
+            customerFolder = await findSharePointChildFolder(
+                accessToken,
+                settings.sharepoint,
+                kundenuploads.id,
+                candidate,
+            );
+            if (customerFolder) break;
+        }
+        if (!customerFolder) {
+            customerFolder = await resolveSharePointCustomerFolder(
+                accessToken,
+                settings.sharepoint,
+                kundenuploads.id,
+                folderResolution.preferredName,
+            );
+        }
         const dateFolder = await resolveSharePointCustomerFolder(
             accessToken,
             settings.sharepoint,
@@ -826,12 +900,24 @@ async function resolveProviderContext(db: any, settings: ConnectorSettings, sess
         settings.google.rootFolderId,
         CUSTOMER_UPLOADS_ROOT_NAME,
     );
-    const customerFolder = await ensureGoogleChildFolder(
-        accessToken,
-        googleSettings,
-        kundenuploads.id,
-        customerFolderName,
-    );
+    let customerFolder: { id: string; name: string } | null = null;
+    for (const candidate of folderResolution.lookupCandidates) {
+        customerFolder = await findGoogleChildFolder(
+            accessToken,
+            googleSettings,
+            kundenuploads.id,
+            candidate,
+        );
+        if (customerFolder) break;
+    }
+    if (!customerFolder) {
+        customerFolder = await ensureGoogleChildFolder(
+            accessToken,
+            googleSettings,
+            kundenuploads.id,
+            folderResolution.preferredName,
+        );
+    }
     const dateFolder = await ensureGoogleChildFolder(
         accessToken,
         googleSettings,
