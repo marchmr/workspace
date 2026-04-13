@@ -43,6 +43,9 @@ interface EmailApi {
     getDefaultAccount: () => Promise<EmailAccount | null>;
 }
 
+const MASKED_SECRET = '••••••';
+const ALLOWED_PROVIDERS = new Set(['smtp', 'm365']);
+
 function tryDecrypt(value: string | null | undefined): string | null {
     if (!value) return null;
     try {
@@ -60,6 +63,29 @@ function nullIfBlank(value: unknown): string | null {
     if (value === null || value === undefined) return null;
     const str = String(value).trim();
     return str ? str : null;
+}
+
+function isValidEmail(value: string | null | undefined): boolean {
+    const normalized = normalizeEmail(String(value || ''));
+    if (!normalized) return false;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+function normalizeProvider(value: unknown): 'smtp' | 'm365' {
+    const provider = String(value || '').trim().toLowerCase();
+    return ALLOWED_PROVIDERS.has(provider) ? provider as 'smtp' | 'm365' : 'smtp';
+}
+
+function validateSmtpHost(host: string | null | undefined): boolean {
+    const value = String(host || '').trim();
+    if (!value) return false;
+    return /^[a-z0-9.-]+$/i.test(value);
+}
+
+function validatePort(port: unknown): number | null {
+    const parsed = Number.parseInt(String(port ?? ''), 10);
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > 65535) return null;
+    return parsed;
 }
 
 function sanitizeAccount(account: EmailAccount): EmailAccount {
@@ -319,18 +345,44 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
     fastify.post('/email/accounts', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const body = request.body as Record<string, any>;
         if (!body.name?.trim()) return reply.status(400).send({ error: 'Name ist erforderlich' });
+        const provider = normalizeProvider(body.provider);
+        const smtpPort = validatePort(body.smtp_port ?? 587);
+        if (!smtpPort) return reply.status(400).send({ error: 'SMTP-Port ist ungültig (1-65535).' });
+
+        const fromAddress = nullIfBlank(body.from_address);
+        if (!isValidEmail(fromAddress)) {
+            return reply.status(400).send({ error: 'Absender-Adresse ist ungültig.' });
+        }
+
+        if (provider === 'smtp') {
+            if (!validateSmtpHost(body.smtp_host)) {
+                return reply.status(400).send({ error: 'SMTP-Host ist ungültig.' });
+            }
+            if (!nullIfBlank(body.smtp_user)) {
+                return reply.status(400).send({ error: 'SMTP-Benutzer ist erforderlich.' });
+            }
+            if (!nullIfBlank(body.smtp_password)) {
+                return reply.status(400).send({ error: 'SMTP-Passwort ist erforderlich.' });
+            }
+        }
+
+        if (provider === 'm365') {
+            if (!nullIfBlank(body.oauth_client_id) || !nullIfBlank(body.oauth_client_secret)) {
+                return reply.status(400).send({ error: 'M365 Client ID und Client Secret sind erforderlich.' });
+            }
+        }
 
         if (body.is_default) await db('email_accounts').update({ is_default: false });
 
         const [id] = await db('email_accounts').insert({
             name: body.name.trim(),
-            provider: body.provider || 'smtp',
+            provider,
             smtp_host: nullIfBlank(body.smtp_host),
-            smtp_port: body.smtp_port ? parseInt(String(body.smtp_port), 10) : 587,
+            smtp_port: smtpPort,
             smtp_user: nullIfBlank(body.smtp_user),
             smtp_password: body.smtp_password ? encrypt(String(body.smtp_password)) : null,
             smtp_secure: body.smtp_secure !== false,
-            from_address: nullIfBlank(body.from_address),
+            from_address: fromAddress,
             from_name: nullIfBlank(body.from_name),
             is_default: !!body.is_default,
             oauth_tenant_id: nullIfBlank(body.oauth_tenant_id),
@@ -360,17 +412,25 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
         const body = request.body as Record<string, any>;
         const existing = await db('email_accounts').where('id', id).first();
         if (!existing) return reply.status(404).send({ error: 'Konto nicht gefunden' });
+        const provider = normalizeProvider(body.provider || existing.provider);
+        const smtpPort = body.smtp_port !== undefined ? validatePort(body.smtp_port) : Number(existing.smtp_port || 587);
+        if (!smtpPort) return reply.status(400).send({ error: 'SMTP-Port ist ungültig (1-65535).' });
 
         if (body.is_default) await db('email_accounts').where('id', '!=', id).update({ is_default: false });
 
+        const fromAddress = body.from_address !== undefined ? nullIfBlank(body.from_address) : existing.from_address;
+        if (!isValidEmail(fromAddress)) {
+            return reply.status(400).send({ error: 'Absender-Adresse ist ungültig.' });
+        }
+
         const updates: Record<string, any> = {
             name: body.name?.trim() || existing.name,
-            provider: body.provider || existing.provider,
+            provider,
             smtp_host: body.smtp_host !== undefined ? nullIfBlank(body.smtp_host) : existing.smtp_host,
-            smtp_port: body.smtp_port ? parseInt(String(body.smtp_port), 10) : existing.smtp_port,
+            smtp_port: smtpPort,
             smtp_user: body.smtp_user !== undefined ? nullIfBlank(body.smtp_user) : existing.smtp_user,
             smtp_secure: body.smtp_secure !== undefined ? body.smtp_secure !== false : existing.smtp_secure,
-            from_address: body.from_address !== undefined ? nullIfBlank(body.from_address) : existing.from_address,
+            from_address: fromAddress,
             from_name: body.from_name !== undefined ? nullIfBlank(body.from_name) : existing.from_name,
             is_default: body.is_default !== undefined ? !!body.is_default : existing.is_default,
             oauth_tenant_id: body.oauth_tenant_id !== undefined ? nullIfBlank(body.oauth_tenant_id) : existing.oauth_tenant_id,
@@ -380,21 +440,45 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
             updated_at: new Date(),
         };
 
-        if (body.smtp_password && body.smtp_password !== '••••••') {
+        if (body.smtp_password && body.smtp_password !== MASKED_SECRET) {
             updates.smtp_password = encrypt(String(body.smtp_password));
         }
-        if (body.oauth_client_secret && body.oauth_client_secret !== '••••••') {
+        if (body.oauth_client_secret && body.oauth_client_secret !== MASKED_SECRET) {
             updates.oauth_client_secret = encrypt(String(body.oauth_client_secret));
             updates.oauth_access_token = null;
             updates.oauth_access_expires_at = null;
         }
-        if (body.oauth_refresh_token && body.oauth_refresh_token !== '••••••') {
+        if (body.oauth_refresh_token && body.oauth_refresh_token !== MASKED_SECRET) {
             updates.oauth_refresh_token = encrypt(String(body.oauth_refresh_token));
             updates.oauth_access_token = null;
             updates.oauth_access_expires_at = null;
         }
-        if (body.oauth_access_token && body.oauth_access_token !== '••••••') {
+        if (body.oauth_access_token && body.oauth_access_token !== MASKED_SECRET) {
             updates.oauth_access_token = encrypt(String(body.oauth_access_token));
+        }
+
+        const effectiveSmtpHost = String(updates.smtp_host ?? '').trim();
+        const effectiveSmtpUser = String(updates.smtp_user ?? '').trim();
+        const hasStoredSmtpPass = Boolean(existing.smtp_password);
+        const hasNewSmtpPass = Boolean(updates.smtp_password);
+        if (provider === 'smtp') {
+            if (!validateSmtpHost(effectiveSmtpHost)) {
+                return reply.status(400).send({ error: 'SMTP-Host ist ungültig.' });
+            }
+            if (!effectiveSmtpUser) {
+                return reply.status(400).send({ error: 'SMTP-Benutzer ist erforderlich.' });
+            }
+            if (!hasStoredSmtpPass && !hasNewSmtpPass) {
+                return reply.status(400).send({ error: 'SMTP-Passwort ist erforderlich.' });
+            }
+        }
+        if (provider === 'm365') {
+            const effectiveClientId = String(updates.oauth_client_id ?? '').trim();
+            const hasStoredClientSecret = Boolean(existing.oauth_client_secret);
+            const hasNewClientSecret = Boolean(updates.oauth_client_secret);
+            if (!effectiveClientId || (!hasStoredClientSecret && !hasNewClientSecret)) {
+                return reply.status(400).send({ error: 'M365 Client ID und Client Secret sind erforderlich.' });
+            }
         }
 
         await db('email_accounts').where('id', id).update(updates);
@@ -429,7 +513,7 @@ export async function emailRoutes(fastify: FastifyInstance): Promise<void> {
     fastify.post('/email/accounts/:id/test', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { id } = request.params as { id: string };
         const { to } = request.body as { to?: string };
-        if (!to) return reply.status(400).send({ error: 'Empfänger-Adresse (to) ist erforderlich' });
+        if (!to || !isValidEmail(to)) return reply.status(400).send({ error: 'Empfänger-Adresse (to) ist ungültig' });
 
         try {
             await fastify.mail.send({

@@ -21,11 +21,22 @@ function signPayload(payload: string, secret: string): string {
     return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
+function normalizeHostnameForChecks(hostname: string): string {
+    const raw = String(hostname || '').trim().toLowerCase();
+    const noBrackets = raw.replace(/^\[/, '').replace(/\]$/, '');
+    // Strip optional IPv6 zone index (e.g. fe80::1%eth0)
+    return noBrackets.split('%')[0] || noBrackets;
+}
+
 // Prueft ob eine aufgeloeste IP-Adresse privat/intern ist (DNS-Rebinding-Schutz)
 function isPrivateIP(ip: string): boolean {
+    const normalizedIp = normalizeHostnameForChecks(ip);
+    const mappedV4 = normalizedIp.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+    if (mappedV4?.[1]) return isPrivateIP(mappedV4[1]);
+
     // IPv4 private/loopback/link-local/CGNAT/metadata
-    if (isIPv4(ip)) {
-        const parts = ip.split('.').map(Number);
+    if (isIPv4(normalizedIp)) {
+        const parts = normalizedIp.split('.').map(Number);
         if (parts[0] === 127) return true;                           // 127.0.0.0/8
         if (parts[0] === 10) return true;                            // 10.0.0.0/8
         if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true; // 172.16.0.0/12
@@ -33,9 +44,11 @@ function isPrivateIP(ip: string): boolean {
         if (parts[0] === 169 && parts[1] === 254) return true;      // Link-local / Cloud Metadata
         if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true; // CGNAT
         if (parts[0] === 0) return true;                             // 0.0.0.0/8
+        if (parts[0] === 255) return true;                           // Broadcast/invalid
     }
     // IPv6 private/loopback/link-local
-    const lower = ip.toLowerCase();
+    const lower = normalizedIp.toLowerCase();
+    if (lower === '::') return true;
     if (lower === '::1') return true;
     if (lower.startsWith('fc') || lower.startsWith('fd')) return true;  // ULA
     if (lower.startsWith('fe80')) return true;                          // Link-local
@@ -55,11 +68,15 @@ function isAllowedWebhookUrl(url: string): { allowed: boolean; reason?: string }
             return { allowed: false, reason: 'Nur HTTP(S)-URLs sind erlaubt' };
         }
 
-        const hostname = parsed.hostname.toLowerCase();
+        const hostname = normalizeHostnameForChecks(parsed.hostname);
 
         // Localhost und Loopback blocken
-        if (['localhost', '127.0.0.1', '::1', '0.0.0.0', '[::1]'].includes(hostname)) {
+        if (['localhost', '127.0.0.1', '::1', '::', '0.0.0.0'].includes(hostname)) {
             return { allowed: false, reason: 'Localhost-URLs sind nicht erlaubt' };
+        }
+
+        if (isIP(hostname) && isPrivateIP(hostname)) {
+            return { allowed: false, reason: 'Interne/Private IP-Adressen sind nicht erlaubt' };
         }
 
         // Private/Interne IP-Bereiche blocken
@@ -106,18 +123,32 @@ async function deliverWebhook(webhook: WebhookRecord, event: string, data: any):
         const timeout = setTimeout(() => controller.abort(), 5000);
 
         // DNS-Rebinding-Schutz (Finding #1): IP nach DNS-Aufloesung pruefen
-        const targetHostname = new URL(webhook.url).hostname;
+        const targetHostname = normalizeHostnameForChecks(new URL(webhook.url).hostname);
+        if (isIP(targetHostname) && isPrivateIP(targetHostname)) {
+            await db('webhook_logs').insert({
+                webhook_id: webhook.id,
+                event,
+                payload: body,
+                status_code: 0,
+                response_body: `Webhook blockiert: private Ziel-IP ${targetHostname}`,
+                response_time_ms: 0,
+                created_at: new Date(),
+            });
+            return;
+        }
         if (!isIP(targetHostname)) {
             try {
-                const { address } = await dns.promises.lookup(targetHostname);
-                if (isPrivateIP(address)) {
-                    console.warn(`[Webhooks] DNS-Rebinding blockiert: ${targetHostname} -> ${address}`);
+                const resolved = await dns.promises.lookup(targetHostname, { all: true, verbatim: false });
+                const addresses = resolved.map((entry) => normalizeHostnameForChecks(entry.address)).filter(Boolean);
+                const blockedAddress = addresses.find((address) => isPrivateIP(address));
+                if (blockedAddress) {
+                    console.warn(`[Webhooks] DNS-Rebinding blockiert: ${targetHostname} -> ${blockedAddress}`);
                     await db('webhook_logs').insert({
                         webhook_id: webhook.id,
                         event,
                         payload: body,
                         status_code: 0,
-                        response_body: `DNS-Rebinding blockiert: ${targetHostname} aufgeloest zu privater IP ${address}`,
+                        response_body: `DNS-Rebinding blockiert: ${targetHostname} aufgeloest zu privater IP ${blockedAddress}`,
                         response_time_ms: 0,
                         created_at: new Date(),
                     });

@@ -247,36 +247,38 @@ export default function DateiaustauschDriveSettingsPage() {
 
         setSaving(true);
         try {
-            const saveTasks: Promise<void>[] = [
-                saveSetting(SETTING_KEYS.provider, provider),
-                saveSetting(SETTING_KEYS.googleAuthMode, googleAuthMode),
-                saveSetting(SETTING_KEYS.customerFolderPrefix, (customerFolderPrefix || 'KD').trim()),
-                saveSetting(SETTING_KEYS.maxUploadMb, String(parsedUploadMb)),
-                saveSetting(SETTING_KEYS.customerQuotaMb, String(Number.parseInt(customerQuotaMb, 10) || 0)),
-                saveSetting(SETTING_KEYS.allowedExtensions, allowedExtensions.join(',')),
-                saveSetting(SETTING_KEYS.googleClientEmail, effectiveGoogleEmail),
-                saveSetting(SETTING_KEYS.googleRootFolderId, googleRootFolderId.trim()),
-                saveSetting(SETTING_KEYS.googleSharedDriveId, googleSharedDriveId.trim()),
-                saveSetting(SETTING_KEYS.googleOAuthClientId, googleOAuthClientId.trim()),
-                saveSetting(SETTING_KEYS.spTenantId, spTenantId.trim()),
-                saveSetting(SETTING_KEYS.spClientId, spClientId.trim()),
-                saveSetting(SETTING_KEYS.spClientSecret, spClientSecret.trim()),
-                saveSetting(SETTING_KEYS.spSiteId, spSiteId.trim()),
-                saveSetting(SETTING_KEYS.spDriveId, spDriveId.trim()),
-                saveSetting(SETTING_KEYS.spRootFolderId, spRootFolderId.trim()),
+            const saveTasks: Array<() => Promise<void>> = [
+                () => saveSetting(SETTING_KEYS.provider, provider),
+                () => saveSetting(SETTING_KEYS.googleAuthMode, googleAuthMode),
+                () => saveSetting(SETTING_KEYS.customerFolderPrefix, (customerFolderPrefix || 'KD').trim()),
+                () => saveSetting(SETTING_KEYS.maxUploadMb, String(parsedUploadMb)),
+                () => saveSetting(SETTING_KEYS.customerQuotaMb, String(Number.parseInt(customerQuotaMb, 10) || 0)),
+                () => saveSetting(SETTING_KEYS.allowedExtensions, allowedExtensions.join(',')),
+                () => saveSetting(SETTING_KEYS.googleClientEmail, effectiveGoogleEmail),
+                () => saveSetting(SETTING_KEYS.googleRootFolderId, googleRootFolderId.trim()),
+                () => saveSetting(SETTING_KEYS.googleSharedDriveId, googleSharedDriveId.trim()),
+                () => saveSetting(SETTING_KEYS.googleOAuthClientId, googleOAuthClientId.trim()),
+                () => saveSetting(SETTING_KEYS.spTenantId, spTenantId.trim()),
+                () => saveSetting(SETTING_KEYS.spClientId, spClientId.trim()),
+                () => saveSetting(SETTING_KEYS.spClientSecret, spClientSecret.trim()),
+                () => saveSetting(SETTING_KEYS.spSiteId, spSiteId.trim()),
+                () => saveSetting(SETTING_KEYS.spDriveId, spDriveId.trim()),
+                () => saveSetting(SETTING_KEYS.spRootFolderId, spRootFolderId.trim()),
             ];
 
             if (effectiveGoogleKey) {
-                saveTasks.push(saveSetting(SETTING_KEYS.googlePrivateKey, effectiveGoogleKey));
+                saveTasks.push(() => saveSetting(SETTING_KEYS.googlePrivateKey, effectiveGoogleKey));
             }
             if (googleOAuthClientSecret.trim()) {
-                saveTasks.push(saveSetting(SETTING_KEYS.googleOAuthClientSecret, googleOAuthClientSecret.trim()));
+                saveTasks.push(() => saveSetting(SETTING_KEYS.googleOAuthClientSecret, googleOAuthClientSecret.trim()));
             }
             if (googleOAuthRefreshToken.trim()) {
-                saveTasks.push(saveSetting(SETTING_KEYS.googleOAuthRefreshToken, googleOAuthRefreshToken.trim()));
+                saveTasks.push(() => saveSetting(SETTING_KEYS.googleOAuthRefreshToken, googleOAuthRefreshToken.trim()));
             }
 
-            await Promise.all(saveTasks);
+            for (const task of saveTasks) {
+                await task();
+            }
             if (showSuccessToast) toast.success('Connector-Einstellungen gespeichert.');
             if (effectiveGoogleKey) {
                 setGooglePrivateKey('');
@@ -320,8 +322,16 @@ export default function DateiaustauschDriveSettingsPage() {
     }
 
     async function onTest() {
-        const persisted = await persistSettings(false);
-        if (!persisted) return;
+        const hasUnsavedSecretInput = Boolean(
+            googlePrivateKey.trim()
+            || googleOAuthClientSecret.trim()
+            || googleOAuthRefreshToken.trim()
+            || spClientSecret.trim(),
+        );
+        if (hasUnsavedSecretInput) {
+            const persisted = await persistSettings(false);
+            if (!persisted) return;
+        }
 
         setTesting(true);
         try {

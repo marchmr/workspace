@@ -92,6 +92,26 @@ function normalizeUploadErrorMessage(message: string): string {
     return raw;
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function isRetryableUploadError(message: string): boolean {
+    const lower = String(message || '').toLowerCase();
+    return (
+        lower.includes('failed to fetch')
+        || lower.includes('networkerror')
+        || lower.includes('network error')
+        || lower.includes('load failed')
+        || lower.includes('timeout')
+        || lower.includes('http 429')
+        || lower.includes('http 502')
+        || lower.includes('http 503')
+        || lower.includes('http 504')
+        || lower.includes('ausgelastet')
+    );
+}
+
 function Icon({ path }: { path: string }) {
     return (
         <svg viewBox="0 0 24 24" aria-hidden="true" className="dtxd-icon">
@@ -241,25 +261,65 @@ export default function PublicGoogleDriveModule() {
         setError(null);
         setSuccess(null);
         try {
-            const formData = new FormData();
-            selectedFiles.forEach((file) => {
-                formData.append('file', file, file.name);
-            });
-            const uploadRes = await requestPluginApi('/public/files/upload', {
-                method: 'POST',
-                headers: {
-                    'x-public-session-token': sessionToken,
-                },
-                body: formData,
-            });
-            const payload = await uploadRes.json().catch(() => ({}));
-            if (!uploadRes.ok) throw new Error(payload?.error || 'Upload fehlgeschlagen.');
-            setUploadProgress(100);
+            const queue = [...selectedFiles];
+            const uploadedNames: string[] = [];
+            const failedNames: string[] = [];
+            const failedReasons: string[] = [];
+
+            for (let index = 0; index < queue.length; index += 1) {
+                const file = queue[index];
+                const maxAttempts = 3;
+                let uploaded = false;
+
+                for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', file, file.name);
+                        const uploadRes = await requestPluginApi('/public/files/upload', {
+                            method: 'POST',
+                            headers: {
+                                'x-public-session-token': sessionToken,
+                            },
+                            body: formData,
+                        });
+                        const payload = await uploadRes.json().catch(() => ({}));
+                        if (!uploadRes.ok) {
+                            throw new Error(payload?.error || `Upload fehlgeschlagen (HTTP ${uploadRes.status}).`);
+                        }
+                        uploaded = true;
+                        uploadedNames.push(file.name);
+                        break;
+                    } catch (err) {
+                        const message = err instanceof Error ? err.message : 'Upload fehlgeschlagen.';
+                        const retryable = isRetryableUploadError(message);
+                        const isLastAttempt = attempt >= maxAttempts;
+                        if (!retryable || isLastAttempt) {
+                            failedNames.push(file.name);
+                            failedReasons.push(`${file.name}: ${normalizeUploadErrorMessage(message)}`);
+                            break;
+                        }
+                        await sleep(500 * attempt);
+                    }
+                }
+
+                setUploadProgress(Math.round(((index + 1) / queue.length) * 100));
+                if (!uploaded) continue;
+            }
 
             setSelectedFiles([]);
             if (fileInputRef.current) fileInputRef.current.value = '';
-            const uploadedCount = Number(payload?.uploadedCount || selectedFiles.length || 1);
-            setSuccess(`${uploadedCount} Datei(en) erfolgreich hochgeladen.`);
+
+            if (uploadedNames.length > 0 && failedNames.length === 0) {
+                setSuccess(`${uploadedNames.length} Datei(en) erfolgreich hochgeladen.`);
+            } else if (uploadedNames.length > 0) {
+                setSuccess(`${uploadedNames.length} Datei(en) hochgeladen, ${failedNames.length} fehlgeschlagen.`);
+                setError(failedReasons.slice(0, 3).join(' | '));
+            } else if (failedReasons.length > 0) {
+                setError(failedReasons.slice(0, 3).join(' | '));
+            } else {
+                setError('Upload fehlgeschlagen.');
+            }
+
             await load();
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Upload fehlgeschlagen.';

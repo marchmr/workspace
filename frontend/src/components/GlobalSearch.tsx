@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch, useAuth } from '../context/AuthContext';
 import { pluginRegistry } from '../pluginRegistry';
+import { sanitizeSvgIcon } from '../utils/safeSvgIcon';
 
 interface SearchResult {
     title: string;
@@ -272,7 +273,7 @@ export function GlobalSearch() {
                                                 >
                                                     <span className="global-search-item-title">
                                                         {item.trustedIcon && (
-                                                            <span dangerouslySetInnerHTML={{ __html: item.trustedIcon }} />
+                                                            <span dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.trustedIcon) }} />
                                                         )}
                                                         {item.title}
                                                     </span>

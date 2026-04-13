@@ -9,7 +9,22 @@ const LEGACY_SETTING_KEY = 'videoplattform.public_subdomain';
 const LEGACY_LOGO_HEIGHT_KEY = 'videoplattform.public_logo_height';
 
 function normalizeHost(value: string): string {
-    return value.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        const parsed = new URL(withProtocol);
+        return String(parsed.hostname || '').trim().toLowerCase();
+    } catch {
+        return raw
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .split('/')[0]
+            .split('?')[0]
+            .split('#')[0]
+            .split(':')[0]
+            .trim();
+    }
 }
 
 type ProvisionStep = {

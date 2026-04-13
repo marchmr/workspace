@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { pluginRegistry, type PluginNavItem } from '../pluginRegistry';
+import { sanitizeSvgIcon } from '../utils/safeSvgIcon';
 
 const svgProps = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
 
@@ -115,7 +116,7 @@ export default function RegiePage() {
                 return (
                     <div key={path} className={`regie-page-item ${animatingTab === path ? 'pin-animate' : ''}`}>
                         <button className="regie-page-item-link" onClick={() => handleNavigate(item)}>
-                            <span className="regie-page-item-icon" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                            <span className="regie-page-item-icon" dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.icon) }} />
                             <span className="regie-page-item-label">{item.label}</span>
                         </button>
                         <button

@@ -544,8 +544,17 @@ async function getGoogleAccessToken(settings: ConnectorSettings['google']): Prom
         });
         const tokenPayload = await tokenRes.json().catch(() => ({}));
         if (!tokenRes.ok || typeof tokenPayload?.access_token !== 'string') {
-            const detail = tokenPayload?.error_description || tokenPayload?.error || 'Token-Abruf fehlgeschlagen.';
-            throw new Error(`Google OAuth Fehler: ${detail}`);
+            const errorCode = String(tokenPayload?.error || '').trim();
+            const detail = String(tokenPayload?.error_description || tokenPayload?.error || 'Token-Abruf fehlgeschlagen.').trim();
+            const joined = errorCode && !detail.toLowerCase().includes(errorCode.toLowerCase())
+                ? `${errorCode}: ${detail}`
+                : detail;
+            const hint = errorCode === 'invalid_grant'
+                ? ' Hinweis: Refresh Token passt nicht zur Client-ID/zum Client-Secret oder wurde widerrufen/ist abgelaufen.'
+                : (errorCode === 'invalid_client'
+                    ? ' Hinweis: OAuth Client-ID oder Client-Secret ist ungültig.'
+                    : '');
+            throw new Error(`Google OAuth Fehler: ${joined}${hint}`);
         }
         return tokenPayload.access_token as string;
     }
@@ -586,8 +595,12 @@ async function getGoogleAccessToken(settings: ConnectorSettings['google']): Prom
     });
     const tokenPayload = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || typeof tokenPayload?.access_token !== 'string') {
-        const detail = tokenPayload?.error_description || tokenPayload?.error || 'Token-Abruf fehlgeschlagen.';
-        throw new Error(`Google OAuth Fehler: ${detail}`);
+        const errorCode = String(tokenPayload?.error || '').trim();
+        const detail = String(tokenPayload?.error_description || tokenPayload?.error || 'Token-Abruf fehlgeschlagen.').trim();
+        const joined = errorCode && !detail.toLowerCase().includes(errorCode.toLowerCase())
+            ? `${errorCode}: ${detail}`
+            : detail;
+        throw new Error(`Google OAuth Fehler: ${joined}`);
     }
     return tokenPayload.access_token as string;
 }

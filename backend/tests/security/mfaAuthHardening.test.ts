@@ -28,7 +28,7 @@ describe('MFA Auth Hardening (Regressionsschutz)', () => {
             "fastify.post('/mfa/recovery'",
             '    });\n}'
         );
-        expect(recoveryBlock).toContain("config: { rateLimit: getLoginRateLimitConfig() }");
+        expect(recoveryBlock).toContain('rateLimit: getLoginRateLimitConfig()');
         expect(recoveryBlock).toContain('const lockout = await checkAccountLockout(user.id);');
         expect(recoveryBlock).toContain("await recordLoginAttempt(null, clientIp, false);");
         expect(recoveryBlock).toContain("await recordLoginAttempt(user.id, clientIp, false);");

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { usePermission } from '../hooks/usePermission';
 import { pluginRegistry, type PluginNavItem } from '../pluginRegistry';
+import { sanitizeSvgIcon } from '../utils/safeSvgIcon';
 
 const svgProps = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
 
@@ -220,7 +221,7 @@ export function RegieMenu({ open, onClose }: RegieMenuProps) {
                                                 return (
                                                     <div key={path} className={`regie-menu-item ${animatingTab === path ? 'pin-animate' : ''}`}>
                                                         <button className="regie-menu-item-link" onClick={() => handleNavigate(item)}>
-                                                            <span className="regie-menu-item-icon" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                                                            <span className="regie-menu-item-icon" dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.icon) }} />
                                                             <span className="regie-menu-item-label">{item.label}</span>
                                                         </button>
                                                         <button
@@ -247,7 +248,7 @@ export function RegieMenu({ open, onClose }: RegieMenuProps) {
                                                 return (
                                                     <div key={path} className={`regie-menu-item ${animatingTab === path ? 'pin-animate' : ''}`}>
                                                         <button className="regie-menu-item-link" onClick={() => handleNavigate(item)}>
-                                                            <span className="regie-menu-item-icon" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                                                            <span className="regie-menu-item-icon" dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.icon) }} />
                                                             <span className="regie-menu-item-label">{item.label}</span>
                                                         </button>
                                                         <button

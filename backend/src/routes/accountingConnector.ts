@@ -60,6 +60,23 @@ class ProcessingHttpError extends Error {
     }
 }
 
+function isUniqueConstraintError(error: unknown): boolean {
+    const code = String((error as any)?.code || '').toUpperCase();
+    const errno = Number((error as any)?.errno || 0);
+    const message = String((error as any)?.message || '').toLowerCase();
+    return (
+        code === 'ER_DUP_ENTRY'
+        || code === 'SQLITE_CONSTRAINT'
+        || code === 'SQLITE_CONSTRAINT_PRIMARYKEY'
+        || code === 'SQLITE_CONSTRAINT_UNIQUE'
+        || code === '23505'
+        || errno === 1062
+        || message.includes('duplicate')
+        || message.includes('unique constraint')
+        || message.includes('violates unique')
+    );
+}
+
 function readHeader(request: FastifyRequest, headerName: string): string {
     const value = request.headers[headerName.toLowerCase()];
     if (Array.isArray(value)) return String(value[0] || '').trim();
@@ -713,6 +730,11 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         const normalizedEventType = normalizeIncomingEventType(eventType);
         const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
         const normalizedOriginalEventType = normalizeIncomingEventType(asText(details?.event_type_original));
+        const allowedEventTypes = new Set(
+            (runtimeConfig.allowedEventTypes || [])
+                .map((entry) => normalizeIncomingEventType(entry))
+                .filter(Boolean),
+        );
         const eventId = payloadEventId || eventIdHeader;
 
         if (!eventId || !eventType) {
@@ -724,6 +746,16 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
         }
         const isSupportedEventType = isSupportedAccountingEventType(normalizedEventType)
             || (normalizedOriginalEventType && isSupportedAccountingEventType(normalizedOriginalEventType));
+        const isAllowedByConfiguredEventTypes = allowedEventTypes.size === 0
+            || allowedEventTypes.has(normalizedEventType)
+            || (normalizedOriginalEventType ? allowedEventTypes.has(normalizedOriginalEventType) : false);
+        if (!isAllowedByConfiguredEventTypes) {
+            return reply.status(202).send({
+                ok: true,
+                event_id: eventId,
+                status: 'ignored_not_allowed_event_type',
+            });
+        }
 
         let parsedPayload: ParsedAccountingEvent | null = null;
         let projectionFailureReason: string | null = null;
@@ -783,7 +815,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
                         seen_at: now,
                     });
                 } catch (error: any) {
-                    if (error?.code === 'ER_DUP_ENTRY') {
+                    if (isUniqueConstraintError(error)) {
                         throw new Error('REPLAY_NONCE');
                     }
                     throw error;
@@ -862,7 +894,7 @@ export default async function accountingConnectorRoutes(fastify: FastifyInstance
             if (error?.message === 'REPLAY_NONCE') {
                 return reply.status(409).send({ ok: false, error: 'Replay erkannt (Nonce bereits verwendet)' });
             }
-            if (error?.code === 'ER_DUP_ENTRY') {
+            if (isUniqueConstraintError(error)) {
                 isDuplicateEvent = true;
             } else {
                 request.log.error({ err: error }, 'Accounting-Event konnte nicht gespeichert werden');

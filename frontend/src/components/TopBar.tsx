@@ -6,6 +6,7 @@ import { NotificationBell } from './NotificationBell';
 import { ProfileSlider } from './ProfileSlider';
 import { useToast } from './ModalProvider';
 import { pluginRegistry, type PluginNavItem } from '../pluginRegistry';
+import { sanitizeSvgIcon } from '../utils/safeSvgIcon';
 
 const svgProps = { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
 
@@ -143,7 +144,7 @@ export function TopBar() {
                                     to={path}
                                     className={({ isActive }) => `topbar-nav-item pinned-tab ${isActive ? 'active' : ''}`}
                                 >
-                                    <span className="topbar-nav-item-icon" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                                    <span className="topbar-nav-item-icon" dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.icon) }} />
                                     <span className="topbar-nav-item-label">{item.label.toUpperCase()}</span>
                                 </NavLink>
                             );
@@ -238,7 +239,7 @@ export function TopBar() {
                         const path = item.path.startsWith('/') ? item.path : `/${item.path}`;
                         return (
                             <NavLink key={`mobile-${path}`} to={path} className="topbar-mobile-item" onClick={() => setMobileMenuOpen(false)}>
-                                <span className="topbar-nav-item-icon" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                                <span className="topbar-nav-item-icon" dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(item.icon) }} />
                                 {item.label}
                             </NavLink>
                         );

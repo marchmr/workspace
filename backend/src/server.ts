@@ -75,6 +75,9 @@ async function start(): Promise<void> {
             credentials: true,
         });
         await fastify.register(cookie);
+        const connectSrcDirectives = config.server.env === 'production'
+            ? ["'self'", 'wss:']
+            : ["'self'", 'ws:', 'wss:'];
         await fastify.register(helmet, {
             contentSecurityPolicy: {
                 directives: {
@@ -82,12 +85,26 @@ async function start(): Promise<void> {
                     scriptSrc: ["'self'"],
                     styleSrc: ["'self'", "'unsafe-inline'"],
                     imgSrc: ["'self'", 'data:', 'blob:'],
-                    connectSrc: ["'self'", 'ws:', 'wss:'],
+                    connectSrc: connectSrcDirectives,
                     fontSrc: ["'self'"],
                     objectSrc: ["'none'"],
                     frameAncestors: ["'none'"],
+                    frameSrc: ["'none'"],
+                    formAction: ["'self'"],
+                    baseUri: ["'self'"],
+                    upgradeInsecureRequests: config.server.env === 'production' ? [] : null,
                 },
             },
+            referrerPolicy: { policy: 'no-referrer' },
+            hsts: config.server.env === 'production'
+                ? {
+                    maxAge: 63072000,
+                    includeSubDomains: true,
+                    preload: true,
+                }
+                : false,
+            permittedCrossDomainPolicies: { permittedPolicies: 'none' },
+            xFrameOptions: { action: 'deny' },
             crossOriginEmbedderPolicy: false, // Kompatibilitaet mit externen Ressourcen
         });
         await fastify.register(multipart, {

@@ -1031,11 +1031,12 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
     // GET /api/admin/settings/accounting-connector
     fastify.get('/settings/accounting-connector', { preHandler: [requirePermission('settings.manage')] }, async (_request, reply) => {
         const connector = await loadAccountingConnectorSettings(db);
+        const secretMask = '••••••';
         return reply.send({
             enabled: connector.enabled,
             apiKeyHeaderName: connector.apiKeyHeaderName,
-            apiKey: connector.apiKey,
-            hmacSecret: connector.hmacSecret,
+            apiKey: connector.apiKey ? secretMask : '',
+            hmacSecret: connector.hmacSecret ? secretMask : '',
             timestampToleranceSec: connector.timestampToleranceSec,
             nonceTtlSec: connector.nonceTtlSec,
             maxPayloadBytes: connector.maxPayloadBytes,
@@ -1051,11 +1052,15 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
     // PUT /api/admin/settings/accounting-connector
     fastify.put('/settings/accounting-connector', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const payload = (request.body || {}) as Record<string, unknown>;
+        const currentConnector = await loadAccountingConnectorSettings(db);
+        const secretMask = '••••••';
 
         const enabled = payload.enabled === undefined ? true : Boolean(payload.enabled);
         const apiKeyHeaderName = String(payload.apiKeyHeaderName || '').trim() || 'X-API-Key';
-        const apiKey = String(payload.apiKey || '').trim();
-        const hmacSecret = String(payload.hmacSecret || '').trim();
+        const apiKeyInput = String(payload.apiKey || '').trim();
+        const hmacSecretInput = String(payload.hmacSecret || '').trim();
+        const apiKey = apiKeyInput && apiKeyInput !== secretMask ? apiKeyInput : String(currentConnector.apiKey || '').trim();
+        const hmacSecret = hmacSecretInput && hmacSecretInput !== secretMask ? hmacSecretInput : String(currentConnector.hmacSecret || '').trim();
         const timestampToleranceSec = Number.parseInt(String(payload.timestampToleranceSec ?? ''), 10);
         const nonceTtlSec = Number.parseInt(String(payload.nonceTtlSec ?? ''), 10);
         const maxPayloadBytes = Number.parseInt(String(payload.maxPayloadBytes ?? ''), 10);

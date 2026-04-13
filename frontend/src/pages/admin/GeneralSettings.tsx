@@ -140,7 +140,12 @@ export default function GeneralSettings() {
 
             if (connectorResult.status === 'fulfilled' && connectorResult.value.ok) {
                 const payload = await connectorResult.value.json() as AccountingConnectorSettings;
-                setConnector(payload);
+                setConnector({
+                    ...payload,
+                    // Secrets niemals im Klartext oder als Maskierungswert ins Feld übernehmen.
+                    apiKey: '',
+                    hmacSecret: '',
+                });
                 setConnectorEventTypesInput((payload.allowedEventTypes || []).join(', '));
             }
 
@@ -331,8 +336,8 @@ export default function GeneralSettings() {
 
     const connectorChecks = [
         { label: 'Connector aktiv', ok: connector.enabled },
-        { label: 'API-Key gesetzt', ok: connector.apiKey.trim().length > 0 },
-        { label: 'HMAC Secret gesetzt', ok: connector.hmacSecret.trim().length > 0 },
+        { label: 'API-Key gesetzt', ok: connector.hasApiKey || connector.apiKey.trim().length > 0 },
+        { label: 'HMAC Secret gesetzt', ok: connector.hasHmacSecret || connector.hmacSecret.trim().length > 0 },
         { label: 'API-Key Header Name gültig', ok: /^[A-Za-z0-9-]{1,100}$/.test(connector.apiKeyHeaderName.trim()) },
         { label: 'HTTPS Connector URL', ok: connector.endpointUrl.startsWith('https://') || connector.endpointUrl.startsWith('/api/') },
     ];
@@ -419,7 +424,7 @@ export default function GeneralSettings() {
                                 className="input"
                                 value={connector.apiKey}
                                 onChange={(e) => setConnector((prev) => ({ ...prev, apiKey: e.target.value }))}
-                                placeholder="Gemeinsamer API-Key"
+                                placeholder={connector.hasApiKey ? 'Bereits gesetzt (nur bei Wechsel neu eintragen)' : 'Gemeinsamer API-Key'}
                                 style={{ flex: '1 1 320px' }}
                             />
                             <button type="button" className="btn btn-secondary" onClick={generateApiKey}>
@@ -433,7 +438,7 @@ export default function GeneralSettings() {
                                 className="input"
                                 value={connector.hmacSecret}
                                 onChange={(e) => setConnector((prev) => ({ ...prev, hmacSecret: e.target.value }))}
-                                placeholder="Gemeinsames HMAC-Secret"
+                                placeholder={connector.hasHmacSecret ? 'Bereits gesetzt (nur bei Wechsel neu eintragen)' : 'Gemeinsames HMAC-Secret'}
                                 style={{ flex: '1 1 320px' }}
                             />
                             <button type="button" className="btn btn-secondary" onClick={generateHmacSecret}>

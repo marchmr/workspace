@@ -224,7 +224,22 @@ async function ensureVideoplattformSchema(db: any): Promise<void> {
 }
 
 function normalizeHost(value: string | undefined): string {
-    return String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        const parsed = new URL(withProtocol);
+        return String(parsed.hostname || '').trim().toLowerCase();
+    } catch {
+        return raw
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .split('/')[0]
+            .split('?')[0]
+            .split('#')[0]
+            .split(':')[0]
+            .trim();
+    }
 }
 
 function getRequestHost(request: FastifyRequest): string {
@@ -563,6 +578,26 @@ function normalizeLocalVideoPath(relPath: string): string {
         throw new Error('Ungültiger Dateipfad');
     }
     return normalized;
+}
+
+function normalizeExternalVideoUrl(rawUrl: string): string {
+    const input = String(rawUrl || '').trim();
+    if (!input) throw new Error('Video-URL fehlt');
+    let parsed: URL;
+    try {
+        parsed = new URL(input);
+    } catch {
+        throw new Error('Ungültige Video-URL');
+    }
+    const protocol = String(parsed.protocol || '').toLowerCase();
+    if (protocol !== 'https:' && protocol !== 'http:') {
+        throw new Error('Video-URL muss mit http:// oder https:// beginnen');
+    }
+    if (config.server.env === 'production' && protocol !== 'https:') {
+        throw new Error('In Produktion sind nur HTTPS-Video-URLs erlaubt');
+    }
+    if (!parsed.hostname) throw new Error('Ungültige Video-URL');
+    return parsed.toString();
 }
 
 function formatVideo(video: VideoRecord) {
@@ -1281,7 +1316,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             const rawUrl = String(payload.videoUrl || '').trim();
             if (!rawUrl) return reply.status(400).send({ error: 'Für URL-Video ist videoUrl erforderlich' });
             sourceType = 'url';
-            videoUrl = rawUrl;
+            try {
+                videoUrl = normalizeExternalVideoUrl(rawUrl);
+            } catch (error: any) {
+                return reply.status(400).send({ error: error?.message || 'Ungültige Video-URL' });
+            }
         }
 
         const [id] = await db('vp_videos').insert({
@@ -1422,7 +1461,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         if (video.source_type === 'url') {
             if (!video.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
-            return reply.redirect(video.video_url);
+            try {
+                return reply.redirect(normalizeExternalVideoUrl(String(video.video_url)));
+            } catch {
+                return reply.status(400).send({ error: 'Gespeicherte Video-URL ist ungültig oder unsicher' });
+            }
         }
 
         if (!video.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });
@@ -1733,7 +1776,11 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
 
         if (streamVideo.source_type === 'url') {
             if (!streamVideo.video_url) return reply.status(404).send({ error: 'Video-URL fehlt' });
-            return reply.redirect(streamVideo.video_url);
+            try {
+                return reply.redirect(normalizeExternalVideoUrl(String(streamVideo.video_url)));
+            } catch {
+                return reply.status(400).send({ error: 'Gespeicherte Video-URL ist ungültig oder unsicher' });
+            }
         }
 
         if (!streamVideo.file_path) return reply.status(404).send({ error: 'Videodatei fehlt' });

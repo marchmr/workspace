@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState, Suspense } from 'react';
 import { pluginRegistry } from '../../../../frontend/src/pluginRegistry';
+import { sanitizeSvgIcon } from '../../../../frontend/src/utils/safeSvgIcon';
 import '../kundenportal.css';
 
 type SessionAccessResponse = {
@@ -40,7 +41,7 @@ function DynamicNavIcon({ iconHtml }: { iconHtml: string }) {
             </svg>
         );
     }
-    return <span dangerouslySetInnerHTML={{ __html: iconHtml }} />;
+    return <span dangerouslySetInnerHTML={{ __html: sanitizeSvgIcon(iconHtml) }} />;
 }
 
 function LogoutIcon() {

@@ -49,7 +49,22 @@ type PortalCustomerProfile = {
 };
 
 function normalizeHost(value: string | undefined): string {
-    return String(value || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`;
+        const parsed = new URL(withProtocol);
+        return String(parsed.hostname || '').trim().toLowerCase();
+    } catch {
+        return raw
+            .toLowerCase()
+            .replace(/^https?:\/\//, '')
+            .split('/')[0]
+            .split('?')[0]
+            .split('#')[0]
+            .split(':')[0]
+            .trim();
+    }
 }
 
 function getRequestHost(request: FastifyRequest): string {
