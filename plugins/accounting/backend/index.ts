@@ -295,6 +295,13 @@ async function resolveAccountingCustomerIdentifiers(
     return Array.from(ids).filter(Boolean);
 }
 
+function resolvePublicSessionToken(request: FastifyRequest): string {
+    const fromHeader = request.headers['x-public-session-token'];
+    if (typeof fromHeader === 'string' && fromHeader.trim()) return fromHeader.trim();
+    const query = request.query as { sessionToken?: string };
+    return String(query?.sessionToken || '').trim();
+}
+
 export default async function accountingRoutes(fastify: FastifyInstance): Promise<void> {
     const db = getDatabase();
     console.log('[Accounting] Plugin geladen');
@@ -305,8 +312,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const query = request.query as { sessionToken?: string };
-        const sessionToken = String(query?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
         if (!sessionToken) {
             return reply.status(400).send({ error: 'Session-Token ist erforderlich' });
         }
@@ -398,9 +404,8 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const query = request.query as { sessionToken?: string };
         const params = request.params as { documentRecordId?: string };
-        const sessionToken = String(query?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
         const documentRecordId = String(params?.documentRecordId || '').trim();
 
         if (!sessionToken) {
@@ -471,8 +476,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (request: FastifyRequest, reply: FastifyReply) => {
-        const query = request.query as { sessionToken?: string };
-        const sessionToken = String(query?.sessionToken || '').trim();
+        const sessionToken = resolvePublicSessionToken(request);
         if (!sessionToken) {
             return reply.status(400).send({ error: 'Session-Token ist erforderlich' });
         }

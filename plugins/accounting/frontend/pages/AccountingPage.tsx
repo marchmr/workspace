@@ -91,7 +91,17 @@ function displayPaymentStatus(doc: AccountingDocument): string {
     return raw;
 }
 
-function DocumentTable({ documents, category, sessionToken }: { documents: AccountingDocument[], category: string, sessionToken?: string }) {
+function DocumentTable({
+    documents,
+    category,
+    sessionToken,
+    onDownloadPdf,
+}: {
+    documents: AccountingDocument[];
+    category: string;
+    sessionToken?: string;
+    onDownloadPdf: (documentId: string) => Promise<void>;
+}) {
     const filteredDocs = documents.filter(doc => doc.documentCategory === category);
 
     if (filteredDocs.length === 0) {
@@ -135,12 +145,13 @@ function DocumentTable({ documents, category, sessionToken }: { documents: Accou
                             </td>
                             <td className="px-4 py-2 text-sm">
                                 {doc.hasPdf && sessionToken ? (
-                                    <a
+                                    <button
+                                        type="button"
                                         className="btn btn-secondary btn-sm"
-                                        href={`${API_BASE}/documents/${encodeURIComponent(doc.id)}/pdf?sessionToken=${encodeURIComponent(sessionToken)}`}
+                                        onClick={() => { void onDownloadPdf(doc.id); }}
                                     >
                                         Herunterladen
-                                    </a>
+                                    </button>
                                 ) : null}
                             </td>
                         </tr>
@@ -158,6 +169,27 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
     const [error, setError] = useState<string | null>(null);
     const [activeTab, setActiveTab] = useState('rechnung');
 
+    const downloadPdf = async (documentId: string) => {
+        if (!sessionToken) return;
+        try {
+            const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(documentId)}/pdf`, {
+                headers: { 'x-public-session-token': sessionToken },
+            });
+            if (!res.ok) {
+                throw new Error(`PDF konnte nicht geladen werden (${res.status})`);
+            }
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = objectUrl;
+            anchor.download = 'dokument.pdf';
+            anchor.click();
+            URL.revokeObjectURL(objectUrl);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'PDF konnte nicht geladen werden');
+        }
+    };
+
     useEffect(() => {
         const fetchData = async () => {
             try {
@@ -171,16 +203,18 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
                     return;
                 }
 
-                const qs = `sessionToken=${encodeURIComponent(sessionToken)}`;
-
                 // Dokumente laden
-                const docsResponse = await fetch(`${API_BASE}/documents?${qs}`);
+                const docsResponse = await fetch(`${API_BASE}/documents`, {
+                    headers: { 'x-public-session-token': sessionToken },
+                });
                 if (!docsResponse.ok) throw new Error(`Dokumente konnten nicht geladen werden (${docsResponse.status})`);
                 const docsData = await docsResponse.json();
                 setDocuments(docsData.documents || []);
 
                 // Kundendaten laden
-                const customerResponse = await fetch(`${API_BASE}/customer?${qs}`);
+                const customerResponse = await fetch(`${API_BASE}/customer`, {
+                    headers: { 'x-public-session-token': sessionToken },
+                });
                 if (customerResponse.ok) {
                     const customerData = await customerResponse.json();
                     setCustomer(customerData.customer);
@@ -284,7 +318,7 @@ export default function AccountingPage({ sessionToken }: AccountingPageProps) {
                 </div>
 
                 <div className="p-6">
-                    <DocumentTable documents={documents} category={activeTab} sessionToken={sessionToken} />
+                    <DocumentTable documents={documents} category={activeTab} sessionToken={sessionToken} onDownloadPdf={downloadPdf} />
                 </div>
             </div>
         </div>

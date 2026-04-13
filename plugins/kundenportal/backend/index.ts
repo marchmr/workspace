@@ -716,7 +716,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         const ok = await ensurePublicHost(request, reply);
         if (!ok) return;
 
-        const sessionToken = String((request.query as any)?.sessionToken || '').trim();
+        const sessionToken = String((request.headers['x-public-session-token'] as string) || (request.query as any)?.sessionToken || '').trim();
         if (!sessionToken) return reply.status(400).send({ error: 'Session-Token ist erforderlich.' });
 
         const session = await verifyPublicSessionByToken(db, sessionToken);

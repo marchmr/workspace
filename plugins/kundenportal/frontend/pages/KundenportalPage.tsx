@@ -24,6 +24,18 @@ const API_BASE = '/api/plugins/kundenportal/public';
 const STORAGE_SESSION_KEY = 'kundenportal.session';
 const STORAGE_EMAIL_KEY = 'kundenportal.email';
 
+function getPortalSessionToken(): string {
+    return sessionStorage.getItem(STORAGE_SESSION_KEY) || '';
+}
+
+function setPortalSessionToken(token: string): void {
+    sessionStorage.setItem(STORAGE_SESSION_KEY, token);
+}
+
+function clearPortalSessionToken(): void {
+    sessionStorage.removeItem(STORAGE_SESSION_KEY);
+}
+
 function formatDate(value: string | null | undefined): string {
     if (!value) return '-';
     const date = new Date(value);
@@ -92,7 +104,7 @@ export default function KundenportalPage() {
 
     useEffect(() => {
         let active = true;
-        const existingSession = localStorage.getItem(STORAGE_SESSION_KEY) || '';
+        const existingSession = getPortalSessionToken();
 
         fetch(`${API_BASE}/config`)
             .then((res) => res.json())
@@ -106,7 +118,9 @@ export default function KundenportalPage() {
                 if (Number.isFinite(logoHeight)) setPortalLogoHeight(Math.max(24, Math.min(180, Math.round(logoHeight))));
 
                 if (existingSession) {
-                    const restoreRes = await fetch(`${API_BASE}/access/by-session?sessionToken=${encodeURIComponent(existingSession)}`);
+                    const restoreRes = await fetch(`${API_BASE}/access/by-session`, {
+                        headers: { 'x-public-session-token': existingSession },
+                    });
                     const payload = await restoreRes.json().catch(() => ({}));
                     if (restoreRes.ok) {
                         setAccess(payload as SessionAccessResponse);
@@ -119,7 +133,7 @@ export default function KundenportalPage() {
                         if (customLogo) setPortalLogoUrl(`${customLogo}${customLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
                         else if (tenantLogo) setPortalLogoUrl(`${tenantLogo}${tenantLogo.includes('?') ? '&' : '?'}v=${Date.now()}`);
                     } else {
-                        localStorage.removeItem(STORAGE_SESSION_KEY);
+                        clearPortalSessionToken();
                     }
                 }
             })
@@ -219,7 +233,7 @@ export default function KundenportalPage() {
             if (!res.ok) throw new Error(payload?.error || 'Code ungültig oder abgelaufen.');
 
             const sessionPayload = payload as SessionAccessResponse;
-            localStorage.setItem(STORAGE_SESSION_KEY, sessionPayload.sessionToken);
+            setPortalSessionToken(sessionPayload.sessionToken);
             localStorage.setItem(STORAGE_EMAIL_KEY, normalizedEmail);
             setAccess(sessionPayload);
 
@@ -240,8 +254,8 @@ export default function KundenportalPage() {
     }
 
     async function resetAccess() {
-        const token = localStorage.getItem(STORAGE_SESSION_KEY) || '';
-        localStorage.removeItem(STORAGE_SESSION_KEY);
+        const token = getPortalSessionToken();
+        clearPortalSessionToken();
         if (token) {
             await fetch(`${API_BASE}/auth/logout`, {
                 method: 'POST',
