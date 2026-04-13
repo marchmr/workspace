@@ -600,22 +600,13 @@ export default async function authRoutes(fastify: FastifyInstance): Promise<void
         return reply.send({ success: true });
     });
 
-    // GET /api/auth/ws-token – Kurzlebiges Token fuer WebSocket-Verbindung
-    fastify.get('/ws-token', { preHandler: [fastify.authenticate] }, async (request: FastifyRequest, reply: FastifyReply) => {
-        try {
-            const token = generateAccessToken({
-                userId: request.user.userId,
-                username: request.user.username || '',
-                tenantId: request.user.tenantId,
-                tenantIds: request.user.tenantIds || [],
-                permissions: request.user.permissions || [],
-                sessionId: request.user.sessionId || 0,
-            }, '5m');
-            return reply.send({ token });
-        } catch (error) {
-            request.log.error({ err: error }, 'ws-token konnte nicht erstellt werden');
-            return reply.status(401).send({ error: 'Nicht autorisiert' });
-        }
+    // GET /api/auth/ws-token – legacy endpoint, bewusst deaktiviert
+    // WebSocket auth nutzt jetzt HttpOnly-Cookies (access_token).
+    fastify.get('/ws-token', { preHandler: [fastify.authenticate] }, async (_request: FastifyRequest, reply: FastifyReply) => {
+        return reply.status(410).send({
+            error: 'WebSocket-Token Endpoint wurde entfernt. Bitte Cookie-basierte Authentifizierung verwenden.',
+            code: 'WS_TOKEN_ENDPOINT_REMOVED',
+        });
     });
 
     // GET /api/auth/me

@@ -179,22 +179,24 @@ export default function GeneralSettings() {
 
     const deleteConnectorEvents = async (mode: 'older24h' | 'all') => {
         const confirmationText = mode === 'all'
-            ? 'Alle Connector-Events wirklich löschen?'
-            : 'Alle Connector-Events älter als 24h löschen?';
+            ? 'Alle Connector-Events inkl. lokaler Connector-Dokumente/PDFs wirklich löschen?'
+            : 'Alle Connector-Events älter als 24h inkl. lokaler Connector-Dokumente/PDFs löschen?';
         if (!window.confirm(confirmationText)) return;
 
         setDeletingConnectorEvents(true);
         try {
             const payload = mode === 'all'
-                ? { confirm: true }
-                : { confirm: true, olderThanHours: 24 };
+                ? { confirm: true, includeDocuments: true, includeFiles: true }
+                : { confirm: true, olderThanHours: 24, includeDocuments: true, includeFiles: true };
             const res = await apiFetch('/api/admin/settings/accounting-connector/events', {
                 method: 'DELETE',
                 body: JSON.stringify(payload),
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error || `Löschen fehlgeschlagen (HTTP ${res.status})`);
-            toast.success(`${Number(data?.deleted || 0)} Event(s) gelöscht`);
+            toast.success(
+                `${Number(data?.deleted || 0)} Event(s), ${Number(data?.projectionDeleted || 0)} Dokument(e) und ${Number(data?.filesDeleted || 0)} Datei(en) gelöscht`,
+            );
             await loadConnectorEvents();
         } catch (err) {
             toast.error(err instanceof Error ? err.message : 'Connector-Events konnten nicht gelöscht werden');

@@ -701,7 +701,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerProfile,
             tenantName: tenant?.name || null,
             tenantLogoUrl: tenant?.logo_file
-                ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
+                ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
             activePlugins,
@@ -746,7 +746,7 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             customerProfile,
             tenantName: tenant?.name || null,
             tenantLogoUrl: tenant?.logo_file
-                ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}?sessionToken=${encodeURIComponent(sessionToken)}`
+                ? `${KUNDENPORTAL_PREFIX}/tenant-logo/${Number(tenant.id)}`
                 : null,
             logoUrl: fallbackLogoFile ? `${KUNDENPORTAL_PREFIX}/logo` : null,
             activePlugins,

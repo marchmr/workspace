@@ -1618,6 +1618,35 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
         }));
     });
 
+    // Backward compatibility: alte Public-Clients fragen weiterhin
+    // /api/plugins/videoplattform/public/config an.
+    fastify.get('/public/config', {
+        exposeHeadRoute: false,
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (request, reply) => {
+        const ok = await ensurePublicHost(request, reply);
+        if (!ok) return;
+
+        const configuredHost = await readPublicSubdomain(db);
+        const fallbackLogoFile = await readPublicLogoFile(db);
+        const logoHeight = await readPublicLogoHeight(db);
+        const authMode = await readPublicAuthMode(db);
+        const firstTenant = await db('tenants').orderBy('id', 'asc').first('id', 'name', 'logo_file');
+        const tenantName = firstTenant?.name || 'Hammer WorkSpace';
+        const tenantLogoUrl = firstTenant?.logo_file ? `/api/plugins/kundenportal/tenant-logo/${firstTenant.id}` : null;
+
+        return {
+            expectedHost: configuredHost,
+            brand: tenantName,
+            tenantName,
+            tenantLogoUrl,
+            authMode,
+            logoUrl: fallbackLogoFile ? '/api/plugins/videoplattform/public/logo' : null,
+            logoHeight,
+        };
+    });
+
     fastify.get('/public/portal/videos', {
         exposeHeadRoute: false,
         config: { policy: { public: true } },
@@ -1799,6 +1828,13 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
     }, async () => ({ ok: true, plugin: PLUGIN_ID }));
 
     fastify.head('/public/portal/videos', {
+        config: { policy: { public: true } },
+        policy: { public: true },
+    }, async (_request, reply) => {
+        reply.status(200).send();
+    });
+
+    fastify.head('/public/config', {
         config: { policy: { public: true } },
         policy: { public: true },
     }, async (_request, reply) => {

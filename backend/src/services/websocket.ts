@@ -42,18 +42,16 @@ async function websocketPlugin(fastify: FastifyInstance): Promise<void> {
             logLevel: 'silent',
             config: { policy: { public: true } },
         }, (socket, request) => {
-            // Primär aus httpOnly Cookie, Fallback für Legacy-Clients via Query.
+            // Auth nur noch ueber httpOnly Cookie (access_token).
             const cookieToken = String((request.cookies as any)?.access_token || '').trim();
-            const queryToken = String((request.query as any)?.token || '').trim();
-            const token = cookieToken || queryToken;
-            if (!token) {
+            if (!cookieToken) {
                 socket.close(4001, 'Token erforderlich');
                 return;
             }
 
             let user: any;
             try {
-                user = verifyAccessToken(String(token));
+                user = verifyAccessToken(cookieToken);
             } catch {
                 socket.close(4001, 'Ungueltiger Token');
                 return;
