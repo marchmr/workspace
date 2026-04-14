@@ -92,15 +92,15 @@ function normalizeDocumentCategory(input: unknown, eventType: string, eventTypeO
     const et = asText(eventType).toLowerCase();
     const eto = asText(eventTypeOriginal).toLowerCase();
 
-    const candidates = [raw, eto, et];
-    for (const value of candidates) {
-        if (!value) continue;
-        if (value.includes('rechnung') || value.includes('invoice')) return 'rechnung';
-        if (value.includes('angebot') || value.includes('offer') || value.includes('quote')) return 'angebot';
-        if (value.includes('gutschrift') || value.includes('credit')) return 'gutschrift';
-        if (value.includes('storno') || value.includes('cancel')) return 'storno';
-        if (value.includes('mahnung') || value.includes('dunn')) return 'mahnung';
-    }
+    const allText = `${raw} ${eto} ${et}`;
+    
+    // Wir werten Storno und Gutschrift prioritär aus, selbst wenn "Rechnung" vorkommt.
+    // Stornos werden als Gutschrift gemapped, um Duplikate in den Ansichten zu vermeiden.
+    if (allText.includes('storno') || allText.includes('cancel')) return 'gutschrift';
+    if (allText.includes('gutschrift') || allText.includes('credit')) return 'gutschrift';
+    if (allText.includes('mahnung') || allText.includes('dunn')) return 'mahnung';
+    if (allText.includes('angebot') || allText.includes('offer') || allText.includes('quote')) return 'angebot';
+    if (allText.includes('rechnung') || allText.includes('invoice')) return 'rechnung';
 
     return raw || 'rechnung';
 }
@@ -276,7 +276,6 @@ async function resolveAccountingCustomerIdentifiers(
     vpCustomerId: number,
 ): Promise<string[]> {
     const ids = new Set<string>();
-    ids.add(String(vpCustomerId));
 
     const vpCustomer = await db('vp_customers')
         .where({ tenant_id: tenantId, id: vpCustomerId })
@@ -284,10 +283,14 @@ async function resolveAccountingCustomerIdentifiers(
 
     const crmCustomerId = Number(vpCustomer?.crm_customer_id || 0);
     if (crmCustomerId > 0) {
-        ids.add(String(crmCustomerId));
         const crmCustomer = await db('crm_customers')
             .where({ tenant_id: tenantId, id: crmCustomerId })
             .first('customer_number');
+            
+        // EXTREM WICHTIG: Nur nach der expliziten Kunden-ID (customer_number) suchen! 
+        // Wir dürfen NICHT die internen IDs (vpCustomerId oder crmCustomerId) in den Such-Pool werfen, 
+        // da diese mit den auto-generierten entity_ids des Buchhaltungstools überlappen und 
+        // Rechnungen an falsche Kunden zuweisen könnten.
         const customerNumber = String(crmCustomer?.customer_number || '').trim();
         if (customerNumber) ids.add(customerNumber);
     }

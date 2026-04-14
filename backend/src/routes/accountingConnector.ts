@@ -308,7 +308,31 @@ function parseIncomingAccountingPayload(
     const categoryFromEventType = isPaymentStatusLikeEvent
         ? 'rechnung'
         : (isCustomerEventType(normalizedEventType) ? 'customer' : null);
-    const category = categoryFromPayload ?? categoryFromOriginalEventType ?? categoryFromEventType;
+        
+    let category = categoryFromPayload ?? categoryFromOriginalEventType ?? categoryFromEventType;
+
+    const documentNumber = asOptionalText(payload?.document_number ?? document?.nummer ?? document?.number);
+    const documentStatus = asOptionalText(payload?.document_status ?? document?.status);
+    const paymentStatus = normalizePaymentStatus(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus);
+
+    const amountTotal = asNumberOrNull(payload?.amount_total ?? document?.betrag_brutto ?? document?.amount_total);
+    const amountPaid = asNumberOrNull(payload?.amount_paid ?? document?.betrag_bezahlt ?? document?.amount_paid);
+    const explicitAmountOpen = payload?.amount_open ?? document?.betrag_offen ?? document?.amount_open;
+    let amountOpen = asNumberOrNull(explicitAmountOpen);
+    if (amountOpen === null && amountTotal !== null) {
+        amountOpen = Math.max(0, amountTotal - (amountPaid ?? 0));
+    }
+
+    if (category === 'rechnung' || category === 'storno') {
+        const isStorno = (amountTotal !== null && amountTotal < 0) ||
+            (documentNumber && documentNumber.toLowerCase().includes('storno')) ||
+            (eventTypeOriginal.toLowerCase().includes('storno'));
+            
+        if (isStorno) {
+            category = 'gutschrift';
+        }
+    }
+
     if (!category) {
         throw new ProcessingHttpError(422, 'Ungültige oder fehlende document_category');
     }
@@ -353,17 +377,6 @@ function parseIncomingAccountingPayload(
         throw new ProcessingHttpError(422, 'document_id ist für Dokument-Events erforderlich');
     }
 
-    const documentNumber = asOptionalText(payload?.document_number ?? document?.nummer ?? document?.number);
-    const documentStatus = asOptionalText(payload?.document_status ?? document?.status);
-    const paymentStatus = normalizePaymentStatus(payload?.payment_status ?? document?.payment_status ?? document?.zahlstatus);
-
-    const amountTotal = asNumberOrNull(payload?.amount_total ?? document?.betrag_brutto ?? document?.amount_total);
-    const amountPaid = asNumberOrNull(payload?.amount_paid ?? document?.betrag_bezahlt ?? document?.amount_paid);
-    const explicitAmountOpen = payload?.amount_open ?? document?.betrag_offen ?? document?.amount_open;
-    let amountOpen = asNumberOrNull(explicitAmountOpen);
-    if (amountOpen === null && amountTotal !== null) {
-        amountOpen = Math.max(0, amountTotal - (amountPaid ?? 0));
-    }
     if (isPaymentStatusLikeEvent && category !== 'rechnung') {
         throw new ProcessingHttpError(422, 'document.payment_status_changed ist nur für document_category=rechnung erlaubt');
     }
