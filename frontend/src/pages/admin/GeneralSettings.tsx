@@ -205,6 +205,47 @@ export default function GeneralSettings() {
         }
     };
 
+    const resetConnector = async () => {
+        if (!window.confirm('ACHTUNG: Möchtest du den Accounting Connector WIRKLICH komplett resetten? Das löscht alle verknüpften Dokumente, Event-Logs und PDF-Dateien für immer. Die Schnittstelle wird quasi auf Null gesetzt.')) return;
+        
+        setDeletingConnectorEvents(true);
+        try {
+            const res = await apiFetch('/api/admin/settings/accounting-connector/reset', {
+                method: 'POST',
+                body: JSON.stringify({ confirm: true }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || `Reset fehlgeschlagen (HTTP ${res.status})`);
+            toast.success('Connector und alle Dokumente wurden komplett gelöscht!');
+            await loadConnectorEvents();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Connector-Reset fehlgeschlagen');
+        } finally {
+            setDeletingConnectorEvents(false);
+        }
+    };
+
+    const resetCustomerDocuments = async () => {
+        const customerNumber = window.prompt('Gib die Kundennummer ein, um alle angehängten Dokumente dieses Kunden zu löschen:');
+        if (!customerNumber) return;
+        
+        setDeletingConnectorEvents(true);
+        try {
+            const res = await apiFetch('/api/admin/settings/accounting-connector/customer-documents', {
+                method: 'DELETE',
+                body: JSON.stringify({ confirm: true, customerNumber: customerNumber.trim() }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || `Löschen fehlgeschlagen (HTTP ${res.status})`);
+            toast.success(`${Number(data?.deleted || 0)} Dokumente und ${Number(data?.filesDeleted || 0)} Dateien des Kunden gelöscht!`);
+            await loadConnectorEvents();
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : 'Kunden-Reset fehlgeschlagen');
+        } finally {
+            setDeletingConnectorEvents(false);
+        }
+    };
+
     const hasPermission = (permission?: string): boolean => {
         if (!permission) return true;
         if (!user) return false;
@@ -520,6 +561,22 @@ export default function GeneralSettings() {
                                 disabled={deletingConnectorEvents}
                             >
                                 {deletingConnectorEvents ? 'Löscht...' : 'Alle Events löschen'}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-warning"
+                                onClick={resetCustomerDocuments}
+                                disabled={deletingConnectorEvents}
+                            >
+                                Einzelnen Kunden bereinigen
+                            </button>
+                            <button
+                                type="button"
+                                className="btn btn-danger"
+                                onClick={resetConnector}
+                                disabled={deletingConnectorEvents}
+                            >
+                                Kompletter Connector Reset
                             </button>
                             <button type="button" className="btn btn-secondary" onClick={() => checkExternalConnection()} disabled={checkingExternalConnection}>
                                 {checkingExternalConnection ? 'Prüfe...' : 'Externe Verbindung prüfen'}

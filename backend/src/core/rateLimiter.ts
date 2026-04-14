@@ -44,16 +44,35 @@ async function rateLimiterPlugin(fastify: FastifyInstance): Promise<void> {
             if (path === '/api/auth/me' || path === '/api/auth/refresh') {
                 return 600;
             }
-            // Authentifizierte Benutzer: großzügiges Limit
-            // Anonyme Requests (Login, Branding): strengeres Limit
-            const user = (request as any).user;
-            return user?.userId ? API_RATE_MAX_AUTHENTICATED : API_RATE_MAX_ANONYMOUS;
+            
+            // Da das Rate-Limit in onRequest laeuft, ist der Authentication preHandler noch nicht durchgelaufen.
+            // Wir pruefen einfach, ob ein Token mitgeschickt wurde, um das authentifizierte Limit zu gewaehren.
+            const authHeader = String(request.headers.authorization || '').toLowerCase();
+            const hasAuth = !!(request.cookies as any)?.access_token || authHeader.startsWith('bearer ');
+            
+            return hasAuth ? API_RATE_MAX_AUTHENTICATED : API_RATE_MAX_ANONYMOUS;
         },
         timeWindow: API_RATE_WINDOW_MS,
         keyGenerator: (request: FastifyRequest) => {
-            // Per-User statt per-IP für authentifizierte Requests
-            const user = (request as any).user;
-            if (user?.userId) return `user:${user.userId}`;
+            // Versuche userId aus Token zu extrahieren (ohne Verify für Performance im Limiter)
+            const authHeader = String(request.headers.authorization || '').trim();
+            const bearerToken = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+            const token = String((request.cookies as any)?.access_token || bearerToken || '').trim();
+            
+            if (token) {
+                try {
+                    const [, payloadB64] = token.split('.');
+                    if (payloadB64) {
+                        const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString('utf8'));
+                        if (payload && payload.userId) {
+                            return `user:${payload.userId}`;
+                        }
+                    }
+                } catch { 
+                    // Fehler beim Dekodieren ignorieren, Fallback auf IP
+                }
+            }
+            // Ansonsten per IP
             return request.ip;
         },
         errorResponseBuilder: () => {
