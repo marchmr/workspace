@@ -1519,6 +1519,250 @@ export default async function adminRoutes(fastify: FastifyInstance): Promise<voi
         });
     });
 
+    // DELETE /api/admin/settings/accounting-connector/customer-documents
+    // Löscht alle Dokumente eines bestimmten Kunden aus der Projektionstabelle + PDF-Dateien.
+    fastify.delete('/settings/accounting-connector/customer-documents', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const body = (request.body || {}) as {
+            confirm?: boolean;
+            customerId?: string;
+            customerNumber?: string;
+            entityId?: string;
+            includeFiles?: boolean;
+        };
+
+        if (body.confirm !== true) {
+            return reply.status(400).send({ error: 'Löschen erfordert confirm=true' });
+        }
+
+        const customerId = String(body.customerId || '').trim();
+        const customerNumber = String(body.customerNumber || '').trim();
+        const entityId = String(body.entityId || '').trim();
+
+        if (!customerId && !customerNumber && !entityId) {
+            return reply.status(400).send({ error: 'Mindestens customerId, customerNumber oder entityId muss angegeben werden' });
+        }
+
+        const hasDocumentsTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (!hasDocumentsTable) {
+            return reply.send({ deleted: 0, filesDeleted: 0 });
+        }
+
+        const includeFiles = body.includeFiles !== false;
+
+        const query = db('accounting_connector_documents').where(function customerFilter(this: any) {
+            if (customerId) this.orWhere('customer_id', customerId);
+            if (customerNumber) this.orWhere('customer_number', customerNumber);
+            if (entityId) this.orWhere('entity_id', entityId);
+        });
+
+        let filesDeleted = 0;
+        if (includeFiles) {
+            const paths = await query.clone()
+                .whereNotNull('pdf_storage_path')
+                .pluck('pdf_storage_path');
+
+            for (const rawPath of paths) {
+                const normalized = String(rawPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+                if (!normalized) continue;
+                try {
+                    const uploadsRoot = path.resolve(config.app.uploadsDir);
+                    const absolutePath = path.resolve(uploadsRoot, normalized);
+                    const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+                    if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) continue;
+                    await fs.rm(absolutePath, { force: true });
+                    filesDeleted += 1;
+                } catch {
+                    // Datei-Löschfehler sind nicht blockierend
+                }
+            }
+        }
+
+        const deleted = await query.delete();
+
+        await fastify.audit.log({
+            action: 'admin.settings.accounting_connector.customer_documents.deleted',
+            category: 'admin',
+            entityType: 'accounting_connector_documents',
+            entityId: 'customer-bulk-delete',
+            newState: {
+                deleted: Number(deleted || 0),
+                filesDeleted,
+                customerId: customerId || null,
+                customerNumber: customerNumber || null,
+                entityId: entityId || null,
+            },
+            tenantId: null,
+        }, request);
+
+        return reply.send({
+            deleted: Number(deleted || 0),
+            filesDeleted,
+            customerId: customerId || null,
+            customerNumber: customerNumber || null,
+            entityId: entityId || null,
+        });
+    });
+
+    // POST /api/admin/settings/accounting-connector/reset
+    // Vollständiger Reset: Löscht ALLE Daten aus allen drei Connector-Tabellen + PDF-Dateien.
+    fastify.post('/settings/accounting-connector/reset', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const body = (request.body || {}) as {
+            confirm?: boolean;
+            includeFiles?: boolean;
+        };
+
+        if (body.confirm !== true) {
+            return reply.status(400).send({ error: 'Reset erfordert confirm=true' });
+        }
+
+        const includeFiles = body.includeFiles !== false;
+        let eventsDeleted = 0;
+        let documentsDeleted = 0;
+        let noncesDeleted = 0;
+        let filesDeleted = 0;
+
+        // 1. PDF-Dateien löschen
+        if (includeFiles) {
+            const hasDocumentsTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+            if (hasDocumentsTable) {
+                const paths = await db('accounting_connector_documents')
+                    .whereNotNull('pdf_storage_path')
+                    .pluck('pdf_storage_path');
+
+                for (const rawPath of paths) {
+                    const normalized = String(rawPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+                    if (!normalized) continue;
+                    try {
+                        const uploadsRoot = path.resolve(config.app.uploadsDir);
+                        const absolutePath = path.resolve(uploadsRoot, normalized);
+                        const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+                        if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) continue;
+                        await fs.rm(absolutePath, { force: true });
+                        filesDeleted += 1;
+                    } catch {
+                        // Datei-Löschfehler sind nicht blockierend
+                    }
+                }
+            }
+
+            // Gesamtes accounting-connector Upload-Verzeichnis aufräumen
+            try {
+                const connectorDir = path.resolve(config.app.uploadsDir, 'accounting-connector');
+                await fs.rm(connectorDir, { recursive: true, force: true });
+            } catch {
+                // Verzeichnis existiert möglicherweise nicht
+            }
+        }
+
+        // 2. Alle Tabellen leeren
+        const hasDocumentsTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (hasDocumentsTable) {
+            documentsDeleted = await db('accounting_connector_documents').delete();
+        }
+
+        const hasEventsTable = await db.schema.hasTable('accounting_connector_events').catch(() => false);
+        if (hasEventsTable) {
+            eventsDeleted = await db('accounting_connector_events').delete();
+        }
+
+        const hasNoncesTable = await db.schema.hasTable('accounting_connector_nonces').catch(() => false);
+        if (hasNoncesTable) {
+            noncesDeleted = await db('accounting_connector_nonces').delete();
+        }
+
+        await fastify.audit.log({
+            action: 'admin.settings.accounting_connector.reset',
+            category: 'admin',
+            entityType: 'accounting_connector',
+            entityId: 'full-reset',
+            newState: {
+                eventsDeleted: Number(eventsDeleted || 0),
+                documentsDeleted: Number(documentsDeleted || 0),
+                noncesDeleted: Number(noncesDeleted || 0),
+                filesDeleted,
+                includeFiles,
+            },
+            tenantId: null,
+        }, request);
+
+        return reply.send({
+            success: true,
+            eventsDeleted: Number(eventsDeleted || 0),
+            documentsDeleted: Number(documentsDeleted || 0),
+            noncesDeleted: Number(noncesDeleted || 0),
+            filesDeleted,
+        });
+    });
+
+    // DELETE /api/admin/settings/accounting-connector/documents
+    // Löscht alle Dokumente aus der Projektionstabelle, optional nach Kategorie gefiltert.
+    fastify.delete('/settings/accounting-connector/documents', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
+        const body = (request.body || {}) as {
+            confirm?: boolean;
+            category?: string;
+            includeFiles?: boolean;
+        };
+
+        if (body.confirm !== true) {
+            return reply.status(400).send({ error: 'Löschen erfordert confirm=true' });
+        }
+
+        const hasDocumentsTable = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
+        if (!hasDocumentsTable) {
+            return reply.send({ deleted: 0, filesDeleted: 0 });
+        }
+
+        const category = String(body.category || '').trim().toLowerCase();
+        const includeFiles = body.includeFiles !== false;
+
+        const query = db('accounting_connector_documents');
+        if (category) {
+            query.where('document_category', category);
+        }
+
+        let filesDeleted = 0;
+        if (includeFiles) {
+            const pathsQuery = query.clone().whereNotNull('pdf_storage_path').pluck('pdf_storage_path');
+            const paths = await pathsQuery;
+
+            for (const rawPath of paths) {
+                const normalized = String(rawPath || '').replace(/\\/g, '/').replace(/^\/+/, '');
+                if (!normalized) continue;
+                try {
+                    const uploadsRoot = path.resolve(config.app.uploadsDir);
+                    const absolutePath = path.resolve(uploadsRoot, normalized);
+                    const rootWithSeparator = `${uploadsRoot}${path.sep}`;
+                    if (absolutePath !== uploadsRoot && !absolutePath.startsWith(rootWithSeparator)) continue;
+                    await fs.rm(absolutePath, { force: true });
+                    filesDeleted += 1;
+                } catch {
+                    // Datei-Löschfehler sind nicht blockierend
+                }
+            }
+        }
+
+        const deleted = await query.delete();
+
+        await fastify.audit.log({
+            action: 'admin.settings.accounting_connector.documents.deleted',
+            category: 'admin',
+            entityType: 'accounting_connector_documents',
+            entityId: 'bulk-delete',
+            newState: {
+                deleted: Number(deleted || 0),
+                filesDeleted,
+                categoryFilter: category || null,
+            },
+            tenantId: null,
+        }, request);
+
+        return reply.send({
+            deleted: Number(deleted || 0),
+            filesDeleted,
+            category: category || null,
+        });
+    });
+
     // GET /api/admin/settings/plugin/:pluginId -- Einstellungen eines Plugins (entschlüsselt)
     fastify.get('/settings/plugin/:pluginId', { preHandler: [requirePermission('settings.manage')] }, async (request, reply) => {
         const { pluginId } = request.params as { pluginId: string };
