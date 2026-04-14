@@ -65,16 +65,21 @@ async function removeAccountingDataForCustomer(
     const hasProjection = await db.schema.hasTable('accounting_connector_documents').catch(() => false);
     if (!hasProjection) return { documentsDeleted: 0, filesDeleted: 0 };
 
-    const identifiers = [String(customerId), asText(customerNumber)].filter(Boolean);
-    const rows = await db('accounting_connector_documents')
+    const normalizedCustomerNumber = asText(customerNumber);
+    const rowsQuery = db('accounting_connector_documents')
         .where('tenant_id', tenantId)
-        .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno', 'customer'])
-        .andWhere(function customerFilter(this: any) {
-            this.whereIn('customer_id', identifiers)
-                .orWhereIn('customer_number', identifiers)
-                .orWhereIn('entity_id', identifiers);
-        })
-        .select('id', 'pdf_storage_path');
+        .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno', 'customer']);
+
+    if (normalizedCustomerNumber) {
+        rowsQuery.where('customer_number', normalizedCustomerNumber);
+    } else {
+        rowsQuery.andWhere(function customerFilter(this: any) {
+            const numericId = String(customerId);
+            this.where('customer_id', numericId).orWhere('entity_id', numericId);
+        });
+    }
+
+    const rows = await rowsQuery.select('id', 'pdf_storage_path');
 
     if (rows.length === 0) return { documentsDeleted: 0, filesDeleted: 0 };
 
@@ -286,15 +291,21 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             return reply.status(404).send({ error: 'Kunde nicht gefunden' });
         }
 
-        const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
-        const rows = await db('accounting_connector_documents')
+        const customerNumber = asText(customer.customer_number);
+        const rowsQuery = db('accounting_connector_documents')
             .where('tenant_id', tenantId)
-            .whereIn('document_category', category ? [category] : allowedCategories)
-            .andWhere(function customerFilter(this: any) {
-                this.whereIn('customer_id', identifiers)
-                    .orWhereIn('customer_number', identifiers)
-                    .orWhereIn('entity_id', identifiers);
-            })
+            .whereIn('document_category', category ? [category] : allowedCategories);
+
+        if (customerNumber) {
+            rowsQuery.where('customer_number', customerNumber);
+        } else {
+            rowsQuery.andWhere(function customerFilter(this: any) {
+                const numericId = String(customer.id);
+                this.where('customer_id', numericId).orWhere('entity_id', numericId);
+            });
+        }
+
+        const rows = await rowsQuery
             .orderBy('updated_at', 'desc')
             .select(
                 'record_key',
@@ -353,17 +364,22 @@ export default async function customerRoutes(fastify: FastifyInstance): Promise<
             return reply.status(404).send({ error: 'Kunde nicht gefunden' });
         }
 
-        const identifiers = [String(customer.id), asText(customer.customer_number)].filter(Boolean);
-        const row = await db('accounting_connector_documents')
+        const customerNumber = asText(customer.customer_number);
+        const rowQuery = db('accounting_connector_documents')
             .where('tenant_id', tenantId)
             .where({ record_key: recordKey })
-            .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
-            .andWhere(function customerFilter(this: any) {
-                this.whereIn('customer_id', identifiers)
-                    .orWhereIn('customer_number', identifiers)
-                    .orWhereIn('entity_id', identifiers);
-            })
-            .first('pdf_storage_path', 'pdf_file_name');
+            .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno']);
+
+        if (customerNumber) {
+            rowQuery.where('customer_number', customerNumber);
+        } else {
+            rowQuery.andWhere(function customerFilter(this: any) {
+                const numericId = String(customer.id);
+                this.where('customer_id', numericId).orWhere('entity_id', numericId);
+            });
+        }
+
+        const row = await rowQuery.first('pdf_storage_path', 'pdf_file_name');
 
         if (!row?.pdf_storage_path) {
             return reply.status(404).send({ error: 'PDF nicht gefunden' });

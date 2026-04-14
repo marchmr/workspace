@@ -336,11 +336,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                 const rows = await db('accounting_connector_documents')
                     .where('tenant_id', Number(session.tenant_id))
                     .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
-                    .andWhere(function customerFilter(this: any) {
-                        this.whereIn('customer_id', identifiers)
-                            .orWhereIn('customer_number', identifiers)
-                            .orWhereIn('entity_id', identifiers);
-                    })
+                    .whereIn('customer_number', identifiers)
                     .orderBy('updated_at', 'desc')
                     .select(
                         'record_key',
@@ -371,8 +367,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             // Dokument-Events fuer den Kunden abrufen (neues und legacy Payload-Format).
             const events = await db('accounting_connector_events')
                 .andWhere(function customerFilter(this: any) {
-                    this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.id'))"), identifiers)
-                        .orWhereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
+                    this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
                 })
                 .andWhere(function documentPayloadFilter(this: any) {
                     this.whereNotNull(db.raw("JSON_EXTRACT(payload_json, '$.document')"))
@@ -442,11 +437,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                 .where({ record_key: documentRecordId })
                 .where('tenant_id', Number(session.tenant_id))
                 .whereIn('document_category', ['rechnung', 'angebot', 'mahnung', 'gutschrift', 'storno'])
-                .andWhere(function customerFilter(this: any) {
-                    this.whereIn('customer_id', identifiers)
-                        .orWhereIn('customer_number', identifiers)
-                        .orWhereIn('entity_id', identifiers);
-                })
+                .whereIn('customer_number', identifiers)
                 .first('pdf_storage_path', 'pdf_file_name');
 
             if (!row?.pdf_storage_path) {
@@ -509,11 +500,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
                 const customerRecord = await db('accounting_connector_documents')
                     .where('tenant_id', Number(session.tenant_id))
                     .where('document_category', 'customer')
-                    .andWhere(function customerFilter(this: any) {
-                        this.whereIn('customer_id', identifiers)
-                            .orWhereIn('customer_number', identifiers)
-                            .orWhereIn('entity_id', identifiers);
-                    })
+                    .whereIn('customer_number', identifiers)
                     .orderBy('updated_at', 'desc')
                     .select('payload_json')
                     .first();
@@ -539,8 +526,7 @@ export default async function accountingRoutes(fastify: FastifyInstance): Promis
             const event = await db('accounting_connector_events')
                 .whereIn('event_type', ['customer.updated', 'customer.created', 'customer.exported'])
                 .andWhere(function customerFilter(this: any) {
-                    this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.id'))"), identifiers)
-                        .orWhereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
+                    this.whereIn(db.raw("JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.customer.customer_number'))"), identifiers);
                 })
                 .orderBy('created_at', 'desc')
                 .select('payload_json')

@@ -122,6 +122,40 @@ function asOptionalText(value: unknown): string | null {
     return normalized ? normalized : null;
 }
 
+type ParsedCustomerIdentity = {
+    entityId: string | null;
+    customerId: string | null;
+    customerNumber: string | null;
+};
+
+function parseCustomerIdentity(
+    payload: AccountingEventPayload,
+    details: Record<string, unknown> = {},
+): ParsedCustomerIdentity {
+    const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
+
+    // Felder strikt getrennt halten: keine implizite Übernahme zwischen ID- und Nummernfeldern.
+    const entityId = asOptionalText(
+        payload?.entity_id
+        ?? payload?.entityId
+        ?? details?.entity_id
+        ?? details?.entityId,
+    );
+    const customerId = asOptionalText(
+        customer?.id
+        ?? payload?.customer_id
+        ?? details?.customer_id,
+    );
+    const customerNumber = asOptionalText(
+        customer?.customer_number
+        ?? customer?.number
+        ?? payload?.customer_number
+        ?? details?.customer_number,
+    );
+
+    return { entityId, customerId, customerNumber };
+}
+
 function normalizePaymentStatus(value: unknown): string | null {
     const raw = asText(value).toLowerCase();
     if (!raw) return null;
@@ -234,12 +268,20 @@ async function recoverDocumentIdForPaymentEvent(
     }
 
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
+    
+    // Storno Events strikt von der Betrags-Recovery ausschließen!
+    const eto = String(details?.event_type_original || '').toLowerCase();
+    if (eto.includes('storno') || normalizedEventType.includes('storno')) {
+        return { documentId: null, matchedBy: null };
+    }
+    
     const candidates = [
         asOptionalText(payload?.document_id),
         asOptionalText(payload?.invoice_id),
         asOptionalText(details?.source_invoice_id),
         asOptionalText(details?.related_invoice_id),
     ].filter(Boolean) as string[];
+    
     if (candidates.length > 0) {
         return { documentId: candidates[0], matchedBy: 'explicit_identifier' };
     }
@@ -252,11 +294,24 @@ async function recoverDocumentIdForPaymentEvent(
     const min = Math.max(0, paymentDelta - 0.02);
     const max = paymentDelta + 0.02;
 
+    const { entityId, customerId, customerNumber } = parseCustomerIdentity(payload, details);
+
+    // Betragsbasierte Recovery ohne Kundenkennung ist zu riskant.
+    if (!entityId && !customerId && !customerNumber) {
+        return { documentId: null, matchedBy: null };
+    }
+
     const rows = await db('accounting_connector_documents')
         .where({ tenant_id: tenantId, document_category: 'rechnung' })
         .andWhere(function amountMatch(this: any) {
             this.whereBetween('amount_open', [min, max])
                 .orWhereBetween('amount_total', [min, max]);
+        })
+        .andWhere(function customerFilter(this: any) {
+            // Priorität: customer_number > customer_id > entity_id
+            if (customerNumber) this.where('customer_number', customerNumber);
+            else if (customerId) this.where('customer_id', customerId);
+            else this.where('entity_id', entityId as string);
         })
         .orderBy('updated_at', 'desc')
         .limit(3)
@@ -297,7 +352,6 @@ function parseIncomingAccountingPayload(
 ): ParsedAccountingEvent {
     const document = payload?.document && typeof payload.document === 'object' ? payload.document as Record<string, unknown> : {};
     const details = payload?.details && typeof payload.details === 'object' ? payload.details as Record<string, unknown> : {};
-    const customer = payload?.customer && typeof payload.customer === 'object' ? payload.customer as Record<string, unknown> : {};
     const eventTypeOriginal = normalizeIncomingEventType(asText(details?.event_type_original));
     const isPaymentStatusLikeEvent = isPaymentStatusLikeEventType(normalizedEventType, eventTypeOriginal);
 
@@ -338,17 +392,7 @@ function parseIncomingAccountingPayload(
     }
 
     const source = normalizeSource(payload?.source ?? details?.source);
-    const entityId = asOptionalText(
-        payload?.entity_id
-        ?? payload?.entityId
-        ?? customer?.id
-        ?? payload?.customer_id
-        ?? payload?.customer_number
-        ?? customer?.customer_number
-        ?? customer?.number,
-    );
-    const customerId = asOptionalText(customer?.id ?? payload?.customer_id ?? entityId);
-    const customerNumber = asOptionalText(customer?.customer_number ?? payload?.customer_number);
+    const { entityId, customerId, customerNumber } = parseCustomerIdentity(payload, details);
 
     const paymentStatusDocumentId = asText(
         details?.source_invoice_id
@@ -559,18 +603,34 @@ async function upsertAccountingDocumentRecord(args: {
 
     let targetExisting = existing;
     if (!targetExisting?.id && isPaymentStatusLikeEvent) {
-        targetExisting = await trx('accounting_connector_documents')
+        const paymentMatches = await trx('accounting_connector_documents')
             .where({ tenant_id: parsed.tenantId, document_category: 'rechnung' })
             .andWhere(function paymentMatch(this: any) {
-                if (parsed.documentId) this.orWhere('document_id', parsed.documentId);
-                if (parsed.documentNumber) this.orWhere('document_number', parsed.documentNumber);
-                if (parsed.sourceInvoiceId) this.orWhere('document_id', parsed.sourceInvoiceId);
-                if (parsed.relatedInvoiceId) this.orWhere('document_id', parsed.relatedInvoiceId);
-                if (parsed.sourceInvoiceId) this.orWhere('source_invoice_id', parsed.sourceInvoiceId);
-                if (parsed.relatedInvoiceId) this.orWhere('related_invoice_id', parsed.relatedInvoiceId);
+                let hasCondition = false;
+                if (parsed.documentId) { this.orWhere('document_id', parsed.documentId); hasCondition = true; }
+                if (parsed.documentNumber && (parsed.customerNumber || parsed.customerId || parsed.entityId)) {
+                    this.orWhere('document_number', parsed.documentNumber);
+                    hasCondition = true;
+                }
+                if (parsed.sourceInvoiceId) { this.orWhere('document_id', parsed.sourceInvoiceId); hasCondition = true; }
+                if (parsed.relatedInvoiceId) { this.orWhere('document_id', parsed.relatedInvoiceId); hasCondition = true; }
+                if (parsed.sourceInvoiceId) { this.orWhere('source_invoice_id', parsed.sourceInvoiceId); hasCondition = true; }
+                if (parsed.relatedInvoiceId) { this.orWhere('related_invoice_id', parsed.relatedInvoiceId); hasCondition = true; }
+                
+                // Lebenswichtiger Schutz: Wenn keine IDs mitgeliefert wurden, darf nicht blind 
+                // die zuletzt aktualisierte Rechnung irgendeines Kunden überschrieben werden!
+                if (!hasCondition) {
+                    this.whereRaw('1 = 0');
+                }
+            })
+            .andWhere(function customerFilter(this: any) {
+                if (parsed.customerNumber) this.where('customer_number', parsed.customerNumber);
+                else if (parsed.customerId) this.where('customer_id', parsed.customerId);
+                else if (parsed.entityId) this.where('entity_id', parsed.entityId);
             })
             .orderBy('updated_at', 'desc')
-            .first(
+            .limit(2)
+            .select(
                 'id',
                 'document_id',
                 'document_number',
@@ -594,6 +654,7 @@ async function upsertAccountingDocumentRecord(args: {
                 'pdf_sha256',
                 'pdf_storage_path',
             );
+        targetExisting = paymentMatches.length === 1 ? paymentMatches[0] : null;
     }
 
     if (targetExisting?.id) {
