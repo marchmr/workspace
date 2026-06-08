@@ -450,17 +450,13 @@ async function storeUploadedVideoWithFallback(args: {
         };
     } catch (error: any) {
         args.logWarn(`Video-Konvertierung fehlgeschlagen, speichere Originaldatei. ${error?.message || 'Unbekannter Fehler'}`);
-        if (args.requireTranscodeForCompatibility) {
-            await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
-            throw new Error('Die Datei wurde hochgeladen, kann aber ohne ffmpeg-Konvertierung nicht zuverlässig abgespielt werden. Bitte ffmpeg installieren und erneut hochladen.');
-        }
+        await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
+
         const fallbackName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(args.originalFileName || 'video')}`;
         const fallbackRelPath = path.join(String(args.tenantId), fallbackName);
         const fallbackAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, fallbackRelPath);
         await fs.rename(tempInputAbsPath, fallbackAbsPath);
         const fallbackStat = await fs.stat(fallbackAbsPath);
-
-        await fs.rm(convertedAbsPath, { force: true }).catch(() => undefined);
 
         return {
             fileName: sanitizeFileName(args.originalFileName || 'video'),
@@ -1297,15 +1293,20 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
                 await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
                 return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
             }
-            const stored = await storeUploadedVideoWithFallback({
-                tenantId,
-                originalFileName: String(uploadFile.filename || 'video'),
-                originalMimeType: safeMime || 'video/mp4',
-                tempInputPath: streamed.tempPath,
-                sizeBytes: streamed.sizeBytes,
-                requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
-                logWarn: (message) => fastify.log.warn(message),
-            });
+            let stored;
+            try {
+                stored = await storeUploadedVideoWithFallback({
+                    tenantId,
+                    originalFileName: String(uploadFile.filename || 'video'),
+                    originalMimeType: safeMime || 'video/mp4',
+                    tempInputPath: streamed.tempPath,
+                    sizeBytes: streamed.sizeBytes,
+                    requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
+                    logWarn: (message) => fastify.log.warn(message),
+                });
+            } catch (error: any) {
+                return reply.status(500).send({ error: `Video konnte nicht gespeichert werden: ${error?.message || 'Unbekannter Fehler'}` });
+            }
 
             sourceType = 'upload';
             fileName = stored.fileName;
@@ -1411,15 +1412,20 @@ export default async function plugin(fastify: FastifyInstance): Promise<void> {
             await fs.rm(streamed.tempPath, { force: true }).catch(() => undefined);
             return reply.status(400).send({ error: 'Leere Datei ist nicht erlaubt' });
         }
-        const stored = await storeUploadedVideoWithFallback({
-            tenantId,
-            originalFileName: String(uploadFile.filename || 'video'),
-            originalMimeType: safeMime || 'video/mp4',
-            tempInputPath: streamed.tempPath,
-            sizeBytes: streamed.sizeBytes,
-            requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
-            logWarn: (message) => fastify.log.warn(message),
-        });
+        let stored;
+        try {
+            stored = await storeUploadedVideoWithFallback({
+                tenantId,
+                originalFileName: String(uploadFile.filename || 'video'),
+                originalMimeType: safeMime || 'video/mp4',
+                tempInputPath: streamed.tempPath,
+                sizeBytes: streamed.sizeBytes,
+                requireTranscodeForCompatibility: !isLikelyBrowserPlayableFormat(String(uploadFile.filename || ''), safeMime),
+                logWarn: (message) => fastify.log.warn(message),
+            });
+        } catch (error: any) {
+            return reply.status(500).send({ error: `Video konnte nicht gespeichert werden: ${error?.message || 'Unbekannter Fehler'}` });
+        }
 
         await db('vp_videos').where({ id, tenant_id: tenantId }).update({
             source_type: 'upload',
