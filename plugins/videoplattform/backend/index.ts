@@ -438,6 +438,25 @@ async function storeUploadedVideoWithFallback(args: {
         await fs.rm(args.tempInputPath, { force: true }).catch(() => undefined);
     });
 
+    if (!args.requireTranscodeForCompatibility) {
+        const fallbackName = `${Date.now()}-${randomUUID()}-${sanitizeFileName(args.originalFileName || 'video')}`;
+        const fallbackRelPath = path.join(String(args.tenantId), fallbackName);
+        const fallbackAbsPath = path.join(config.app.uploadsDir, 'plugins', PLUGIN_ID, fallbackRelPath);
+        await fs.rename(tempInputAbsPath, fallbackAbsPath).catch(async () => {
+            await fs.copyFile(tempInputAbsPath, fallbackAbsPath);
+            await fs.rm(tempInputAbsPath, { force: true }).catch(() => undefined);
+        });
+        const fallbackStat = await fs.stat(fallbackAbsPath);
+
+        return {
+            fileName: sanitizeFileName(args.originalFileName || 'video'),
+            filePath: fallbackRelPath,
+            mimeType: args.originalMimeType || 'video/mp4',
+            sizeBytes: fallbackStat.size,
+            transcoded: false,
+        };
+    }
+
     try {
         await transcodeToMp4(tempInputAbsPath, convertedAbsPath);
         const convertedStat = await fs.stat(convertedAbsPath);
