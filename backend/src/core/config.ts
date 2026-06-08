@@ -139,7 +139,7 @@ export const config = {
     },
 
     fileSecurity: {
-        maxUploadSizeMb: optionalIntEnv('FILE_SECURITY_MAX_UPLOAD_MB', 500),
+        maxUploadSizeMb: optionalIntEnv('FILE_SECURITY_MAX_UPLOAD_MB', 5120),
         strictSignatureCheck: optionalBoolEnv('FILE_SECURITY_STRICT_SIGNATURE', true),
         allowZipUploads: optionalBoolEnv('FILE_SECURITY_ALLOW_ZIP_UPLOADS', false),
         zip: {
